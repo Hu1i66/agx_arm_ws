@@ -1,0 +1,19 @@
+# ROS 2 Workspaces
+build/
+install/
+log/
+*~
+*.swp
+*.pyc
+
+# Python
+__pycache__/
+*.egg-info/
+*.pyo
+*.pyd
+
+# VSCode
+.vscode/
+
+# Temporary files
+/tmp/
