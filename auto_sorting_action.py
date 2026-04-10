@@ -37,7 +37,7 @@ class MoveItActionClient(Node):
         self._action_client.wait_for_server()
         self.get_logger().info('✅ 已连接到 MoveIt2 规划器！')
 
-    def send_goal(self, group_name, constraints, plan_only=False):
+    def send_goal(self, group_name, constraints, plan_only=False, continuous=False):
         goal_msg = MoveGroup.Goal()
         goal_msg.request.workspace_parameters.header.stamp = self.get_clock().now().to_msg()
         goal_msg.request.workspace_parameters.header.frame_id = 'base_link'
@@ -72,8 +72,11 @@ class MoveItActionClient(Node):
         # 错误码 1 代表 SUCCESS (返回1表示成功到达)
         if result.error_code.val == 1:
             self.get_logger().info('✅ 动作规划并执行成功完成！')
-            # 留一点时间让机械臂稳定，避免启动状态在碰撞或未到位状态（从 0.1 调回 0.5）
-            time.sleep(0.5) 
+            # 留一点时间让机械臂稳定，避免启动状态在碰撞或未到位状态
+            if continuous:
+                time.sleep(0.05) # 连贯动作减少停顿
+            else:
+                time.sleep(0.5) 
             return True
         else:
             self.get_logger().error(f'⚠️ 执行失败，错误码: {result.error_code.val}')
@@ -93,7 +96,7 @@ class MoveItActionClient(Node):
             c.joint_constraints.append(jc)
         return self.send_goal('arm', c)
 
-    def move_arm_cartesian(self, pose_dict, desc):
+    def move_arm_cartesian(self, pose_dict, desc, continuous=False):
         print(f"\n🚀 正在规划(笛卡尔位置) -> {desc}")
         c = Constraints()
         
@@ -104,7 +107,7 @@ class MoveItActionClient(Node):
         
         s = SolidPrimitive()
         s.type = SolidPrimitive.SPHERE
-        s.dimensions = [0.007]  # 允许 7 毫米的位置误差（帮助避障解算）
+        s.dimensions = [0.0075]  # 允许 7.5 毫米的位置误差（帮助避障解算）
         
         p = Pose()
         p.position.x = float(pose_dict['x'])
@@ -134,7 +137,7 @@ class MoveItActionClient(Node):
         c.position_constraints.append(pc)
         c.orientation_constraints.append(oc)
         
-        return self.send_goal('arm', c)
+        return self.send_goal('arm', c, continuous=continuous)
 
     def operate_gripper(self, target_pos, desc):
         print(f"✊ 正在执行夹爪动作 -> {desc} (target: {target_pos})")
@@ -184,7 +187,7 @@ def main():
     # 您测量出来的待机位(关节0)
     JOINT_STANDBY = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     
-    GRIPPER_OPEN = 0.070
+    GRIPPER_OPEN = 0.090
     GRIPPER_CLOSE = 0.050
     GRIPPER_GRAB = 0.000
     
@@ -247,6 +250,8 @@ def main():
                 POSE_PICK_UP['z'] += 0.13  # 抬起脱离高 13cm
                 
                 POSE_PLACE = place_pose.copy()
+                POSE_PLACE_PRE = POSE_PLACE.copy()
+                POSE_PLACE_PRE['z'] += 0.05  # 放置位上方 5cm (连贯预放点)
                 POSE_PLACE_UP = POSE_PLACE.copy()
                 POSE_PLACE_UP['z'] += 0.13 # 抬起脱离高 13cm
                 
@@ -275,7 +280,10 @@ def main():
                     # 【第四步】 抬起脱离
                     if not node.move_arm_cartesian(POSE_PICK_UP, "提起物品 (Lift)"): success = False; break
                     
-                    # 【第五步】 直接进入放置位
+                    # 【第五步】 移动到放置位上方5cm
+                    if not node.move_arm_cartesian(POSE_PLACE_PRE, "进入放置预备位 (上方5cm)", continuous=True): success = False; break
+
+                    # 【第五点五步】 连贯微降到放置位
                     if not node.move_arm_cartesian(POSE_PLACE, "进入放置位 (Place)"): success = False; break
                     
                     # 【第六步】 松开夹爪释放物品

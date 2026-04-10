@@ -26,7 +26,7 @@
     <xacro:include filename="$(find agx_arm_description)/agx_arm_urdf/$(arg arm_type)/urdf/$(arg arm_type)_description.urdf" />
   </xacro:if>
 
-  <!-- TCP link - fixed offset from flange for MoveIt planning target -->
+  <!-- TCP link: fixed offset from flange for MoveIt planning target -->
   <link name="tcp_link" />
   <joint name="tcp_joint" type="fixed">
     <parent link="${flange_link}" />
@@ -37,19 +37,9 @@
   <xacro:include filename="agx_arm.ros2_control.xacro" />
   <xacro:agx_arm_ros2_control
     name="FakeSystem"
-    use_gazebo="$(arg use_gazebo)"
     initial_positions_file="$(arg initial_positions_file)"
     arm_type="$(arg arm_type)"
     effector_type="$(arg effector_type)"
     revo2_type="$(arg revo2_type)"
   />
-
-  <xacro:if value="$(arg use_gazebo)">
-    <gazebo>
-      <plugin name="gazebo_ros2_control" filename="libgazebo_ros2_control.so">
-        <parameters>$(find agx_arm_moveit)/config/ros2_controllers.yaml</parameters>
-        
-      </plugin>
-    </gazebo>
-  </xacro:if>
 </robot>

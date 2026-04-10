@@ -173,7 +173,7 @@ bash can_activate.sh
 ```
 bash ~/agx_arm_ws/src/agx_arm_ros/scripts/can_activate.sh can0 1000000 && cansend can0 123#1122334455667788 && ip -s link show can0
 
-python3 /home/lxf/agx_arm_ws/activate_robot.py 
+python3 /home/lxf/agx_arm_ws/activate_robot.py
 ### 启动驱动
 
 您可以通过 launch 文件或直接运行节点来启动驱动。
@@ -217,6 +217,8 @@ ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_
 ```bash
 ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py can_port:=can0 arm_type:=piper effector_type:=agx_gripper
 ```
+
+
 
 > 该 launch 文件同时启动机械臂控制节点和 MoveIt2，自动将关节反馈 (`/feedback/joint_states`) 接入 MoveIt，无需手动分两个终端启动。支持所有 `agx_arm_ctrl` 的参数（如 `tcp_offset`、`speed_percent` 等），详见 [Moveit](./src/agx_arm_moveit/README.md)。
 
