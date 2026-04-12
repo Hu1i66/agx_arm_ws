@@ -1,4 +1,8 @@
 import time
+from local_sdk_bootstrap import ensure_workspace_sdk_on_path
+
+ensure_workspace_sdk_on_path()
+
 from piper_sdk import C_PiperInterface
 
 def activate_can():

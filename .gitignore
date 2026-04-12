@@ -12,6 +12,7 @@ __pycache__/
 *.pyo
 *.pyd
 .venv/
+third_party/python/**/__pycache__/
 
 # VSCode
 .vscode/

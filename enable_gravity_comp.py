@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 import time
+from local_sdk_bootstrap import ensure_workspace_sdk_on_path
+
+ensure_workspace_sdk_on_path()
+
 import rclpy
 from rclpy.node import Node
 from std_srvs.srv import SetBool

@@ -6,6 +6,11 @@ import rclpy
 import math
 import threading
 from typing import Optional, Tuple
+
+from agx_arm_ctrl.local_sdk_bootstrap import ensure_workspace_sdk_on_path
+
+ensure_workspace_sdk_on_path()
+
 from pyAgxArm import create_agx_arm_config, AgxArmFactory
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
