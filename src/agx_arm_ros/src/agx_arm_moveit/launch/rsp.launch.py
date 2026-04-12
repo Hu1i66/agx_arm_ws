@@ -18,6 +18,7 @@ def _launch(context):
     )
 
     moveit_config = build_moveit_config(context)
+    use_sim_time = LaunchConfiguration("use_sim_time")
 
     return [
         Node(
@@ -25,7 +26,7 @@ def _launch(context):
             executable="robot_state_publisher",
             respawn=True,
             output="screen",
-            parameters=[moveit_config.robot_description],
+            parameters=[moveit_config.robot_description, {"use_sim_time": use_sim_time}],
             remappings=[("/joint_states", joint_states_topic)],
         )
     ]

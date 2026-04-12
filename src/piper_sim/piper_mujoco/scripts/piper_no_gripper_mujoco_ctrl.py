@@ -5,10 +5,7 @@ import rclpy
 from rclpy.node import Node
 import mujoco_py
 import os
-import time
-import glfw
 from mujoco_py import MjSim, MjViewer
-from mujoco_py import GlfwContext
 from sensor_msgs.msg import JointState
 from ament_index_python.packages import get_package_share_directory
 
@@ -16,6 +13,11 @@ class MujocoModel(Node):
     def __init__(self):
         super().__init__("mujoco_joint_controller")
         self.create_subscription(JointState, "/joint_states", self.joint_state_callback, 10)
+        self.create_subscription(JointState, "/control/joint_states", self.joint_state_callback, 10)
+        self.create_subscription(JointState, "/control/move_j", self.joint_state_callback, 10)
+        self.create_subscription(JointState, "/control/move_js", self.joint_state_callback, 10)
+
+        self.feedback_pub = self.create_publisher(JointState, "/feedback/joint_states", 10)
 
         # 初始化 joint_targets 字典
         self.joint_targets = {}
@@ -56,16 +58,28 @@ class MujocoModel(Node):
 
     def control_loop(self):
         """ 让 MuJoCo 机械臂跟随 ROS 关节状态 """
-        all_reached = True
         for joint, target_angle in self.joint_targets.items():
             if joint in self.sim.model.joint_names:
-                joint_id = self.sim.model.get_joint_qpos_addr(joint)
-                current_angle = self.sim.data.qpos[joint_id]
-                if abs(current_angle - target_angle) > self.tolerance:
-                    all_reached = False
                 self.pos_ctrl(joint, target_angle)
         self.sim.step()
         self.viewer.render()
+
+        msg = JointState()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.name = []
+        msg.position = []
+        msg.velocity = []
+        msg.effort = []
+
+        for name in ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]:
+            if name in self.sim.model.joint_names:
+                qpos_idx = self.sim.model.get_joint_qpos_addr(name)
+                msg.name.append(name)
+                msg.position.append(float(self.sim.data.qpos[qpos_idx]))
+                msg.velocity.append(0.0)
+                msg.effort.append(0.0)
+
+        self.feedback_pub.publish(msg)
 
 
 def main():

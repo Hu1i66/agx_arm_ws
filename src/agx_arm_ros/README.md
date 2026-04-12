@@ -222,9 +222,35 @@ ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py can_port:=can0 ar
 
 > 该 launch 文件同时启动机械臂控制节点和 MoveIt2，自动将关节反馈 (`/feedback/joint_states`) 接入 MoveIt，无需手动分两个终端启动。支持所有 `agx_arm_ctrl` 的参数（如 `tcp_offset`、`speed_percent` 等），详见 [Moveit](./src/agx_arm_moveit/README.md)。
 
+```bash
+python3 /home/lxf/agx_arm_ws/auto_sorting_action.py
+python3 /home/lxf/agx_arm_ws/sorting_gui_client.py
+```
+
+### 仿真gazebo
+> **建议：实机与仿真不要同时运行。切换模式前先关闭另一侧进程。**
+pkill -f 'gzserver|gzclient|agx_sim_bridge|gripper_mirror_controller|move_group|rviz2|ros2_control_node' || true
+**推荐（仿真专用一键启动）：**
+```bash
+cd /home/lxf/agx_arm_ws
+source install/setup.bash
+ros2 launch agx_arm_ctrl start_sim_piper_moveit.launch.py > /tmp/start_sim_delay.log 2>&1
+```
+
+**等价分步启动（旧方式）：**
+```bash
+cd /home/lxf/agx_arm_ws
+source install/setup.bash
+
+ros2 launch piper_gazebo piper_gazebo.launch.py
+
+ros2 launch agx_arm_moveit demo.launch.py arm_type:=piper effector_type:=agx_gripper follow:=true use_sim_time:=true
+
 python3 /home/lxf/agx_arm_ws/auto_sorting_action.py
 
 python3 /home/lxf/agx_arm_ws/sorting_gui_client.py
+```
+
 
 ### 启动参数
 

@@ -10,6 +10,7 @@ from launch.actions import (
     DeclareLaunchArgument,
     IncludeLaunchDescription,
     OpaqueFunction,
+    TimerAction,
 )
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -40,6 +41,9 @@ def _build_ros2_controllers_file(arm_type, effector_type, revo2_type):
         },
     }
 
+    # Build joint_state_broadcaster joints list
+    jsb_joints = arm_joints.copy()
+    
     config = {
         "controller_manager": {
             "ros__parameters": {"update_rate": 200, **cm_controllers},
@@ -49,6 +53,11 @@ def _build_ros2_controllers_file(arm_type, effector_type, revo2_type):
                 "joints": arm_joints,
                 "command_interfaces": ["position"],
                 "state_interfaces": ["position", "velocity"],
+            },
+        },
+        "joint_state_broadcaster": {
+            "ros__parameters": {
+                "joints": jsb_joints,
             },
         },
     }
@@ -65,6 +74,8 @@ def _build_ros2_controllers_file(arm_type, effector_type, revo2_type):
                 "state_interfaces": ["position", "velocity"],
             },
         }
+        jsb_joints.extend(["gripper_joint1", "gripper_joint2"])
+        config["joint_state_broadcaster"]["ros__parameters"]["joints"] = jsb_joints
     elif effector_type == "revo2":
         side = revo2_type
         ctrl_name = f"{side}_hand_controller"
@@ -72,20 +83,23 @@ def _build_ros2_controllers_file(arm_type, effector_type, revo2_type):
             "type": "joint_trajectory_controller/JointTrajectoryController",
         }
         config["controller_manager"]["ros__parameters"].update(cm_controllers)
+        hand_joints = [
+            f"{side}_thumb_metacarpal_joint",
+            f"{side}_thumb_proximal_joint",
+            f"{side}_index_proximal_joint",
+            f"{side}_middle_proximal_joint",
+            f"{side}_ring_proximal_joint",
+            f"{side}_pinky_proximal_joint",
+        ]
         config[ctrl_name] = {
             "ros__parameters": {
-                "joints": [
-                    f"{side}_thumb_metacarpal_joint",
-                    f"{side}_thumb_proximal_joint",
-                    f"{side}_index_proximal_joint",
-                    f"{side}_middle_proximal_joint",
-                    f"{side}_ring_proximal_joint",
-                    f"{side}_pinky_proximal_joint",
-                ],
+                "joints": hand_joints,
                 "command_interfaces": ["position"],
                 "state_interfaces": ["position", "velocity"],
             },
         }
+        jsb_joints.extend(hand_joints)
+        config["joint_state_broadcaster"]["ros__parameters"]["joints"] = jsb_joints
 
     tmp = tempfile.NamedTemporaryFile(
         mode="w", suffix=".yaml", prefix="ros2_controllers_", delete=False
@@ -138,6 +152,22 @@ def _build_moveit(context):
     )
 
     actions.append(
+        TimerAction(
+            period=2.0,
+            actions=[
+                Node(
+                    package="agx_arm_moveit",
+                    executable="publish_table_scene.py",
+                    output="screen",
+                    parameters=[
+                        {"scene_file": LaunchConfiguration("table_scene_file")},
+                    ],
+                )
+            ],
+        )
+    )
+
+    actions.append(
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 str(package_path / "launch/warehouse_db.launch.py")
@@ -156,6 +186,7 @@ def _build_moveit(context):
             parameters=[
                 moveit_config.robot_description,
                 ros2_controllers_yaml,
+                {"use_sim_time": LaunchConfiguration("use_sim_time")},
             ],
             remappings=[("/joint_states", "/control/joint_states")],
         )
@@ -199,12 +230,23 @@ def generate_launch_description():
                 description="TCP offset [x, y, z, rx, ry, rz] in meters/radians.",
             ),
             DeclareLaunchArgument(
+                "table_scene_file",
+                default_value="/home/lxf/agx_arm_ws/table.scene",
+                description="Scene file exported from RViz to auto-load the desktop obstacle.",
+            ),
+            DeclareLaunchArgument(
                 "follow",
                 default_value="false",
                 choices=["true", "false"],
                 description="Follow real arm state. "
                 "true: move_group subscribes to /feedback/joint_states; "
                 "false: subscribes to /control/joint_states (mock hardware).",
+            ),
+            DeclareLaunchArgument(
+                "use_sim_time",
+                default_value="false",
+                choices=["true", "false"],
+                description="Use simulation clock (/clock) for MoveIt-related nodes.",
             ),
             DeclareBooleanLaunchArg(
                 "db",

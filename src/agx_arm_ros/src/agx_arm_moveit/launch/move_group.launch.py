@@ -21,6 +21,7 @@ def _launch(context):
     joint_states_topic = "/feedback/joint_states" if follow else "/control/joint_states"
 
     move_group_configuration = {
+        "use_sim_time": LaunchConfiguration("use_sim_time"),
         "publish_robot_description_semantic": True,
         "allow_trajectory_execution": LaunchConfiguration("allow_trajectory_execution"),
         "capabilities": ParameterValue(

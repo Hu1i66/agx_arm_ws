@@ -3,7 +3,6 @@ import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient
 import time
-import math
 import queue
 import json
 from std_msgs.msg import String
@@ -21,6 +20,7 @@ class MoveItActionClient(Node):
         super().__init__('piper_moveit_action_client')
         self._action_client = ActionClient(self, MoveGroup, '/move_action')
         self._gripper_action_client = ActionClient(self, FollowJointTrajectory, '/gripper_controller/follow_joint_trajectory')
+        self._joint_states_pub = self.create_publisher(JointState, '/control/joint_states', 10)
         
         # 服务端通信设置
         self.cmd_queue = queue.Queue()
@@ -32,10 +32,14 @@ class MoveItActionClient(Node):
         # 简单将 JSON 命令推入队列给主线程处理
         self.cmd_queue.put(msg.data)
         
-    def wait_for_server(self):
+    def wait_for_server(self, timeout_sec=None):
         self.get_logger().info('等待 MoveGroup Action 服务器...')
-        self._action_client.wait_for_server()
-        self.get_logger().info('✅ 已连接到 MoveIt2 规划器！')
+        ok = self._action_client.wait_for_server(timeout_sec=timeout_sec)
+        if ok:
+            self.get_logger().info('✅ 已连接到 MoveIt2 规划器！')
+        else:
+            self.get_logger().error('❌ 未连接到 MoveIt2 规划器！')
+        return ok
 
     def send_goal(self, group_name, constraints, plan_only=False, continuous=False):
         goal_msg = MoveGroup.Goal()
@@ -139,34 +143,67 @@ class MoveItActionClient(Node):
         
         return self.send_goal('arm', c, continuous=continuous)
 
-    def operate_gripper(self, target_pos, desc):
-        print(f"✊ 正在执行夹爪动作 -> {desc} (target: {target_pos})")
-        
+    def _try_gripper_action(self, joint_names, positions, timeout_sec=1.0):
+        if not self._gripper_action_client.wait_for_server(timeout_sec=timeout_sec):
+            return False
+
         goal_msg = FollowJointTrajectory.Goal()
-        goal_msg.trajectory.joint_names = ['gripper_joint1', 'gripper_joint2']
-        
+        goal_msg.trajectory.joint_names = list(joint_names)
         point = JointTrajectoryPoint()
-        # 根据 agx_arm_ctrl_single_node，gripper_joint1 是宽度的 0.5，gripper_joint2 是 -0.5
-        point.positions = [float(target_pos * 0.5), float(-target_pos * 0.5)]
+        point.positions = list(positions)
         point.time_from_start.sec = 1
         point.time_from_start.nanosec = 0
-        
         goal_msg.trajectory.points.append(point)
-        
-        self._gripper_action_client.wait_for_server()
+
         send_goal_future = self._gripper_action_client.send_goal_async(goal_msg)
         rclpy.spin_until_future_complete(self, send_goal_future)
         goal_handle = send_goal_future.result()
-
-        if not goal_handle.accepted:
-            self.get_logger().error('❌ 夹爪目标被拒绝！')
+        if goal_handle is None or not goal_handle.accepted:
             return False
 
-        self.get_logger().info('⭕ 夹爪动作执行中...')
         get_result_future = goal_handle.get_result_async()
         rclpy.spin_until_future_complete(self, get_result_future)
-        
-        # 将夹爪延时从1.0缩短到0.2，避免开合后干等
+        result = get_result_future.result()
+        if result is None:
+            return False
+        return True
+
+    def _publish_gripper_joint_state(self, target_pos):
+        # Unified fallback for both real arm and simulation bridge.
+        msg = JointState()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.name = ['gripper']
+        msg.position = [float(target_pos)]
+        msg.velocity = []
+        msg.effort = [1.5]
+        self._joint_states_pub.publish(msg)
+
+    def operate_gripper(self, target_pos, desc):
+        print(f"✊ 正在执行夹爪动作 -> {desc} (target: {target_pos})")
+
+        # 1) Try common MoveIt/gripper controller naming first.
+        if self._try_gripper_action(
+            ['gripper_joint1', 'gripper_joint2'],
+            [float(target_pos * 0.5), float(-target_pos * 0.5)],
+            timeout_sec=0.8,
+        ):
+            self.get_logger().info('⭕ 夹爪动作执行中（gripper_joint1/2）...')
+            time.sleep(0.2)
+            return True
+
+        # 2) Try Gazebo piper controller naming.
+        if self._try_gripper_action(
+            ['joint7'],
+            [float(target_pos * 0.5)],
+            timeout_sec=0.4,
+        ):
+            self.get_logger().info('⭕ 夹爪动作执行中（joint7）...')
+            time.sleep(0.2)
+            return True
+
+        # 3) Fallback: publish unified control topic used by real arm and sim bridge.
+        self.get_logger().warn('⚠️ 夹爪 action 不可用或被拒绝，回退到 /control/joint_states')
+        self._publish_gripper_joint_state(target_pos)
         time.sleep(0.2)
         return True
 
@@ -174,7 +211,10 @@ class MoveItActionClient(Node):
 def main():
     rclpy.init()
     node = MoveItActionClient()
-    node.wait_for_server()
+    if not node.wait_for_server(timeout_sec=10.0):
+        node.destroy_node()
+        rclpy.shutdown()
+        return
     
     # ---------- 预设四个坐标点 ----------
     POSES = {
@@ -311,16 +351,21 @@ def main():
     except KeyboardInterrupt:
         print("\n⏹️ 收到 Ctrl+C，正在复位机械臂...")
         try:
-            # 唤醒或等待服务器准备完毕
-            node.wait_for_server()
             node.move_arm_joint(JOINT_STANDBY, "退出前回到待机位")
             node.operate_gripper(GRIPPER_GRAB, "退出前闭合夹爪")
-        except:
+        except Exception:
             pass
         print("⏹️ 动作停止，安全退出。")
     finally:
-        node.destroy_node()
-        rclpy.shutdown()
+        try:
+            node.destroy_node()
+        except Exception:
+            pass
+        try:
+            rclpy.shutdown()
+        except Exception:
+            # ignore repeated shutdown in interrupted contexts
+            pass
 
 if __name__ == "__main__":
     main()

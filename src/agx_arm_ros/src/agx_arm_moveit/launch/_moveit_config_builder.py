@@ -37,6 +37,12 @@ def declare_common_args():
             "true: move_group subscribes to /feedback/joint_states; "
             "false: subscribes to /control/joint_states (mock hardware).",
         ),
+        DeclareLaunchArgument(
+            "use_sim_time",
+            default_value="false",
+            choices=["true", "false"],
+            description="Use simulation clock (/clock) for MoveIt-related nodes.",
+        ),
     ]
 
 

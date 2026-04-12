@@ -6,6 +6,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from launch import LaunchDescription
 from launch.actions import OpaqueFunction
 from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import SetParameter
 
 from moveit_configs_utils.launches import generate_moveit_rviz_launch
 
@@ -14,6 +15,7 @@ from _moveit_config_builder import build_moveit_config, declare_common_args
 
 def _launch(context):
     follow = LaunchConfiguration("follow").perform(context)
+    use_sim_time = LaunchConfiguration("use_sim_time")
     joint_states_topic = (
         "/feedback/joint_states" if follow == "true" else "/control/joint_states"
     )
@@ -28,13 +30,18 @@ def _launch(context):
             # Hack to get the node executable name since launch_ros might obscure it
             if "rviz2" in str(entity.cmd):
                 # Add remapping for joint_states using internal formatted tuples
-                if getattr(entity, "_Node__remappings", None) is None:
-                    entity._Node__remappings = []
-                entity._Node__remappings.append(
+                remappings = getattr(entity, "_Node__remappings", None)
+                if remappings is None:
+                    remappings = []
+                elif isinstance(remappings, tuple):
+                    remappings = list(remappings)
+                remappings.append(
                     ((TextSubstitution(text="/joint_states"),), (TextSubstitution(text=joint_states_topic),))
                 )
-                
-    return rviz_components
+                entity._Node__remappings = remappings
+
+
+    return [SetParameter(name="use_sim_time", value=use_sim_time)] + rviz_components
 
 
 def generate_launch_description():

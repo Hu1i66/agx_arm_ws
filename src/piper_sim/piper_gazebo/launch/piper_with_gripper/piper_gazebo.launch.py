@@ -94,11 +94,27 @@ def generate_launch_description():
         output='screen'
     )
 
+    node_agx_sim_bridge = Node(
+        package='piper_gazebo',
+        executable='agx_sim_bridge.py',
+        parameters=[{'effector_type': 'agx_gripper'}],
+        output='screen'
+    )
+
+    node_spawn_table = Node(
+        package='piper_gazebo',
+        executable='spawn_table_gazebo.py',
+        parameters=[{'scene_file': '/home/lxf/agx_arm_ws/table.scene'}],
+        output='screen'
+    )
+
     ld = LaunchDescription()
 
     ld.add_action(close_evt1)
     ld.add_action(close_evt2)
     ld.add_action(node_gripper_mirror_controller)
+    ld.add_action(node_agx_sim_bridge)
+    ld.add_action(node_spawn_table)
     ld.add_action(start_gazebo_cmd)
     ld.add_action(node_robot_state_publisher)
     ld.add_action(spawn_entity_cmd)

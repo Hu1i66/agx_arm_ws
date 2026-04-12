@@ -26,6 +26,8 @@ install(
 )
 install(
   PROGRAMS scripts/joint8_ctrl.py
+           scripts/agx_sim_bridge.py
+           scripts/spawn_table_gazebo.py
   DESTINATION lib/${PROJECT_NAME}
 )
 if(BUILD_TESTING)

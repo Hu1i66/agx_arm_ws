@@ -97,6 +97,13 @@ def generate_launch_description():
         description='Follow real arm state.',
     )
 
+    use_sim_time_arg = DeclareLaunchArgument(
+        'use_sim_time',
+        default_value='false',
+        choices=['true', 'false'],
+        description='Use simulation clock (/clock) for MoveIt stack. Keep false on real hardware.',
+    )
+
     # ── agx_arm_ctrl ─────────────────────────────────────────────────
     agx_arm_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -137,6 +144,7 @@ def generate_launch_description():
             'revo2_type': LaunchConfiguration('revo2_type'),
             'tcp_offset': LaunchConfiguration('tcp_offset'),
             'follow': LaunchConfiguration('follow'),
+            'use_sim_time': LaunchConfiguration('use_sim_time'),
         }.items(),
     )
 
@@ -155,6 +163,7 @@ def generate_launch_description():
         payload_arg,
         tcp_offset_arg,
         follow_arg,
+        use_sim_time_arg,
         # launches
         agx_arm_launch,
         moveit_launch,
