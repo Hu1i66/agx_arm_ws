@@ -5,7 +5,12 @@ from rclpy.action import ActionClient
 import time
 import queue
 import json
+import copy
+import numpy as np
 from std_msgs.msg import String
+import tf2_ros
+from scipy.spatial.transform import Rotation as R
+from rclpy.duration import Duration
 
 from moveit_msgs.action import MoveGroup
 from moveit_msgs.msg import Constraints, JointConstraint, PositionConstraint, OrientationConstraint, BoundingVolume
@@ -21,6 +26,8 @@ class MoveItActionClient(Node):
         self._action_client = ActionClient(self, MoveGroup, '/move_action')
         self._gripper_action_client = ActionClient(self, FollowJointTrajectory, '/gripper_controller/follow_joint_trajectory')
         self._joint_states_pub = self.create_publisher(JointState, '/control/joint_states', 10)
+        self._tf_buffer = tf2_ros.Buffer()
+        self._tf_listener = tf2_ros.TransformListener(self._tf_buffer, self)
         
         # 服务端通信设置
         self.cmd_queue = queue.Queue()
@@ -41,7 +48,7 @@ class MoveItActionClient(Node):
             self.get_logger().error('❌ 未连接到 MoveIt2 规划器！')
         return ok
 
-    def send_goal(self, group_name, constraints, plan_only=False, continuous=False):
+    def send_goal(self, group_name, constraints, path_constraints=None, plan_only=False, continuous=False):
         goal_msg = MoveGroup.Goal()
         goal_msg.request.workspace_parameters.header.stamp = self.get_clock().now().to_msg()
         goal_msg.request.workspace_parameters.header.frame_id = 'base_link'
@@ -54,6 +61,8 @@ class MoveItActionClient(Node):
         goal_msg.request.max_acceleration_scaling_factor = 0.50
         
         goal_msg.request.goal_constraints.append(constraints)
+        if path_constraints is not None:
+            goal_msg.request.path_constraints = path_constraints
         
         goal_msg.planning_options.plan_only = plan_only
         
@@ -100,48 +109,111 @@ class MoveItActionClient(Node):
             c.joint_constraints.append(jc)
         return self.send_goal('arm', c)
 
-    def move_arm_cartesian(self, pose_dict, desc, continuous=False):
-        print(f"\n🚀 正在规划(笛卡尔位置) -> {desc}")
+    def _normalize_target_pose(self, pose_dict):
+        return {
+            'x': float(pose_dict['x']),
+            'y': float(pose_dict['y']),
+            'z': float(pose_dict['z']),
+        }
+
+    def _get_link6_position(self, timeout_sec=1.0):
+        try:
+            if not self._tf_buffer.can_transform('base_link', 'link6', rclpy.time.Time(), timeout=Duration(seconds=timeout_sec)):
+                return None
+            trans = self._tf_buffer.lookup_transform('base_link', 'link6', rclpy.time.Time())
+            return np.array([
+                trans.transform.translation.x,
+                trans.transform.translation.y,
+                trans.transform.translation.z,
+            ], dtype=float)
+        except Exception as exc:
+            self.get_logger().warn(f'无法读取 link6 TF: {exc}')
+            return None
+
+    def _build_look_at_quaternion(self, source_xyz, target_xyz):
+        source = np.array([float(source_xyz['x']), float(source_xyz['y']), float(source_xyz['z'])], dtype=float)
+        target = np.array([float(target_xyz['x']), float(target_xyz['y']), float(target_xyz['z'])], dtype=float)
+        direction = target - source
+        norm = np.linalg.norm(direction)
+        if norm < 1e-6:
+            raise ValueError('目标点与当前末端位置过近，无法构造朝向约束')
+        z_axis = direction / norm
+
+        reference_up = np.array([0.0, 0.0, 1.0], dtype=float)
+        if abs(float(np.dot(reference_up, z_axis))) > 0.95:
+            reference_up = np.array([0.0, 1.0, 0.0], dtype=float)
+
+        x_axis = np.cross(reference_up, z_axis)
+        x_norm = np.linalg.norm(x_axis)
+        if x_norm < 1e-6:
+            reference_up = np.array([1.0, 0.0, 0.0], dtype=float)
+            x_axis = np.cross(reference_up, z_axis)
+            x_norm = np.linalg.norm(x_axis)
+            if x_norm < 1e-6:
+                raise ValueError('无法构造稳定的末端朝向约束')
+
+        x_axis = x_axis / x_norm
+        y_axis = np.cross(z_axis, x_axis)
+
+        rotation_matrix = np.column_stack((x_axis, y_axis, z_axis))
+        return R.from_matrix(rotation_matrix).as_quat()
+
+    def _build_ball_center_constraints(self, goal_pose, center_pose):
         c = Constraints()
-        
-        # 1. 位置约束
+
         pc = PositionConstraint()
         pc.header.frame_id = 'base_link'
         pc.link_name = 'link6'
-        
+
         s = SolidPrimitive()
         s.type = SolidPrimitive.SPHERE
-        s.dimensions = [0.0075]  # 允许 7.5 毫米的位置误差（帮助避障解算）
-        
+        s.dimensions = [0.0075]
+
         p = Pose()
-        p.position.x = float(pose_dict['x'])
-        p.position.y = float(pose_dict['y'])
-        p.position.z = float(pose_dict['z'])
-        
+        p.position.x = float(goal_pose['x'])
+        p.position.y = float(goal_pose['y'])
+        p.position.z = float(goal_pose['z'])
+
         v = BoundingVolume()
         v.primitives.append(s)
         v.primitive_poses.append(p)
         pc.constraint_region = v
         pc.weight = 1.0
-        
-        # 2. 姿态约束
+
+        current_link6 = self._get_link6_position()
+        if current_link6 is None:
+            raise RuntimeError('无法获取当前 link6 位姿，无法构造球心对准约束')
+
         oc = OrientationConstraint()
         oc.header.frame_id = 'base_link'
         oc.link_name = 'link6'
-        oc.orientation.x = float(pose_dict['qx'])
-        oc.orientation.y = float(pose_dict['qy'])
-        oc.orientation.z = float(pose_dict['qz'])
-        oc.orientation.w = float(pose_dict['qw'])
-        
-        oc.absolute_x_axis_tolerance = 0.05
-        oc.absolute_y_axis_tolerance = 0.05
-        oc.absolute_z_axis_tolerance = 0.05
+        quat = self._build_look_at_quaternion(
+            {'x': current_link6[0], 'y': current_link6[1], 'z': current_link6[2]},
+            center_pose,
+        )
+        oc.orientation.x = float(quat[0])
+        oc.orientation.y = float(quat[1])
+        oc.orientation.z = float(quat[2])
+        oc.orientation.w = float(quat[3])
+
+        oc.absolute_x_axis_tolerance = 0.18
+        oc.absolute_y_axis_tolerance = 0.18
+        oc.absolute_z_axis_tolerance = 3.14159
         oc.weight = 1.0
-        
+
         c.position_constraints.append(pc)
         c.orientation_constraints.append(oc)
-        
-        return self.send_goal('arm', c, continuous=continuous)
+
+        path_constraints = Constraints()
+        path_constraints.orientation_constraints.append(copy.deepcopy(oc))
+        return c, path_constraints
+
+    def move_arm_cartesian(self, goal_pose, center_pose, desc, continuous=False):
+        print(f"\n🚀 正在规划(球心对准约束) -> {desc}")
+        goal_pose = self._normalize_target_pose(goal_pose)
+        center_pose = self._normalize_target_pose(center_pose)
+        c, path_constraints = self._build_ball_center_constraints(goal_pose, center_pose)
+        return self.send_goal('arm', c, path_constraints=path_constraints, continuous=continuous)
 
     def _try_gripper_action(self, joint_names, positions, timeout_sec=1.0):
         if not self._gripper_action_client.wait_for_server(timeout_sec=timeout_sec):
@@ -218,10 +290,10 @@ def main():
     
     # ---------- 预设四个坐标点 ----------
     POSES = {
-        '1': {'x': 0.501042, 'y': 0.246609, 'z': 0.049905, 'qx': 0.12185194680680378, 'qy': -0.7256210488103221, 'qz': -0.12505568981132548, 'qw': -0.6655728893431684},
-        '2': {'x': 0.32700399999999996, 'y': -0.256285, 'z': 0.03959, 'qx': 0.16870791136290536, 'qy': 0.6916031793914055, 'qz': -0.1343292474190838, 'qw': 0.6893318041314269},
-        '3': {'x': 0.534307, 'y': 0.022779, 'z': 0.07013, 'qx': 0.005501635405972222, 'qy': 0.7615834706002862, 'qz': 0.0038409704231054664, 'qw': 0.6480320950867261},
-        '4': {'x': 0.25826499999999997, 'y': -0.375905, 'z': 0.119211, 'qx': 0.36553141687104584, 'qy': 0.7117821039701792, 'qz': -0.26971119739879656, 'qw': 0.5357321063234295}
+        '1': {'x': 0.501042, 'y': 0.246609, 'z': 0.049905},
+        '2': {'x': 0.32700399999999996, 'y': -0.256285, 'z': 0.03959},
+        '3': {'x': 0.534307, 'y': 0.022779, 'z': 0.07013},
+        '4': {'x': 0.25826499999999997, 'y': -0.375905, 'z': 0.119211}
     }
 
     # 您测量出来的待机位(关节0)
@@ -285,11 +357,11 @@ def main():
                 pick_id = data.get("pick_name", "Pick")
                 place_id = data.get("place_name", "Place")
                 
-                POSE_PICK = pick_pose.copy()
+                POSE_PICK = node._normalize_target_pose(pick_pose)
                 POSE_PICK_UP = POSE_PICK.copy()
                 POSE_PICK_UP['z'] += 0.13  # 抬起脱离高 13cm
                 
-                POSE_PLACE = place_pose.copy()
+                POSE_PLACE = node._normalize_target_pose(place_pose)
                 POSE_PLACE_PRE = POSE_PLACE.copy()
                 POSE_PLACE_PRE['z'] += 0.05  # 放置位上方 5cm (连贯预放点)
                 POSE_PLACE_UP = POSE_PLACE.copy()
@@ -309,10 +381,10 @@ def main():
                     node.operate_gripper(GRIPPER_OPEN, "张开夹爪(准备抓取)")
 
                     # 【第一步】 抓取过渡(防止碰桌面)
-                    if not node.move_arm_cartesian(POSE_PICK_UP, "抓取位上方过渡点"): success = False; break
+                    if not node.move_arm_cartesian(POSE_PICK_UP, POSE_PICK, "抓取位上方过渡点"): success = False; break
                     
                     # 【第二步】 下降抓取
-                    if not node.move_arm_cartesian(POSE_PICK, "进入抓取位 (Pick)"): success = False; break
+                    if not node.move_arm_cartesian(POSE_PICK, POSE_PICK, "进入抓取位 (Pick)"): success = False; break
                     
                     # 【第三步】 闭合夹爪
                     node.operate_gripper(GRIPPER_CLOSE, "闭合夹爪(拿取)")
@@ -321,16 +393,16 @@ def main():
                     if not node.move_arm_cartesian(POSE_PICK_UP, "提起物品 (Lift)"): success = False; break
                     
                     # 【第五步】 移动到放置位上方5cm
-                    if not node.move_arm_cartesian(POSE_PLACE_PRE, "进入放置预备位 (上方5cm)", continuous=True): success = False; break
+                    if not node.move_arm_cartesian(POSE_PLACE_PRE, POSE_PLACE, "进入放置预备位 (上方5cm)", continuous=True): success = False; break
 
                     # 【第五点五步】 连贯微降到放置位
-                    if not node.move_arm_cartesian(POSE_PLACE, "进入放置位 (Place)"): success = False; break
+                    if not node.move_arm_cartesian(POSE_PLACE, POSE_PLACE, "进入放置位 (Place)"): success = False; break
                     
                     # 【第六步】 松开夹爪释放物品
                     node.operate_gripper(GRIPPER_OPEN, "松开夹爪(释放)")
                     
                     # 【第七步】 脱离放置位回到上方过渡点
-                    if not node.move_arm_cartesian(POSE_PLACE_UP, "撤出物品上方"): success = False; break
+                    if not node.move_arm_cartesian(POSE_PLACE_UP, POSE_PLACE, "撤出物品上方"): success = False; break
                 
                 if not success:
                     print("\n⚠️ 执行失败 (错误码可能为 99999 或其他)！启动自动退回防护...")

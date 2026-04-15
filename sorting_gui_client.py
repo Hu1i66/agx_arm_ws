@@ -35,10 +35,6 @@ def ros_process_worker(cmd_queue, status_queue, pose_queue):
                     'x': trans.transform.translation.x,
                     'y': trans.transform.translation.y,
                     'z': trans.transform.translation.z,
-                    'qx': trans.transform.rotation.x,
-                    'qy': trans.transform.rotation.y,
-                    'qz': trans.transform.rotation.z,
-                    'qw': trans.transform.rotation.w
                 }
                 while not pose_queue.empty():
                     pose_queue.get_nowait()
@@ -82,11 +78,27 @@ class SortingApp(tk.Tk):
         self.setup_ui()
         self._update_status_loop()
 
+    def _normalize_pose(self, pose):
+        if not isinstance(pose, dict):
+            return None
+        if not all(key in pose for key in ('x', 'y', 'z')):
+            return None
+        return {
+            'x': float(pose['x']),
+            'y': float(pose['y']),
+            'z': float(pose['z']),
+        }
+
     def load_poses(self):
         if os.path.exists(self.saved_poses_file):
             try:
                 with open(self.saved_poses_file, 'r') as f:
-                    self.poses = json.load(f)
+                    raw_poses = json.load(f)
+                self.poses = {}
+                for name, pose in raw_poses.items():
+                    normalized = self._normalize_pose(pose)
+                    if normalized is not None:
+                        self.poses[name] = normalized
             except:
                 self.poses = {}
         else:
@@ -205,8 +217,8 @@ class SortingApp(tk.Tk):
         if pose:
             self.current_fetched_pose = pose
             pos_str = f"x:{pose['x']:.2f}, y:{pose['y']:.2f}, z:{pose['z']:.2f}"
-            self.pose_text_var.set(f"已读取: {pos_str} (姿态已保存)")
-            messagebox.showinfo("读取成功", "成功读取了机械臂当前的法兰盘坐标！")
+            self.pose_text_var.set(f"已读取: {pos_str} (仅保存 xyz)")
+            messagebox.showinfo("读取成功", "成功读取了机械臂当前的法兰盘坐标（仅 xyz）！")
         else:
             messagebox.showwarning("警告", "最新TF位姿尚未准备好或无法获取（确保后台在跑，并且机械臂状态正常）。")
 
@@ -219,7 +231,7 @@ class SortingApp(tk.Tk):
             messagebox.showerror("错误", "请先点击【读取机械臂当前位置】！")
             return
             
-        self.poses[name] = self.current_fetched_pose
+        self.poses[name] = self._normalize_pose(self.current_fetched_pose)
         self.save_poses()
         messagebox.showinfo("成功", f"坐标 '{name}' 已经保存！")
 
