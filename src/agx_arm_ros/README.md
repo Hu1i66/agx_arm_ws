@@ -229,7 +229,10 @@ python3 /home/lxf/agx_arm_ws/sorting_gui_client.py
 
 ### 仿真gazebo
 > **建议：实机与仿真不要同时运行。切换模式前先关闭另一侧进程。**
+```bash+
 pkill -f 'gzserver|gzclient|agx_sim_bridge|gripper_mirror_controller|move_group|rviz2|ros2_control_node' || true
+```
+
 **推荐（仿真专用一键启动）：**
 ```bash
 cd /home/lxf/agx_arm_ws

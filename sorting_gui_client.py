@@ -9,12 +9,19 @@ import time
 def ros_process_worker(cmd_queue, status_queue, pose_queue):
     import rclpy
     from rclpy.node import Node
+    from rclpy.logging import LoggingSeverity, set_logger_level
     from std_msgs.msg import String
     import tf2_ros
     
     class HeadlessROSNode(Node):
         def __init__(self):
             super().__init__('sorting_headless_client_node')
+            for logger_name in ('tf2', 'tf2_ros', 'tf2_buffer', 'tf2_ros_buffer'):
+                try:
+                    set_logger_level(logger_name, LoggingSeverity.ERROR)
+                except Exception:
+                    pass
+
             self.cmd_pub = self.create_publisher(String, '/sorting_cmds', 10)
             self.status_sub = self.create_subscription(String, '/sorting_status', self.status_cb, 10)
             self.tf_buffer = tf2_ros.Buffer()
@@ -78,27 +85,20 @@ class SortingApp(tk.Tk):
         self.setup_ui()
         self._update_status_loop()
 
-    def _normalize_pose(self, pose):
-        if not isinstance(pose, dict):
-            return None
-        if not all(key in pose for key in ('x', 'y', 'z')):
-            return None
-        return {
-            'x': float(pose['x']),
-            'y': float(pose['y']),
-            'z': float(pose['z']),
-        }
-
     def load_poses(self):
         if os.path.exists(self.saved_poses_file):
             try:
                 with open(self.saved_poses_file, 'r') as f:
-                    raw_poses = json.load(f)
-                self.poses = {}
-                for name, pose in raw_poses.items():
-                    normalized = self._normalize_pose(pose)
-                    if normalized is not None:
-                        self.poses[name] = normalized
+                    raw = json.load(f)
+                    self.poses = {
+                        name: {
+                            'x': float(pose['x']),
+                            'y': float(pose['y']),
+                            'z': float(pose['z']),
+                        }
+                        for name, pose in raw.items()
+                        if isinstance(pose, dict) and all(k in pose for k in ('x', 'y', 'z'))
+                    }
             except:
                 self.poses = {}
         else:
@@ -217,8 +217,8 @@ class SortingApp(tk.Tk):
         if pose:
             self.current_fetched_pose = pose
             pos_str = f"x:{pose['x']:.2f}, y:{pose['y']:.2f}, z:{pose['z']:.2f}"
-            self.pose_text_var.set(f"已读取: {pos_str} (仅保存 xyz)")
-            messagebox.showinfo("读取成功", "成功读取了机械臂当前的法兰盘坐标（仅 xyz）！")
+            self.pose_text_var.set(f"已读取: {pos_str}")
+            messagebox.showinfo("读取成功", "成功读取了机械臂当前的法兰盘坐标！")
         else:
             messagebox.showwarning("警告", "最新TF位姿尚未准备好或无法获取（确保后台在跑，并且机械臂状态正常）。")
 
@@ -231,7 +231,11 @@ class SortingApp(tk.Tk):
             messagebox.showerror("错误", "请先点击【读取机械臂当前位置】！")
             return
             
-        self.poses[name] = self._normalize_pose(self.current_fetched_pose)
+        self.poses[name] = {
+            'x': float(self.current_fetched_pose['x']),
+            'y': float(self.current_fetched_pose['y']),
+            'z': float(self.current_fetched_pose['z']),
+        }
         self.save_poses()
         messagebox.showinfo("成功", f"坐标 '{name}' 已经保存！")
 

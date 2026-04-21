@@ -1,0 +1,134 @@
+sorting_cycle:
+  frame_id: base_link
+  arm_group_name: arm
+  move_action_name: /move_action
+  gripper_action_name: /gripper_controller/follow_joint_trajectory
+  prepare_service_name: /sorting/prepare_once
+  trigger_service_name: /sorting/trigger_once
+  sorting_cmd_topic_name: /sorting_cmds
+  status_topic_name: /sorting/state
+  result_topic_name: /sorting/cycle_result
+
+  workspace_limits:
+    x: [0.02, 0.62]
+    y: [-0.45, 0.35]
+    z: [0.03, 0.45]
+
+  planning:
+    num_planning_attempts: 5
+    allowed_planning_time: 5.0
+    velocity_scale: 0.4
+    acceleration_scale: 0.4
+    position_tolerance_m: 0.015
+    orientation_tolerance_rad: 0.8
+
+  standby_joint_values_rad: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+  gripper:
+    joint_names: [gripper_joint1, gripper_joint2]
+    open_positions_rad: [0.045, -0.045]
+    close_positions_rad: [0.020, -0.020]
+    motion_duration_sec: 1.0
+    close_check_tolerance_rad: 0.015
+    diameter_to_open:
+      min_diameter_m: 0.04
+      max_diameter_m: 0.08
+      min_open_rad: 0.030
+      max_open_rad: 0.055
+      close_delta_rad: 0.020
+
+  poses:
+    pick_pose:
+      x: 0.32244416035282825
+      y: 0.2738823381909469
+      z: 0.1425407917169573
+      qx: -0.3292696806917538
+      qy: 0.9382048775270533
+      qz: 0.06226871514265597
+      qw: 0.0864620857722064
+    place_pose:
+      x: 0.16
+      y: -0.25
+      z: 0.10
+      qx: 0.6278756620652349
+      qy: 0.7753946698402227
+      qz: -0.03287425354118073
+      qw: 0.058775355580594026
+
+  offsets:
+    pre_pick_z_offset_m: 0.08
+    lift_z_offset_m: 0.14
+    pre_place_z_offset_m: 0.10
+
+  safety:
+    settle_wait_sec: 0.4
+    auto_recover_to_standby_on_fail: true
+
+dataset_collection:
+  dataset_csv_path: /home/lxf/agx_arm_ws/sorting_dataset.csv
+  dataset_version: v2_kinematic
+  rewrite_dataset_on_start: true
+  controller_backend: auto_sorting_action
+  action_server_status_topic: /sorting_status
+  action_server_result_topic: /sorting/cycle_result
+  resume_mode: false
+  reset_scene_each_round: false
+  enable_random_spawn: true
+
+  random_spawn:
+    angle_min_deg: -90.0
+    angle_max_deg: 90.0
+    radius_min_m: 0.20
+    max_reach_m: 0.52
+    z_m: 0.1425407917169573
+    diameter_min_m: 0.045
+    diameter_max_m: 0.075
+
+  fruit:
+    model_name: fruit_sample
+    model_reference_frame: world
+    mass_kg: 0.04
+    spawn_pose_m:
+      x: 0.32244416035282825
+      y: 0.2738823381909469
+      z: 0.1425407917169573
+
+  place_check:
+    reference_frame: world
+    target_xyz_m: [0.16, -0.25, 0.10]
+    xy_tolerance_m: 0.06
+    z_tolerance_m: 0.08
+
+  grasp_check:
+    minimum_lift_delta_z_m: 0.03
+
+  gazebo_api:
+    reset_service_candidates: [/reset_simulation, /reset_world]
+    spawn_service: /spawn_entity
+    delete_service: /delete_entity
+    get_entity_state_service: /gazebo/get_entity_state
+    set_entity_state_service: /gazebo/set_entity_state
+    set_light_service: /gazebo/set_light_properties
+    light_name: sun
+    light_entity_name: sun
+    light_height_m: 8.0
+
+  sweep:
+    diameters_m: [0.045, 0.055, 0.065]
+    orientation_rpy_rad:
+      - [0.0, 0.0, 0.0]
+      - [0.0, 0.20, 0.0]
+      - [0.10, 0.0, -0.20]
+    light_intensities:
+      - 0.5
+      - 0.8
+      - 1.0
+    light_angles_deg:
+      - [50.0, -20.0]
+      - [60.0, 30.0]
+    repeats_per_case: 2
+
+  timing:
+    post_spawn_wait_sec: 0.5
+    post_action_wait_sec: 0.5
+    service_wait_timeout_sec: 4.0
