@@ -12,7 +12,9 @@ __pycache__/
 *.pyo
 *.pyd
 .venv/
+.venv_mjx/
 third_party/python/**/__pycache__/
+*.deb
 
 # VSCode
 .vscode/

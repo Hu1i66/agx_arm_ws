@@ -91,8 +91,19 @@ class MoveItActionClient(Node):
         
         # 强制将规划起点绑定到我们追踪的 MOCK/底层的最新状态，杜绝真实机械臂状态漂移导致的 -4 错误
         if self.current_joints:
-            goal_msg.request.start_state.joint_state.name = list(self.current_joints.keys())
-            goal_msg.request.start_state.joint_state.position = list(self.current_joints.values())
+            # 【仿真兼容性修复】：只提取 URDF 中标准存在的关节（joint1~6 和标准夹爪关节）。
+            # 过滤掉在仿真里或者老版本夹爪传过来的 'joint7', 'joint8', 'gripper' 等废弃伪名字，
+            # 否则 MoveIt 计算时校验 URDF 发现找不到这几个名字，会直接全部拒签 (Joint not found in model)。
+            valid_keys = [f"joint{i}" for i in range(1, 7)] + ['gripper_joint1', 'gripper_joint2']
+            names = []
+            positions = []
+            for k in valid_keys:
+                if k in self.current_joints:
+                    names.append(k)
+                    positions.append(self.current_joints[k])
+                    
+            goal_msg.request.start_state.joint_state.name = names
+            goal_msg.request.start_state.joint_state.position = positions
             
         # 适度提升速度，减少整体节拍时间。
         goal_msg.request.max_velocity_scaling_factor = 0.65
@@ -279,8 +290,15 @@ class MoveItActionClient(Node):
         req.group_name = 'arm'
         # 强制将规划起点绑定到我们追踪的 MOCK/底层的最新状态，杜绝真实机械臂状态漂移导致的 -4 错误
         if self.current_joints:
-            req.start_state.joint_state.name = list(self.current_joints.keys())
-            req.start_state.joint_state.position = list(self.current_joints.values())
+            valid_keys = [f"joint{i}" for i in range(1, 7)] + ['gripper_joint1', 'gripper_joint2']
+            names = []
+            positions = []
+            for k in valid_keys:
+                if k in self.current_joints:
+                    names.append(k)
+                    positions.append(self.current_joints[k])
+            req.start_state.joint_state.name = names
+            req.start_state.joint_state.position = positions
         req.waypoints = waypoints
         req.max_step = 0.005      # 极高细分度: 5mm 一步，提升控制轨迹顺滑度
         req.jump_threshold = 1.6 # 忽视轻微的冗余突变
@@ -419,8 +437,15 @@ class MoveItActionClient(Node):
             req.motion_plan_request.group_name = 'arm'
             # 强制将规划起点绑定到我们追踪的 MOCK/底层的最新状态，杜绝真实机 械臂状态漂移导致的 -4 错误
             if self.current_joints:
-                req.motion_plan_request.start_state.joint_state.name = list(self.current_joints.keys())
-                req.motion_plan_request.start_state.joint_state.position = list(self.current_joints.values())
+                valid_keys = [f"joint{i}" for i in range(1, 7)] + ['gripper_joint1', 'gripper_joint2']
+                names = []
+                positions = []
+                for k in valid_keys:
+                    if k in self.current_joints:
+                        names.append(k)
+                        positions.append(self.current_joints[k])
+                req.motion_plan_request.start_state.joint_state.name = names
+                req.motion_plan_request.start_state.joint_state.position = positions
             req.motion_plan_request.num_planning_attempts = int(profile['attempts'])
             req.motion_plan_request.allowed_planning_time = float(profile['time'])
             req.motion_plan_request.max_velocity_scaling_factor = 0.65

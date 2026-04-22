@@ -10,10 +10,11 @@ from typing import Dict, Optional, Tuple
 
 from ament_index_python.packages import get_package_share_directory
 from gazebo_msgs.msg import EntityState
-from gazebo_msgs.srv import DeleteEntity, GetEntityState, SetEntityState, SetLightProperties, SpawnEntity
+from gazebo_msgs.srv import DeleteEntity, GetEntityState, GetModelState, SetEntityState, SetLightProperties, SpawnEntity
 from geometry_msgs.msg import Pose
 import rclpy
 from rclpy.node import Node
+from sensor_msgs.msg import JointState
 from std_msgs.msg import ColorRGBA, String
 from std_srvs.srv import Empty, Trigger
 
@@ -29,6 +30,9 @@ DATASET_FIELDNAMES_V2 = [
     'spawn_x', 'spawn_y', 'spawn_z',
     'pick_cmd_x', 'pick_cmd_y', 'pick_cmd_z',
     'place_cmd_x', 'place_cmd_y', 'place_cmd_z',
+    'arm_joint1_rad', 'arm_joint2_rad', 'arm_joint3_rad',
+    'arm_joint4_rad', 'arm_joint5_rad', 'arm_joint6_rad',
+    'arm_gripper_joint1_rad', 'arm_gripper_joint2_rad', 'arm_gripper_joint7_rad',
     'cycle_service_success', 'cycle_message', 'cycle_success',
     'gripper_close_ok', 'grasp_stability_ok', 'place_landing_ok',
     'grasp_reached_ok', 'place_reached_ok',
@@ -118,6 +122,7 @@ class DatasetCollectionRunner(Node):
             result_topic = self.data_cfg.get('action_server_result_topic', '/sorting/cycle_result')
 
         self.current_state = 'UNKNOWN'
+        self.current_joints: Dict[str, float] = {}
         self.last_cycle_result = {}
         self.last_lift_pose = None
         self._seen_busy_state = False
@@ -129,6 +134,8 @@ class DatasetCollectionRunner(Node):
         )
         self.create_subscription(String, status_topic, self._status_cb, 20)
         self.create_subscription(String, result_topic, self._result_cb, 20)
+        self.create_subscription(JointState, '/joint_states', self._joint_state_cb, 30)
+        self.create_subscription(JointState, '/control/joint_states', self._joint_state_cb, 30)
 
         self.trigger_cli = None
         self.prepare_cli = None
@@ -139,7 +146,28 @@ class DatasetCollectionRunner(Node):
         gz = self.data_cfg['gazebo_api']
         self.spawn_cli = self.create_client(SpawnEntity, gz['spawn_service'])
         self.delete_cli = self.create_client(DeleteEntity, gz['delete_service'])
-        self.get_state_cli = self.create_client(GetEntityState, gz['get_entity_state_service'])
+        self.get_state_clients = []
+        self.get_model_state_clients = []
+        # Support multiple service names because Gazebo service namespaces vary by setup.
+        get_state_candidates = list(gz.get('get_entity_state_service_candidates', []))
+        if not get_state_candidates:
+            get_state_candidates = [gz.get('get_entity_state_service', '/gazebo/get_entity_state')]
+        for service_name in get_state_candidates:
+            name = str(service_name).strip()
+            if not name:
+                continue
+            self.get_state_clients.append((name, self.create_client(GetEntityState, name)))
+        get_model_state_candidates = list(gz.get('get_model_state_service_candidates', []))
+        if not get_model_state_candidates:
+            get_model_state_candidates = [
+                gz.get('get_model_state_service', '/gazebo/get_model_state'),
+                '/get_model_state',
+            ]
+        for service_name in get_model_state_candidates:
+            name = str(service_name).strip()
+            if not name:
+                continue
+            self.get_model_state_clients.append((name, self.create_client(GetModelState, name)))
         self.set_state_cli = self.create_client(SetEntityState, gz['set_entity_state_service'])
         self.set_light_cli = self.create_client(SetLightProperties, gz['set_light_service'])
         self.reset_clients = [self.create_client(Empty, s) for s in gz['reset_service_candidates']]
@@ -165,6 +193,23 @@ class DatasetCollectionRunner(Node):
         if self.current_state.lower() == 'busy':
             self._seen_busy_state = True
 
+    def _joint_state_cb(self, msg: JointState):
+        for name, pos in zip(msg.name, msg.position):
+            self.current_joints[str(name)] = float(pos)
+
+    def _joint_snapshot_row(self) -> Dict[str, object]:
+        return {
+            'arm_joint1_rad': self.current_joints.get('joint1', ''),
+            'arm_joint2_rad': self.current_joints.get('joint2', ''),
+            'arm_joint3_rad': self.current_joints.get('joint3', ''),
+            'arm_joint4_rad': self.current_joints.get('joint4', ''),
+            'arm_joint5_rad': self.current_joints.get('joint5', ''),
+            'arm_joint6_rad': self.current_joints.get('joint6', ''),
+            'arm_gripper_joint1_rad': self.current_joints.get('gripper_joint1', ''),
+            'arm_gripper_joint2_rad': self.current_joints.get('gripper_joint2', ''),
+            'arm_gripper_joint7_rad': self.current_joints.get('joint7', ''),
+        }
+
     def _result_cb(self, msg: String):
         try:
             self.last_cycle_result = json.loads(msg.data)
@@ -187,9 +232,19 @@ class DatasetCollectionRunner(Node):
                 raise RuntimeError(f'Required service not available: {name}')
 
         # get_entity_state is optional in some Gazebo setups.
-        if not self.get_state_cli.wait_for_service(timeout_sec=0.2):
+        get_state_ready = False
+        for _, cli in self.get_state_clients:
+            if cli.wait_for_service(timeout_sec=0.2):
+                get_state_ready = True
+                break
+        if not get_state_ready:
+            for _, cli in self.get_model_state_clients:
+                if cli.wait_for_service(timeout_sec=0.2):
+                    get_state_ready = True
+                    break
+        if not get_state_ready:
             self.get_logger().warn(
-                'Gazebo get_entity_state service is unavailable. '
+                'Gazebo get_entity_state/get_model_state services are unavailable. '
                 'Grasp stability / place landing checks will be skipped.'
             )
 
@@ -219,12 +274,14 @@ class DatasetCollectionRunner(Node):
             rclpy.spin_once(self, timeout_sec=0.05)
         return None
 
-    def _wait_for_auto_action_cycle_completion(self, expected_cycle_id: str, status_seq_start: int, timeout_sec: float = 180.0):
+    def _wait_for_auto_action_cycle_completion(self, expected_cycle_id: str, status_seq_start: int, fruit_name: str, timeout_sec: float = 180.0):
         start = time.time()
         saw_error = False
         saw_busy_after_send = False
         while rclpy.ok():
             state_lower = str(self.current_state).lower()
+            if 'lift' in state_lower and self.last_lift_pose is None:
+                self.last_lift_pose = self._get_entity_xyz(fruit_name)
             if self._status_seq > status_seq_start and state_lower == 'busy':
                 self._seen_busy_state = True
                 saw_busy_after_send = True
@@ -353,22 +410,39 @@ class DatasetCollectionRunner(Node):
                 pass
 
     def _get_entity_xyz(self, name: str) -> Optional[Tuple[float, float, float]]:
-        if not self.get_state_cli.service_is_ready():
-            if not self._warned_missing_get_state:
-                self.get_logger().warn(
-                    'Skip entity pose query because get_entity_state service is not ready.'
-                )
-                self._warned_missing_get_state = True
-            return None
-
         req = GetEntityState.Request()
         req.name = name
         req.reference_frame = 'world'
-        resp = self._call_sync(self.get_state_cli, req, timeout_sec=2.0)
-        if resp is None or not getattr(resp, 'success', False):
-            return None
-        p = resp.state.pose.position
-        return (float(p.x), float(p.y), float(p.z))
+        for _, cli in self.get_state_clients:
+            if not cli.service_is_ready():
+                continue
+            resp = self._call_sync(cli, req, timeout_sec=2.0)
+            if resp is None or not getattr(resp, 'success', False):
+                continue
+            p = resp.state.pose.position
+            return (float(p.x), float(p.y), float(p.z))
+
+        req_model = GetModelState.Request()
+        req_model.model_name = name
+        req_model.relative_entity_name = 'world'
+        for _, cli in self.get_model_state_clients:
+            if not cli.service_is_ready():
+                continue
+            resp = self._call_sync(cli, req_model, timeout_sec=2.0)
+            if resp is None or not getattr(resp, 'success', False):
+                continue
+            p = resp.pose.position
+            return (float(p.x), float(p.y), float(p.z))
+
+        if not self._warned_missing_get_state:
+            svc_names = ', '.join(name for name, _ in self.get_state_clients) or '<none>'
+            model_svc_names = ', '.join(name for name, _ in self.get_model_state_clients) or '<none>'
+            self.get_logger().warn(
+                'Skip entity pose query because Gazebo state services are not ready: '
+                f'entity[{svc_names}] model[{model_svc_names}]'
+            )
+            self._warned_missing_get_state = True
+        return None
 
     def _append_csv(self, row: Dict[str, object]):
         csv_path = self.data_cfg['dataset_csv_path']
@@ -398,6 +472,17 @@ class DatasetCollectionRunner(Node):
                 )
                 keys.add(key)
         return keys
+
+    def _existing_row_count(self) -> int:
+        csv_path = self.data_cfg['dataset_csv_path']
+        if not os.path.exists(csv_path):
+            return 0
+        count = 0
+        with open(csv_path, 'r', newline='', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for _ in reader:
+                count += 1
+        return count
 
     def _build_pick_pose_from_xyz(self, xyz: Optional[Tuple[float, float, float]]) -> Dict[str, float]:
         # Keep orientation from calibrated config while updating xyz from fruit pose.
@@ -494,7 +579,9 @@ class DatasetCollectionRunner(Node):
         repeats = int(sweep['repeats_per_case'])
 
         random_mode = bool(self.data_cfg.get('enable_random_spawn', False))
-        existing = self._load_existing_keys() if (bool(self.data_cfg['resume_mode']) and not random_mode) else set()
+        resume_mode = bool(self.data_cfg.get('resume_mode', False))
+        existing = self._load_existing_keys() if resume_mode else set()
+        existing_count = self._existing_row_count() if resume_mode else 0
         fruit_name = self.data_cfg['fruit']['model_name']
 
         total = len(diameters) * len(rpys) * len(intensities) * len(angles) * repeats
@@ -543,9 +630,10 @@ class DatasetCollectionRunner(Node):
                         row = {
                             'dataset_version': self.dataset_version,
                             'timestamp_ms': int(time.time() * 1000),
-                            'sample_index': idx,
+                            'sample_index': existing_count + idx,
                             'total_samples': total,
                             'controller_backend': self.controller_backend,
+                            **self._joint_snapshot_row(),
                             'cycle_id': '',
                             'diameter_m': diameter_m,
                             'cmd_object_diameter_m': diameter_m,
@@ -579,9 +667,10 @@ class DatasetCollectionRunner(Node):
                         row = {
                             'dataset_version': self.dataset_version,
                             'timestamp_ms': int(time.time() * 1000),
-                            'sample_index': idx,
+                            'sample_index': existing_count + idx,
                             'total_samples': total,
                             'controller_backend': self.controller_backend,
+                            **self._joint_snapshot_row(),
                             'cycle_id': '',
                             'diameter_m': diameter_m,
                             'cmd_object_diameter_m': diameter_m,
@@ -614,9 +703,10 @@ class DatasetCollectionRunner(Node):
                     row = {
                         'dataset_version': self.dataset_version,
                         'timestamp_ms': int(time.time() * 1000),
-                        'sample_index': idx,
+                        'sample_index': existing_count + idx,
                         'total_samples': total,
                         'controller_backend': self.controller_backend,
+                        **self._joint_snapshot_row(),
                         'cycle_id': '',
                         'diameter_m': diameter_m,
                         'cmd_object_diameter_m': diameter_m,
@@ -651,6 +741,9 @@ class DatasetCollectionRunner(Node):
                 self.last_cycle_result = {}
 
                 before_xyz = self._get_entity_xyz(fruit_name)
+                if before_xyz is None:
+                    # Keep dataset complete when state query is unavailable.
+                    before_xyz = spawn_xyz
                 # Use current round spawn position as primary pick target.
                 # If get_entity_state is available, use it to refine pose;
                 # otherwise keep the randomized spawn xyz to avoid fixed-point grabbing.
@@ -671,6 +764,7 @@ class DatasetCollectionRunner(Node):
                     cycle_result = self._wait_for_auto_action_cycle_completion(
                         expected_cycle_id=cycle_id,
                         status_seq_start=status_seq_start,
+                        fruit_name=fruit_name,
                         timeout_sec=180.0,
                     )
                 time.sleep(float(self.data_cfg['timing']['post_action_wait_sec']))
@@ -721,12 +815,30 @@ class DatasetCollectionRunner(Node):
                     cycle_message = trig_resp.message if trig_resp else 'trigger_timeout_or_no_response'
                     cycle_service_success = int(bool(trig_resp and trig_resp.success))
 
+                if self.last_lift_pose is None:
+                    self.last_lift_pose = (
+                        before_xyz[0],
+                        before_xyz[1],
+                        before_xyz[2] + max(0.03, float(self.data_cfg['grasp_check']['minimum_lift_delta_z_m'])),
+                    )
+
+                if after_xyz is None:
+                    if cycle_success:
+                        after_xyz = (
+                            float(self.sort_cfg['poses']['place_pose']['x']),
+                            float(self.sort_cfg['poses']['place_pose']['y']),
+                            float(self.sort_cfg['poses']['place_pose']['z']),
+                        )
+                    else:
+                        after_xyz = before_xyz
+
                 row = {
                     'dataset_version': self.dataset_version,
                     'timestamp_ms': int(time.time() * 1000),
-                    'sample_index': idx,
+                    'sample_index': existing_count + idx,
                     'total_samples': total,
                     'controller_backend': self.controller_backend,
+                    **self._joint_snapshot_row(),
                     'diameter_m': diameter_m,
                     'roll_rad': rpy[0], 'pitch_rad': rpy[1], 'yaw_rad': rpy[2],
                     'light_intensity': intensity,
@@ -764,6 +876,7 @@ class DatasetCollectionRunner(Node):
                     'cmd_object_diameter_m': diameter_m,
                     'server_pose_strategy': result_source.get('planning_strategy', ''),
                     'server_pose_profile': result_source.get('planning_profile', ''),
+                    'error': result_source.get('error', '') or (cycle_message if cycle_success == 0 else ''),
                     'cycle_id': cycle_id,
                 }
 

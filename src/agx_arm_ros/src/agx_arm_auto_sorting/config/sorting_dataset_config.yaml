@@ -67,19 +67,19 @@ sorting_cycle:
 dataset_collection:
   dataset_csv_path: /home/lxf/agx_arm_ws/sorting_dataset.csv
   dataset_version: v2_kinematic
-  rewrite_dataset_on_start: true
+  rewrite_dataset_on_start: false
   controller_backend: auto_sorting_action
   action_server_status_topic: /sorting_status
   action_server_result_topic: /sorting/cycle_result
-  resume_mode: false
+  resume_mode: true
   reset_scene_each_round: false
   enable_random_spawn: true
 
   random_spawn:
     angle_min_deg: -90.0
     angle_max_deg: 90.0
-    radius_min_m: 0.20
-    max_reach_m: 0.52
+    radius_min_m: 0.12
+    max_reach_m: 0.58
     z_m: 0.1425407917169573
     diameter_min_m: 0.045
     diameter_max_m: 0.075
@@ -107,6 +107,9 @@ dataset_collection:
     spawn_service: /spawn_entity
     delete_service: /delete_entity
     get_entity_state_service: /gazebo/get_entity_state
+    get_entity_state_service_candidates: [/gazebo/get_entity_state, /get_entity_state]
+    get_model_state_service: /gazebo/get_model_state
+    get_model_state_service_candidates: [/gazebo/get_model_state, /get_model_state]
     set_entity_state_service: /gazebo/set_entity_state
     set_light_service: /gazebo/set_light_properties
     light_name: sun
