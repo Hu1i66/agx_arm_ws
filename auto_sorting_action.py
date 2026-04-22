@@ -18,6 +18,9 @@ from sensor_msgs.msg import JointState
 from control_msgs.action import FollowJointTrajectory
 from trajectory_msgs.msg import JointTrajectoryPoint
 
+# IK Solver imports
+from agx_arm_msgs.msg import PoseCmd, IKSolution
+
 class MoveItActionClient(Node):
     def __init__(self):
         super().__init__('piper_moveit_action_client')
@@ -45,11 +48,27 @@ class MoveItActionClient(Node):
         self.is_busy = False
         self.last_planning_profile_name = ''
         self.last_planning_strategy = ''
+        
+        # ========== IK Solver 集成 ==========
+        self.enable_ik = False  # 可开关的 IK 分支（默认关闭）
+        self.ik_solution = None  # 缓存最新的 IK 解
+        self.ik_ready = False
+        
+        # IK Solver 消息通信
+        self.pose_cmd_pub = self.create_publisher(PoseCmd, '/pose_cmd', 10)
+        self.ik_solution_sub = self.create_subscription(
+            IKSolution, '/ik_solution', self._ik_solution_callback, 10
+        )
 
     def _joint_states_cb(self, msg):
         if self.current_joints is None:
             self.current_joints = {}
         self.current_joints.update(dict(zip(msg.name, msg.position)))
+
+    def _ik_solution_callback(self, msg: IKSolution):
+        """缓存 IK 求解器的最新输出"""
+        self.ik_solution = msg
+        self.ik_ready = msg.success
 
     def _suppress_tf_old_data_logs(self):
         # Suppress noisy TF_OLD_DATA warnings in this process only.
@@ -356,6 +375,62 @@ class MoveItActionClient(Node):
             
         self.get_logger().error(f"❌ 轨迹执行失败，错误码 {res_exec.result.error_code.val}")
         return False
+    
+    def move_arm_via_ik(self, pose_dict, orientation_quat, desc):
+        """
+        使用 Pinocchio IK 求解关键点，作为 MoveIt2 的初值或备选方案
+        
+        Args:
+            pose_dict: {'x', 'y', 'z'} 目标位置
+            orientation_quat: [qx, qy, qz, qw] 目标四元数
+            desc: 动作描述
+        
+        Returns:
+            (success, joint_angles) 或 (False, None)
+        """
+        if not self.enable_ik or not self.pose_cmd_pub.get_subscription_count() > 0:
+            print(f"⚠️ IK 求解器未启用或未准备好，跳过 IK 规划")
+            return False, None
+        
+        print(f"\n🤖 正在调用 Pinocchio IK 求解机制 -> {desc}")
+        
+        # 构造 IK 请求
+        pose_cmd = PoseCmd()
+        pose_cmd.x = float(pose_dict['x'])
+        pose_cmd.y = float(pose_dict['y'])
+        pose_cmd.z = float(pose_dict['z'])
+        pose_cmd.qx = float(orientation_quat[0])
+        pose_cmd.qy = float(orientation_quat[1])
+        pose_cmd.qz = float(orientation_quat[2])
+        pose_cmd.qw = float(orientation_quat[3])
+        pose_cmd.gripper_target = 0.0  # IK 仅用于关节求解，夹爪独立控制
+        
+        # 发送 IK 请求
+        self.pose_cmd_pub.publish(pose_cmd)
+        
+        # 等待 IK 解（最多等待 2 秒）
+        wait_start = time.time()
+        while time.time() - wait_start < 2.0:
+            if self.ik_ready and self.ik_solution:
+                sol = self.ik_solution
+                print(f"✅ IK 求解完成: error={sol.error:.4f}, time={sol.computation_time*1000:.1f}ms")
+                
+                if sol.success and sol.error < 0.1:  # 求解成功且误差小
+                    joint_angles = [
+                        sol.joint1, sol.joint2, sol.joint3,
+                        sol.joint4, sol.joint5, sol.joint6
+                    ]
+                    self.ik_ready = False  # 重置标志
+                    return True, joint_angles
+                else:
+                    print(f"⚠️ IK 求解成功但精度不足 (error={sol.error:.4f})")
+                    self.ik_ready = False
+                    return False, None
+            
+            time.sleep(0.05)
+        
+        print(f"⚠️ IK 求解超时 (无响应超过 2.0 秒)")
+        return False, None
 
     def move_arm_cartesian(
         self,
@@ -612,6 +687,15 @@ def main():
         rclpy.shutdown()
         return
     
+    # ========== IK 分支启用/禁用控制 ==========
+    # 修改此处来启用/禁用 Pinocchio IK 求解器分支（默认 False，避免 pinocchio 未安装导致崩溃）
+    enable_ik_solver = False  # <-- 设置为 True 来启用 IK 分支
+    node.enable_ik = enable_ik_solver
+    if node.enable_ik:
+        print("✅ Pinocchio IK 分支已启用 - 将在下降/放置步骤中尝试 IK 求解")
+    else:
+        print("⚠️ Pinocchio IK 分支已禁用 - 使用经典 MoveIt2 规划器")
+    
     # 您测量出来的待机位(关节0)
     JOINT_STANDBY = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     
@@ -741,14 +825,32 @@ def main():
                     # 【第二步】 下降抓取 (直线插补为主，遇限位转并发规划)
                     active_ori = getattr(node, 'last_successful_orientation', pick_orientation[0])
                     pose_pick_msg = node._create_pose(POSE_PICK, active_ori)
-                    if not node.execute_cartesian_path([pose_pick_msg], "下降抓取 (直线插补)"):
-                        print("🟡 直线插补受限！启动多路并发退避规划...")
-                        if not node.move_arm_cartesian(POSE_PICK, "下降抓取 (退避规划)", continuous=True, preferred_orientation=active_ori, allow_position_only_fallback=True, planning_mode='descend'):
-                            success = False; break
-                        if node.last_planning_strategy:
-                            cycle_strategies.append(node.last_planning_strategy)
-                        if node.last_planning_profile_name:
-                            cycle_profiles.append(node.last_planning_profile_name)
+                    
+                    # ========== 可选 IK 分支（当 enable_ik 为 True 时） ==========
+                    descent_success = False
+                    if node.enable_ik:
+                        print("💡 IK 分支已启用，尝试 Pinocchio 求解...")
+                        ik_ok, ik_joints = node.move_arm_via_ik(POSE_PICK, [active_ori.x, active_ori.y, active_ori.z, active_ori.w], "下降抓取 (IK 求解)")
+                        if ik_ok and ik_joints:
+                            print(f"🎯 IK 求解成功，执行关节空间轨迹: {[f'{j:.3f}' for j in ik_joints]}")
+                            if node.move_arm_joint(ik_joints, "下降抓取 (IK 方案)", continuous=True):
+                                descent_success = True
+                                cycle_strategies.append('ik_joint_space')
+                                cycle_profiles.append('ik_solution')
+                            else:
+                                print("⚠️ IK 关节执行失败，回退到 MoveIt2...")
+                    
+                    if not descent_success:
+                        # ========== 原有 MoveIt2 回退方案 ==========
+                        if not node.execute_cartesian_path([pose_pick_msg], "下降抓取 (直线插补)"):
+                            print("🟡 直线插补受限！启动多路并发退避规划...")
+                            if not node.move_arm_cartesian(POSE_PICK, "下降抓取 (退避规划)", continuous=True, preferred_orientation=active_ori, allow_position_only_fallback=True, planning_mode='descend'):
+                                success = False; break
+                            if node.last_planning_strategy:
+                                cycle_strategies.append(node.last_planning_strategy)
+                            if node.last_planning_profile_name:
+                                cycle_profiles.append(node.last_planning_profile_name)
+
                     
                     # 【第三步】 闭合夹爪
                     node.operate_gripper(dynamic_close, "闭合夹爪(拿取)")
@@ -790,17 +892,36 @@ def main():
                     # 【第五点五步】 连贯微降到放置位 (直线插补为主，遇限位转并发规划)
                     active_ori = getattr(node, 'last_successful_orientation', place_orientation[0])
                     pose_place_msg = node._create_pose(POSE_PLACE, active_ori)
-                    if not node.execute_cartesian_path([pose_place_msg], "进入放置位 (直线插补)"):
-                        print("🟡 直线插补受限！启动多路并发退避规划...")
-                        if not node.move_arm_cartesian(POSE_PLACE, "进入放置位 (退避规划)", preferred_orientation=active_ori, allow_position_only_fallback=True, planning_mode='descend'):
-                            success = False; break
-                        if node.last_planning_strategy:
-                            cycle_strategies.append(node.last_planning_strategy)
-                        if node.last_planning_profile_name:
-                            cycle_profiles.append(node.last_planning_profile_name)
-                        place_reached_ok = True
-                    else:
-                        place_reached_ok = True
+                    
+                    # ========== 可选 IK 分支（当 enable_ik 为 True 时） ==========
+                    place_success = False
+                    if node.enable_ik:
+                        print("💡 IK 分支已启用，尝试 Pinocchio 求解...")
+                        ik_ok, ik_joints = node.move_arm_via_ik(POSE_PLACE, [active_ori.x, active_ori.y, active_ori.z, active_ori.w], "进入放置位 (IK 求解)")
+                        if ik_ok and ik_joints:
+                            print(f"🎯 IK 求解成功，执行关节空间轨迹: {[f'{j:.3f}' for j in ik_joints]}")
+                            if node.move_arm_joint(ik_joints, "进入放置位 (IK 方案)", continuous=True):
+                                place_reached_ok = True
+                                place_success = True
+                                cycle_strategies.append('ik_joint_space')
+                                cycle_profiles.append('ik_solution')
+                            else:
+                                print("⚠️ IK 关节执行失败，回退到 MoveIt2...")
+                    
+                    if not place_success:
+                        # ========== 原有 MoveIt2 回退方案 ==========
+                        if not node.execute_cartesian_path([pose_place_msg], "进入放置位 (直线插补)"):
+                            print("🟡 直线插补受限！启动多路并发退避规划...")
+                            if not node.move_arm_cartesian(POSE_PLACE, "进入放置位 (退避规划)", preferred_orientation=active_ori, allow_position_only_fallback=True, planning_mode='descend'):
+                                success = False; break
+                            if node.last_planning_strategy:
+                                cycle_strategies.append(node.last_planning_strategy)
+                            if node.last_planning_profile_name:
+                                cycle_profiles.append(node.last_planning_profile_name)
+                            place_reached_ok = True
+                        else:
+                            place_reached_ok = True
+
                     
                     # 【第六步】 松开夹爪释放物品
                     node.operate_gripper(dynamic_open, "松开夹爪(释放)")
