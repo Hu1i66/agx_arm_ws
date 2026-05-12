@@ -17,7 +17,6 @@ from sensor_msgs.msg import JointState
 from builtin_interfaces.msg import Time
 from std_srvs.srv import SetBool, Empty
 from geometry_msgs.msg import Pose, PoseStamped, PoseArray
-from scipy.spatial.transform import Rotation as R
 
 from agx_arm_msgs.msg import (
     AgxArmStatus, GripperStatus,
@@ -253,6 +252,39 @@ class AgxArmRosNode(Node):
             return tuple(int(x) for x in match.groups())
         return (0, 0, 0)
 
+    def _quat_to_euler(self, qx: float, qy: float, qz: float, qw: float):
+        """Convert quaternion (x,y,z,w) to Euler angles (roll, pitch, yaw)."""
+        t0 = +2.0 * (qw * qx + qy * qz)
+        t1 = +1.0 - 2.0 * (qx * qx + qy * qy)
+        roll = math.atan2(t0, t1)
+
+        t2 = +2.0 * (qw * qy - qz * qx)
+        t2 = +1.0 if t2 > +1.0 else t2
+        t2 = -1.0 if t2 < -1.0 else t2
+        pitch = math.asin(t2)
+
+        t3 = +2.0 * (qw * qz + qx * qy)
+        t4 = +1.0 - 2.0 * (qy * qy + qz * qz)
+        yaw = math.atan2(t3, t4)
+
+        return roll, pitch, yaw
+
+    def _euler_to_quat(self, roll: float, pitch: float, yaw: float):
+        """Convert Euler angles (roll, pitch, yaw) to quaternion (x,y,z,w)."""
+        cy = math.cos(yaw * 0.5)
+        sy = math.sin(yaw * 0.5)
+        cp = math.cos(pitch * 0.5)
+        sp = math.sin(pitch * 0.5)
+        cr = math.cos(roll * 0.5)
+        sr = math.sin(roll * 0.5)
+
+        qw = cr * cp * cy + sr * sp * sy
+        qx = sr * cp * cy - cr * sp * sy
+        qy = cr * sp * cy + sr * cp * sy
+        qz = cr * cp * sy - sr * sp * cy
+
+        return qx, qy, qz, qw
+
     def _safe_get_value(self, array, index, default=0.0) -> float:
         if index >= len(array):
             return default
@@ -301,8 +333,12 @@ class AgxArmRosNode(Node):
             pose.position.y,
             pose.position.z,
         ]
-        euler_angles = R.from_quat(quaternion).as_euler("xyz", degrees=False)
-        tcp_pose = pose_xyz + euler_angles.tolist()
+        # avoid SciPy dependency: use local quaternion->euler conversion
+        roll, pitch, yaw = self._quat_to_euler(
+            quaternion[0], quaternion[1], quaternion[2], quaternion[3]
+        )
+        euler_angles = [roll, pitch, yaw]
+        tcp_pose = pose_xyz + euler_angles
         flange_pose = self.agx_arm.get_tcp2flange_pose(tcp_pose)
         return flange_pose
 
@@ -450,7 +486,7 @@ class AgxArmRosNode(Node):
         pose2 = Pose()
         pose2.position.x, pose2.position.y, pose2.position.z = tcp_pose[0:3]
         roll, pitch, yaw = tcp_pose[3:6]
-        quaternion = R.from_euler("xyz", [roll, pitch, yaw]).as_quat()
+        quaternion = self._euler_to_quat(roll, pitch, yaw)
         pose2.orientation.x, pose2.orientation.y, pose2.orientation.z, pose2.orientation.w = quaternion
 
         msg = PoseStamped()
