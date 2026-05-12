@@ -50,7 +50,7 @@ class MoveItActionClient(Node):
         self.last_planning_strategy = ''
         
         # ========== IK Solver 集成 ==========
-        self.enable_ik = False  # 可开关的 IK 分支（默认关闭）
+        self.enable_ik = True  # 可开关的 IK 分支（默认关闭）
         self.ik_solution = None  # 缓存最新的 IK 解
         self.ik_ready = False
         
@@ -689,7 +689,7 @@ def main():
     
     # ========== IK 分支启用/禁用控制 ==========
     # 修改此处来启用/禁用 Pinocchio IK 求解器分支（默认 False，避免 pinocchio 未安装导致崩溃）
-    enable_ik_solver = False  # <-- 设置为 True 来启用 IK 分支
+    enable_ik_solver = True  # <-- 设置为 True 来启用 IK 分支
     node.enable_ik = enable_ik_solver
     if node.enable_ik:
         print("✅ Pinocchio IK 分支已启用 - 将在下降/放置步骤中尝试 IK 求解")

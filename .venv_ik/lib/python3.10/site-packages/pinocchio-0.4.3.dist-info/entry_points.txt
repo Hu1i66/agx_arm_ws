@@ -1,0 +1,9 @@
+[nose.plugins]
+figleaf-sections = pinocchio.figleaf_sections:FigleafSections
+
+[nose.plugins.0.10]
+decorator = pinocchio.decorator:Decorator
+output-save = pinocchio.output_save:OutputSave
+spec = pinocchio.spec:Spec
+stopwatch = pinocchio.stopwatch:Stopwatch
+

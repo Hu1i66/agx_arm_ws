@@ -1,0 +1,26 @@
+Metadata-Version: 2.1
+Name: pinocchio
+Version: 0.4.3
+Summary: pinocchio plugins for the nose testing framework
+Home-page: https://github.com/mkwiatkowski/pinocchio
+Author: C. Titus Brown and Michal Kwiatkowski
+Author-email: titus@idyll.org,michal@trivas.pl
+License: MIT
+Platform: UNKNOWN
+Classifier: Programming Language :: Python
+Classifier: Programming Language :: Python :: 3
+Classifier: Development Status :: 5 - Production/Stable
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Classifier: Environment :: Plugins
+Classifier: Topic :: Software Development :: Testing
+Requires-Dist: colorama
+
+Extra plugins for the nose testing framework.  Provides tools for flexibly
+assigning decorator tags to tests, choosing tests based on their
+runtime, doing moderately sophisticated code coverage analysis
+of your unit tests, and making your test descriptions look like
+specifications.
+
+

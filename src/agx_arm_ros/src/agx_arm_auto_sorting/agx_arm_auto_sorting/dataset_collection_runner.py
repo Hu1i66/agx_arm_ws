@@ -37,6 +37,9 @@ DATASET_FIELDNAMES_V2 = [
     'gripper_close_ok', 'grasp_stability_ok', 'place_landing_ok',
     'grasp_reached_ok', 'place_reached_ok',
     'label', 'elapsed_sec',
+    'grasp_phase_sec',
+    'grasp_target_error_x', 'grasp_target_error_y', 'grasp_target_error_z', 'grasp_target_error_m',
+    'grasp_lift_distance_m', 'grasp_avg_speed_mps',
     'server_pose_strategy', 'server_pose_profile',
     'before_x', 'before_y', 'before_z',
     'lift_x', 'lift_y', 'lift_z',
@@ -125,6 +128,7 @@ class DatasetCollectionRunner(Node):
         self.current_joints: Dict[str, float] = {}
         self.last_cycle_result = {}
         self.last_lift_pose = None
+        self.last_lift_time = None
         self._seen_busy_state = False
         self._status_seq = 0
         self.sort_cmd_pub = self.create_publisher(
@@ -186,6 +190,34 @@ class DatasetCollectionRunner(Node):
                 self.get_logger().info(f'Removed existing dataset file: {csv_path}')
             except Exception as exc:
                 self.get_logger().warn(f'Failed to remove existing dataset file {csv_path}: {exc}')
+
+        self._ensure_dataset_header_compatible()
+
+    def _ensure_dataset_header_compatible(self):
+        csv_path = self.data_cfg['dataset_csv_path']
+        if not os.path.exists(csv_path):
+            return
+
+        try:
+            with open(csv_path, 'r', newline='', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                existing_fields = list(reader.fieldnames or [])
+                if existing_fields == DATASET_FIELDNAMES_V2:
+                    return
+                rows = list(reader)
+
+            with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=DATASET_FIELDNAMES_V2, extrasaction='ignore')
+                writer.writeheader()
+                for old_row in rows:
+                    upgraded = {k: old_row.get(k, '') for k in DATASET_FIELDNAMES_V2}
+                    writer.writerow(upgraded)
+
+            self.get_logger().info(
+                f'Upgraded dataset header from {len(existing_fields)} to {len(DATASET_FIELDNAMES_V2)} columns.'
+            )
+        except Exception as exc:
+            self.get_logger().warn(f'Failed to upgrade dataset header for {csv_path}: {exc}')
 
     def _status_cb(self, msg: String):
         self.current_state = str(msg.data).strip()
@@ -263,6 +295,7 @@ class DatasetCollectionRunner(Node):
         while rclpy.ok():
             if self.current_state == 'MOVE_LIFT' and self.last_lift_pose is None:
                 self.last_lift_pose = self._get_entity_xyz(fruit_name)
+                self.last_lift_time = time.time()
 
             # `last_cycle_result` is cleared before each trigger, so any cycle_success here
             # belongs to the current round and can be used as completion signal directly.
@@ -282,6 +315,7 @@ class DatasetCollectionRunner(Node):
             state_lower = str(self.current_state).lower()
             if 'lift' in state_lower and self.last_lift_pose is None:
                 self.last_lift_pose = self._get_entity_xyz(fruit_name)
+                self.last_lift_time = time.time()
             if self._status_seq > status_seq_start and state_lower == 'busy':
                 self._seen_busy_state = True
                 saw_busy_after_send = True
@@ -738,6 +772,7 @@ class DatasetCollectionRunner(Node):
 
                 time.sleep(float(self.data_cfg['timing']['post_spawn_wait_sec']))
                 self.last_lift_pose = None
+                self.last_lift_time = None
                 self.last_cycle_result = {}
 
                 before_xyz = self._get_entity_xyz(fruit_name)
@@ -750,6 +785,7 @@ class DatasetCollectionRunner(Node):
                 effective_xyz = before_xyz if before_xyz is not None else spawn_xyz
                 pick_pose = self._build_pick_pose_from_xyz(effective_xyz)
                 cycle_id = f'{int(time.time() * 1000)}_{idx}_{repeat_idx}'
+                cmd_sent_time = time.time()
                 status_seq_start = self._status_seq
                 self._publish_sort_cmd(dict(pick_pose), float(diameter_m), cycle_id)
                 rclpy.spin_once(self, timeout_sec=0.05)
@@ -821,6 +857,7 @@ class DatasetCollectionRunner(Node):
                         before_xyz[1],
                         before_xyz[2] + max(0.03, float(self.data_cfg['grasp_check']['minimum_lift_delta_z_m'])),
                     )
+                    self.last_lift_time = time.time()
 
                 if after_xyz is None:
                     if cycle_success:
@@ -831,6 +868,37 @@ class DatasetCollectionRunner(Node):
                         )
                     else:
                         after_xyz = before_xyz
+
+                grasp_target_error_x = before_xyz[0] - float(pick_pose['x']) if before_xyz else ''
+                grasp_target_error_y = before_xyz[1] - float(pick_pose['y']) if before_xyz else ''
+                grasp_target_error_z = before_xyz[2] - float(pick_pose['z']) if before_xyz else ''
+                if before_xyz:
+                    grasp_target_error_m = math.sqrt(
+                        grasp_target_error_x ** 2 +
+                        grasp_target_error_y ** 2 +
+                        grasp_target_error_z ** 2
+                    )
+                else:
+                    grasp_target_error_m = ''
+
+                if before_xyz and self.last_lift_pose:
+                    grasp_lift_distance_m = math.sqrt(
+                        (self.last_lift_pose[0] - before_xyz[0]) ** 2 +
+                        (self.last_lift_pose[1] - before_xyz[1]) ** 2 +
+                        (self.last_lift_pose[2] - before_xyz[2]) ** 2
+                    )
+                else:
+                    grasp_lift_distance_m = ''
+
+                if self.last_lift_time is not None:
+                    grasp_phase_sec = max(0.0, float(self.last_lift_time - cmd_sent_time))
+                else:
+                    grasp_phase_sec = ''
+
+                if isinstance(grasp_lift_distance_m, float) and isinstance(grasp_phase_sec, float) and grasp_phase_sec > 1e-6:
+                    grasp_avg_speed_mps = grasp_lift_distance_m / grasp_phase_sec
+                else:
+                    grasp_avg_speed_mps = ''
 
                 row = {
                     'dataset_version': self.dataset_version,
@@ -851,6 +919,13 @@ class DatasetCollectionRunner(Node):
                     'place_reached_ok': place_reached_ok,
                     'label': label,
                     'elapsed_sec': round(time.time() - t0, 4),
+                    'grasp_phase_sec': grasp_phase_sec,
+                    'grasp_target_error_x': grasp_target_error_x,
+                    'grasp_target_error_y': grasp_target_error_y,
+                    'grasp_target_error_z': grasp_target_error_z,
+                    'grasp_target_error_m': grasp_target_error_m,
+                    'grasp_lift_distance_m': grasp_lift_distance_m,
+                    'grasp_avg_speed_mps': grasp_avg_speed_mps,
                     'cycle_service_success': cycle_service_success,
                     'cycle_message': cycle_message,
                     'cycle_success': cycle_success,
