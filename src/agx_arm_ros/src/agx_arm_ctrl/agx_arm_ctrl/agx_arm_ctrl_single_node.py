@@ -241,7 +241,17 @@ class AgxArmRosNode(Node):
     ### utility methods
     def _float_to_ros_time(self, timestamp: float) -> Time:
         """Convert float timestamp to ROS Time message """
-        return self.get_clock().now().to_msg()
+        if timestamp is None or math.isnan(timestamp):
+            return self.get_clock().now().to_msg()
+
+        msg = Time()
+        sec = int(timestamp)
+        nanosec = int((timestamp - sec) * 1e9)
+        if nanosec < 0:
+            nanosec = 0
+        msg.sec = sec
+        msg.nanosec = nanosec
+        return msg
 
     def _parse_firmware_version(self, version_str: str) -> Tuple[int, int, int]:
         if not version_str:

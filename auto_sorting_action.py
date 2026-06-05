@@ -6,6 +6,9 @@ import time
 import queue
 import json
 import math
+import sys
+import os
+import numpy as np
 from std_msgs.msg import String
 from rclpy.logging import LoggingSeverity, set_logger_level
 
@@ -18,8 +21,183 @@ from sensor_msgs.msg import JointState
 from control_msgs.action import FollowJointTrajectory
 from trajectory_msgs.msg import JointTrajectoryPoint
 
-# IK Solver imports
-from agx_arm_msgs.msg import PoseCmd, IKSolution
+# Pinocchio/CasADi path injection
+# CRITICAL: cmeel has the REAL pinocchio (3.9.0), .venv_ik has a fake stub (0.1).
+# cmeel must be at sys.path[0] to override .venv_ik's broken pinocchio.
+_venv_ik_path = "/home/lxf/agx_arm_ws/.venv_ik/lib/python3.10/site-packages"
+if os.path.exists(_venv_ik_path) and _venv_ik_path not in sys.path:
+    sys.path.insert(0, _venv_ik_path)
+_cmeel_path = "/home/lxf/.local/lib/python3.10/site-packages/cmeel.prefix/lib/python3.10/site-packages"
+if os.path.exists(_cmeel_path):
+    if _cmeel_path in sys.path:
+        sys.path.remove(_cmeel_path)
+    sys.path.insert(0, _cmeel_path)
+_ws_root = '/home/lxf/agx_arm_ws'
+if _ws_root not in sys.path:
+    sys.path.insert(0, _ws_root)
+
+import numpy as np
+import traceback
+from typing import Tuple, Optional
+
+# ---- Pinocchio IKSolver (inlined to avoid ROS2 msg dependency in pinocchio_ik_node) ----
+
+# State variables for lazy-loading
+_PINOCCHIO_AVAILABLE = False
+_CASADI_AVAILABLE = False
+_pin = None
+
+def _try_load_pinocchio():
+    global _PINOCCHIO_AVAILABLE, _CASADI_AVAILABLE, _pin
+    try:
+        import pinocchio as pin
+        _pin = pin
+        _PINOCCHIO_AVAILABLE = True
+    except ImportError:
+        _PINOCCHIO_AVAILABLE = False
+    try:
+        import casadi
+        _CASADI_AVAILABLE = True
+    except ImportError:
+        _CASADI_AVAILABLE = False
+
+
+class PinocchioIKSolver:
+    """Core IK solver using Pinocchio iterative DLS (no CasADi dependency at runtime)"""
+
+    def __init__(self, urdf_path: str, end_effector_name: str = "link6"):
+        _try_load_pinocchio()
+        if not _PINOCCHIO_AVAILABLE:
+            raise RuntimeError("Pinocchio not available")
+        if not _CASADI_AVAILABLE:
+            raise RuntimeError("CasADi not available")
+
+        self.urdf_path = urdf_path
+        self.ee_name = end_effector_name
+
+        self.model = _pin.buildModelFromUrdf(urdf_path)
+        self.data = self.model.createData()
+        self.ee_frame_id = self.model.getFrameId(end_effector_name)
+
+        self.joint_names = []
+        self.joint_ids = []
+        self.joint_q_indices = []
+        for i in range(1, 7):
+            joint_name = f"joint{i}"
+            try:
+                jid = self.model.getJointId(joint_name)
+                self.joint_names.append(joint_name)
+                self.joint_ids.append(jid)
+                self.joint_q_indices.append(self.model.joints[jid].idx_q)
+            except RuntimeError:
+                pass
+
+        if len(self.joint_ids) < 6:
+            raise RuntimeError(f"Expected 6 DOF joints, found {len(self.joint_ids)}")
+
+        self.ndof = len(self.joint_ids)
+        self._lo = self.model.lowerPositionLimit
+        self._hi = self.model.upperPositionLimit
+        print(f"✅ Pinocchio model loaded: {self.ndof} DOF, EE frame: {end_effector_name}")
+
+    def get_ik_solution(
+        self,
+        target_pos: np.ndarray,
+        target_quat: np.ndarray,
+        initial_guess: Optional[np.ndarray] = None,
+        max_iter: int = 500,
+        tol: float = 1e-4
+    ) -> Tuple[bool, np.ndarray, float, float]:
+        """Random sampling + random walk IK.
+        Optimizes position accuracy + z-axis direction (downward).
+        Yaw angle around z is free — suitable for grasping round objects.
+        """
+        t0 = time.time()
+
+        try:
+            target_pos_arr = np.array([float(target_pos[0]), float(target_pos[1]), float(target_pos[2])])
+            # Target z-axis direction (extracted from target_quat rotation)
+            tq = np.array(target_quat, dtype=float)
+            tq = tq / max(np.linalg.norm(tq), 1e-9)
+            target_se3 = _pin.XYZQUATToSE3(np.concatenate([target_pos_arr, tq]))
+            target_z = target_se3.rotation[:, 2].copy()  # Desired EE z-axis in world frame
+
+            lo6 = self._lo[:6]
+            hi6 = self._hi[:6]
+
+            def _combined_error(q_in):
+                """pos_err (m) + w * z_axis_angle_error (rad)"""
+                _pin.forwardKinematics(self.model, self.data, q_in)
+                _pin.updateFramePlacements(self.model, self.data)
+                pe = float(np.linalg.norm(
+                    self.data.oMf[self.ee_frame_id].translation - target_pos_arr))
+                actual_z = self.data.oMf[self.ee_frame_id].rotation[:, 2]
+                cos_angle = float(np.clip(np.dot(actual_z, target_z), -1.0, 1.0))
+                ze = float(np.arccos(cos_angle))  # 0=aligned, pi=opposite
+                return pe + 0.06 * ze, pe, ze
+
+            best_q = None
+            best_err = float('inf')
+
+            if initial_guess is not None:
+                q0 = _pin.neutral(self.model)
+                for i, idx in enumerate(self.joint_q_indices):
+                    q0[idx] = float(initial_guess[i])
+                ce, _, _ = _combined_error(q0)
+                if ce < best_err:
+                    best_err = ce
+                    best_q = q0.copy()
+
+            # Phase 1: Random uniform sampling
+            n_samples = 500
+            for _ in range(n_samples):
+                q = np.zeros(self.model.nq)
+                arm_q = np.random.uniform(lo6, hi6)
+                for i, idx in enumerate(self.joint_q_indices):
+                    q[idx] = arm_q[i]
+                ce, pe, ze = _combined_error(q)
+                if ce < best_err:
+                    best_err = ce
+                    best_q = q.copy()
+                    if pe < 0.005 and ze < 0.15:
+                        break
+
+            if best_q is None:
+                t1 = time.time()
+                return False, np.zeros(self.ndof), 999.0, (t1 - t0)
+
+            # Phase 2: Random walk refinement
+            q = best_q.copy()
+            n_walk = 6000
+            for _ in range(n_walk):
+                qt = q.copy()
+                sigma = max(0.003, best_err * 6.0)
+                noise = np.random.normal(0, sigma, 6)
+                for i, idx in enumerate(self.joint_q_indices):
+                    qt[idx] += noise[i]
+                np.clip(qt, self._lo, self._hi, out=qt)
+
+                ce, pe, ze = _combined_error(qt)
+                if ce < best_err:
+                    best_err = ce
+                    q = qt.copy()
+                    if pe < 0.005 and ze < 0.15:
+                        break
+
+            _, final_pe, final_ze = _combined_error(q)
+            q_sol = np.array([q[idx] for idx in self.joint_q_indices], dtype=float)
+            success = bool(final_pe < 0.015)
+
+            t1 = time.time()
+            return success, q_sol, final_pe, (t1 - t0)
+
+        except Exception as e:
+            print(f"❌ IK solver error: {e}")
+            traceback.print_exc()
+            t1 = time.time()
+            return False, np.zeros(self.ndof), 999.0, (t1 - t0)
+
+
 
 class MoveItActionClient(Node):
     def __init__(self):
@@ -49,26 +227,37 @@ class MoveItActionClient(Node):
         self.last_planning_profile_name = ''
         self.last_planning_strategy = ''
         
-        # ========== IK Solver 集成 ==========
-        self.enable_ik = True  # 可开关的 IK 分支（默认关闭）
-        self.ik_solution = None  # 缓存最新的 IK 解
-        self.ik_ready = False
-        
-        # IK Solver 消息通信
-        self.pose_cmd_pub = self.create_publisher(PoseCmd, '/pose_cmd', 10)
-        self.ik_solution_sub = self.create_subscription(
-            IKSolution, '/ik_solution', self._ik_solution_callback, 10
-        )
+        # ========== IK Solver 集成（内嵌 Pinocchio）==========
+        self.enable_ik = True
+        self.ik_solver = None
+        self._init_ik_solver()
 
     def _joint_states_cb(self, msg):
         if self.current_joints is None:
             self.current_joints = {}
         self.current_joints.update(dict(zip(msg.name, msg.position)))
 
-    def _ik_solution_callback(self, msg: IKSolution):
-        """缓存 IK 求解器的最新输出"""
-        self.ik_solution = msg
-        self.ik_ready = msg.success
+    def _init_ik_solver(self):
+        """初始化内嵌 Pinocchio IK 求解器（无需 ROS2 topic 通信）"""
+        try:
+            _try_load_pinocchio()
+            if not _PINOCCHIO_AVAILABLE or not _CASADI_AVAILABLE:
+                self.get_logger().warn("Pinocchio or CasADi not available, IK disabled")
+                self.enable_ik = False
+                return
+
+            urdf_path = '/home/lxf/agx_arm_ws/src/agx_arm_ros/src/agx_arm_moveit/config/test2.urdf'
+            if not os.path.exists(urdf_path):
+                self.get_logger().warn(f"URDF not found: {urdf_path}, IK disabled")
+                self.enable_ik = False
+                return
+
+            self.ik_solver = PinocchioIKSolver(urdf_path, 'link6')
+            self.get_logger().info("✅ Embedded Pinocchio IK solver ready")
+        except Exception as e:
+            import traceback
+            self.get_logger().warn(f"Failed to init embedded IK solver: {e}\n{traceback.format_exc()}")
+            self.enable_ik = False
 
     def _suppress_tf_old_data_logs(self):
         # Suppress noisy TF_OLD_DATA warnings in this process only.
@@ -243,6 +432,35 @@ class MoveItActionClient(Node):
 
         return [quat1, quat2]
 
+    def _build_pick_orientations_multi(self, target, num_yaw_samples=8):
+        """采样多个 yaw 角度生成候选姿态（供 IK 快速尝试）"""
+        orientations = []
+        z_axis = [0.0, 0.0, -1.0]
+
+        # 优先保留径向姿态（x 指向外侧），平滑抓取
+        radial_xy = [float(target['x']), float(target['y']), 0.0]
+        x_radial = self._normalize(radial_xy)
+        if abs(x_radial[0]) > 1e-6 or abs(x_radial[1]) > 1e-6:
+            y_radial = self._cross(z_axis, x_radial)
+            y_radial = self._normalize(y_radial)
+            orientations.append(self._matrix_to_quaternion(x_radial, y_radial, z_axis))
+            x_rev = [-v for v in x_radial]
+            y_rev = [-v for v in y_radial]
+            orientations.append(self._matrix_to_quaternion(x_rev, y_rev, z_axis))
+        else:
+            orientations.append(self._matrix_to_quaternion([1.0, 0.0, 0.0], [0.0, 1.0, 0.0], z_axis))
+            orientations.append(self._matrix_to_quaternion([-1.0, 0.0, 0.0], [0.0, -1.0, 0.0], z_axis))
+
+        # 均匀采样 yaw 角度
+        for i in range(num_yaw_samples):
+            angle = (2.0 * math.pi * i) / num_yaw_samples
+            x_axis = [math.cos(angle), math.sin(angle), 0.0]
+            y_axis = self._cross(z_axis, x_axis)
+            y_axis = self._normalize(y_axis)
+            orientations.append(self._matrix_to_quaternion(x_axis, y_axis, z_axis))
+
+        return orientations
+
     def _build_goal_constraints(
         self,
         pose_dict,
@@ -376,61 +594,102 @@ class MoveItActionClient(Node):
         self.get_logger().error(f"❌ 轨迹执行失败，错误码 {res_exec.result.error_code.val}")
         return False
     
-    def move_arm_via_ik(self, pose_dict, orientation_quat, desc):
+    def move_arm_via_ik(self, pose_dict, orientations, desc, continuous=False):
         """
-        使用 Pinocchio IK 求解关键点，作为 MoveIt2 的初值或备选方案
-        
+        内嵌 Pinocchio IK 求解 + 关节空间执行（同步，无需 ROS2 topic）
+
         Args:
             pose_dict: {'x', 'y', 'z'} 目标位置
-            orientation_quat: [qx, qy, qz, qw] 目标四元数
+            orientations: List[Quaternion] 候选姿态列表
             desc: 动作描述
-        
+            continuous: 连贯模式
+
         Returns:
             (success, joint_angles) 或 (False, None)
         """
-        if not self.enable_ik or not self.pose_cmd_pub.get_subscription_count() > 0:
-            print(f"⚠️ IK 求解器未启用或未准备好，跳过 IK 规划")
+        if not self.enable_ik or self.ik_solver is None:
             return False, None
-        
-        print(f"\n🤖 正在调用 Pinocchio IK 求解机制 -> {desc}")
-        
-        # 构造 IK 请求
-        pose_cmd = PoseCmd()
-        pose_cmd.x = float(pose_dict['x'])
-        pose_cmd.y = float(pose_dict['y'])
-        pose_cmd.z = float(pose_dict['z'])
-        pose_cmd.qx = float(orientation_quat[0])
-        pose_cmd.qy = float(orientation_quat[1])
-        pose_cmd.qz = float(orientation_quat[2])
-        pose_cmd.qw = float(orientation_quat[3])
-        pose_cmd.gripper_target = 0.0  # IK 仅用于关节求解，夹爪独立控制
-        
-        # 发送 IK 请求
-        self.pose_cmd_pub.publish(pose_cmd)
-        
-        # 等待 IK 解（最多等待 2 秒）
-        wait_start = time.time()
-        while time.time() - wait_start < 2.0:
-            if self.ik_ready and self.ik_solution:
-                sol = self.ik_solution
-                print(f"✅ IK 求解完成: error={sol.error:.4f}, time={sol.computation_time*1000:.1f}ms")
-                
-                if sol.success and sol.error < 0.1:  # 求解成功且误差小
-                    joint_angles = [
-                        sol.joint1, sol.joint2, sol.joint3,
-                        sol.joint4, sol.joint5, sol.joint6
-                    ]
-                    self.ik_ready = False  # 重置标志
-                    return True, joint_angles
-                else:
-                    print(f"⚠️ IK 求解成功但精度不足 (error={sol.error:.4f})")
-                    self.ik_ready = False
-                    return False, None
-            
-            time.sleep(0.05)
-        
-        print(f"⚠️ IK 求解超时 (无响应超过 2.0 秒)")
-        return False, None
+
+        # 用当前关节角做初始猜测
+        initial_guess = None
+        if self.current_joints:
+            initial_guess = np.array([
+                self.current_joints.get(f'joint{i}', 0.0) for i in range(1, 7)
+            ])
+
+        target_pos = np.array([float(pose_dict['x']), float(pose_dict['y']), float(pose_dict['z'])])
+        best_q = None
+        best_error = float('inf')
+        best_time = 0.0
+
+        for ori in orientations:
+            if isinstance(ori, Quaternion):
+                qx, qy, qz, qw = ori.x, ori.y, ori.z, ori.w
+            else:
+                qx, qy, qz, qw = float(ori[0]), float(ori[1]), float(ori[2]), float(ori[3])
+
+            target_quat = np.array([qx, qy, qz, qw])
+            ok, q_sol, err, comp_t = self.ik_solver.get_ik_solution(
+                target_pos, target_quat, initial_guess=initial_guess
+            )
+
+            if ok and err < best_error:
+                best_error = err
+                best_q = list(q_sol)
+                best_time = comp_t
+                if err < 0.001:
+                    break
+
+        if best_q is None:
+            print(f"⚠️ IK 无解 (尝试了 {len(orientations)} 种姿态)")
+            return False, None
+
+        print(f"✅ IK 求解成功: error={best_error:.4f}, time={best_time*1000:.1f}ms")
+        if not self.move_arm_joint(best_q, f"{desc} (IK求解, err={best_error:.4f})", continuous=continuous):
+            print("⚠️ IK 关节执行失败")
+            return False, None
+
+        # Save actual EE orientation from IK solution (for subsequent steps)
+        try:
+            import pinocchio as _pin_save
+            q_full = np.zeros(self.ik_solver.model.nq)
+            for i, idx in enumerate(self.ik_solver.joint_q_indices):
+                q_full[idx] = best_q[i]
+            _pin_save.forwardKinematics(self.ik_solver.model, self.ik_solver.data, q_full)
+            _pin_save.updateFramePlacements(self.ik_solver.model, self.ik_solver.data)
+            se3 = self.ik_solver.data.oMf[self.ik_solver.ee_frame_id]
+            xyzquat = _pin_save.SE3ToXYZQUAT(se3)
+            self.last_successful_orientation = Quaternion(
+                x=float(xyzquat[3]), y=float(xyzquat[4]),
+                z=float(xyzquat[5]), w=float(xyzquat[6]))
+        except Exception:
+            pass
+
+        return True, best_q
+
+    def move_arm_pose(self, pose_dict, desc, continuous=False, planning_mode='normal'):
+        """
+        统一运动方法：优先使用内嵌 IK + 关节空间，失败回退到 Cartesion 规划
+
+        Args:
+            pose_dict: {'x', 'y', 'z'} 目标位置
+            desc: 动作描述
+            continuous: 连贯模式
+            planning_mode: 传递给 Cartesian 兜底的规划模式
+        """
+        if self.enable_ik and self.ik_solver is not None:
+            orientations = self._build_pick_orientations_multi(pose_dict)
+            ik_ok, _ = self.move_arm_via_ik(pose_dict, orientations, desc, continuous=continuous)
+            if ik_ok:
+                return True
+            print("🟡 IK 路径失败，回退到 MoveIt2 笛卡尔规划...")
+
+        return self.move_arm_cartesian(
+            pose_dict, desc, continuous=continuous,
+            preferred_orientation=None,
+            allow_position_only_fallback=True,
+            planning_mode=planning_mode,
+        )
 
     def move_arm_cartesian(
         self,
@@ -688,13 +947,14 @@ def main():
         return
     
     # ========== IK 分支启用/禁用控制 ==========
-    # 修改此处来启用/禁用 Pinocchio IK 求解器分支（默认 False，避免 pinocchio 未安装导致崩溃）
-    enable_ik_solver = True  # <-- 设置为 True 来启用 IK 分支
-    node.enable_ik = enable_ik_solver
+    # enable_ik 已在 __init__ 中通过 _init_ik_solver() 自动设置
+    # 若 Pinocchio/CasADi 未安装则自动降级为 False
+    enable_ik_solver = True
+    node.enable_ik = enable_ik_solver and node.ik_solver is not None
     if node.enable_ik:
-        print("✅ Pinocchio IK 分支已启用 - 将在下降/放置步骤中尝试 IK 求解")
+        print("✅ 内嵌 Pinocchio IK 已启用 - 所有运动步骤优先使用 IK 求解")
     else:
-        print("⚠️ Pinocchio IK 分支已禁用 - 使用经典 MoveIt2 规划器")
+        print("⚠️ Pinocchio IK 不可用 - 回退到经典 MoveIt2 规划器")
     
     # 您测量出来的待机位(关节0)
     JOINT_STANDBY = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
@@ -780,15 +1040,15 @@ def main():
                 cycle_id = str(data.get("cycle_id", ""))
                 
                 POSE_PICK = pick_pose.copy()
-                # 预留夹爪的物理长度（约10cm），防止法兰盘带着夹爪一头扎进桌面里
-                POSE_PICK['z'] += 0.05
+                # 预留夹爪长度11cm
+                POSE_PICK['z'] += 0.11
                 POSE_PICK_UP = POSE_PICK.copy()
                 POSE_PICK_UP['z'] += 0.13  # 抬起脱离高 13cm
                 POSE_LIFT_SOFT = POSE_PICK.copy()
                 POSE_LIFT_SOFT['z'] += 0.035  # 先小幅抬起，降低惯性导致的滑脱
                 
                 POSE_PLACE = place_pose.copy()
-                POSE_PLACE['z'] += 0.05  # 同样预留夹爪的长度 10cm
+                POSE_PLACE['z'] += 0.11  # 预留夹爪长度11cm
                 POSE_PLACE_PRE = POSE_PLACE.copy()
                 POSE_PLACE_PRE['z'] += 0.08  # 放置位上方 8cm (连贯预放点)
                 POSE_PLACE_UP = POSE_PLACE.copy()
@@ -809,47 +1069,43 @@ def main():
                     # 【第零步】 在前往途中或起点提前张开夹爪
                     node.operate_gripper(dynamic_open, "张开夹爪(准备抓取)")
 
-                    # 【第一步】 抓取过渡(防止碰桌面)
-                    pick_orientation = node._build_pick_orientation(POSE_PICK)
-                    place_orientation = node._build_pick_orientation(POSE_PLACE)
-
-                    if not node.move_arm_cartesian(POSE_PICK_UP, "抓取位上方过渡点", preferred_orientation=pick_orientation, allow_position_only_fallback=False): success = False; break
+                    # 【第一步】 抓取过渡(防止碰桌面) — IK 优先
+                    if not node.move_arm_pose(POSE_PICK_UP, "抓取位上方过渡点", continuous=False, planning_mode='normal'): success = False; break
                     if node.last_planning_strategy:
                         cycle_strategies.append(node.last_planning_strategy)
                     if node.last_planning_profile_name:
                         cycle_profiles.append(node.last_planning_profile_name)
-                    
+
                     # 记录抓取过渡点的关节角，用于百分百安全抬起
                     pick_up_joints = node.current_joints.copy() if node.current_joints else None
 
-                    # 【第二步】 下降抓取 (直线插补为主，遇限位转并发规划)
-                    active_ori = getattr(node, 'last_successful_orientation', pick_orientation[0])
+                    # 【第二步】 下降抓取 — 优先直线插补（短距），IK 作为备用
+                    # 使用 PICK_UP 时 IK 算出的实际末端姿态，确保姿态匹配
+                    pick_fallback_ori = node._build_pick_orientation(POSE_PICK)[0]
+                    active_ori = getattr(node, 'last_successful_orientation', pick_fallback_ori)
                     pose_pick_msg = node._create_pose(POSE_PICK, active_ori)
-                    
-                    # ========== 可选 IK 分支（当 enable_ik 为 True 时） ==========
+
                     descent_success = False
-                    if node.enable_ik:
-                        print("💡 IK 分支已启用，尝试 Pinocchio 求解...")
-                        ik_ok, ik_joints = node.move_arm_via_ik(POSE_PICK, [active_ori.x, active_ori.y, active_ori.z, active_ori.w], "下降抓取 (IK 求解)")
-                        if ik_ok and ik_joints:
-                            print(f"🎯 IK 求解成功，执行关节空间轨迹: {[f'{j:.3f}' for j in ik_joints]}")
-                            if node.move_arm_joint(ik_joints, "下降抓取 (IK 方案)", continuous=True):
-                                descent_success = True
-                                cycle_strategies.append('ik_joint_space')
-                                cycle_profiles.append('ik_solution')
-                            else:
-                                print("⚠️ IK 关节执行失败，回退到 MoveIt2...")
-                    
+                    # 先尝试直线插补（下降仅13cm，阈值放宽到50%）
+                    if node.execute_cartesian_path([pose_pick_msg], "下降抓取 (直线插补)", fraction_threshold=0.50):
+                        descent_success = True
+                    elif node.enable_ik and node.ik_solver is not None:
+                        # 直线插补失败，尝试 IK 多姿态求解（以当前关节角为种子，保证解靠近当前构型）
+                        pick_orientations = node._build_pick_orientations_multi(POSE_PICK)
+                        ik_ok, ik_joints = node.move_arm_via_ik(POSE_PICK, pick_orientations, "下降抓取 (IK多姿态)", continuous=True)
+                        if ik_ok:
+                            descent_success = True
+                            cycle_strategies.append('ik_joint_space')
+                            cycle_profiles.append('ik_solution')
+
                     if not descent_success:
-                        # ========== 原有 MoveIt2 回退方案 ==========
-                        if not node.execute_cartesian_path([pose_pick_msg], "下降抓取 (直线插补)"):
-                            print("🟡 直线插补受限！启动多路并发退避规划...")
-                            if not node.move_arm_cartesian(POSE_PICK, "下降抓取 (退避规划)", continuous=True, preferred_orientation=active_ori, allow_position_only_fallback=True, planning_mode='descend'):
-                                success = False; break
-                            if node.last_planning_strategy:
-                                cycle_strategies.append(node.last_planning_strategy)
-                            if node.last_planning_profile_name:
-                                cycle_profiles.append(node.last_planning_profile_name)
+                        print("🟡 直线插补+IK均受限！启动多路并发退避规划...")
+                        if not node.move_arm_cartesian(POSE_PICK, "下降抓取 (退避规划)", continuous=True, preferred_orientation=active_ori, allow_position_only_fallback=True, planning_mode='descend'):
+                            success = False; break
+                        if node.last_planning_strategy:
+                            cycle_strategies.append(node.last_planning_strategy)
+                        if node.last_planning_profile_name:
+                            cycle_profiles.append(node.last_planning_profile_name)
 
                     
                     # 【第三步】 闭合夹爪
@@ -879,48 +1135,45 @@ def main():
                             cycle_profiles.append(node.last_planning_profile_name)
                         grasp_reached_ok = True
                     
-                    # 【第五步】 移动到放置位上方5cm
-                    if not node.move_arm_cartesian(POSE_PLACE_PRE, "进入放置预备位 (上方5cm)", continuous=True, preferred_orientation=place_orientation, allow_position_only_fallback=True): success = False; break
+                    # 【第五步】 移动到放置位上方5cm — IK 优先
+                    if not node.move_arm_pose(POSE_PLACE_PRE, "进入放置预备位 (上方5cm)", continuous=True, planning_mode='normal'): success = False; break
                     if node.last_planning_strategy:
                         cycle_strategies.append(node.last_planning_strategy)
                     if node.last_planning_profile_name:
                         cycle_profiles.append(node.last_planning_profile_name)
-                    
+
                     # 记录放置过渡点的关节角，用于百分百安全抬起
                     place_up_joints = node.current_joints.copy() if node.current_joints else None
 
-                    # 【第五点五步】 连贯微降到放置位 (直线插补为主，遇限位转并发规划)
-                    active_ori = getattr(node, 'last_successful_orientation', place_orientation[0])
+                    # 【第五点五步】 连贯微降到放置位 — 优先直线插补，IK 作为备用
+                    place_fallback_ori = node._build_pick_orientation(POSE_PLACE)[0]
+                    active_ori = getattr(node, 'last_successful_orientation', place_fallback_ori)
                     pose_place_msg = node._create_pose(POSE_PLACE, active_ori)
-                    
-                    # ========== 可选 IK 分支（当 enable_ik 为 True 时） ==========
+
                     place_success = False
-                    if node.enable_ik:
-                        print("💡 IK 分支已启用，尝试 Pinocchio 求解...")
-                        ik_ok, ik_joints = node.move_arm_via_ik(POSE_PLACE, [active_ori.x, active_ori.y, active_ori.z, active_ori.w], "进入放置位 (IK 求解)")
-                        if ik_ok and ik_joints:
-                            print(f"🎯 IK 求解成功，执行关节空间轨迹: {[f'{j:.3f}' for j in ik_joints]}")
-                            if node.move_arm_joint(ik_joints, "进入放置位 (IK 方案)", continuous=True):
-                                place_reached_ok = True
-                                place_success = True
-                                cycle_strategies.append('ik_joint_space')
-                                cycle_profiles.append('ik_solution')
-                            else:
-                                print("⚠️ IK 关节执行失败，回退到 MoveIt2...")
-                    
+                    # 先尝试直线插补（放置时直线运动更安全，阈值放宽到50%）
+                    if node.execute_cartesian_path([pose_place_msg], "进入放置位 (直线插补)", fraction_threshold=0.50):
+                        place_success = True
+                        place_reached_ok = True
+                    elif node.enable_ik and node.ik_solver is not None:
+                        # 直线插补失败，尝试 IK 多姿态求解
+                        place_orientations = node._build_pick_orientations_multi(POSE_PLACE)
+                        ik_ok, ik_joints = node.move_arm_via_ik(POSE_PLACE, place_orientations, "进入放置位 (IK多姿态)", continuous=True)
+                        if ik_ok:
+                            place_success = True
+                            place_reached_ok = True
+                            cycle_strategies.append('ik_joint_space')
+                            cycle_profiles.append('ik_solution')
+
                     if not place_success:
-                        # ========== 原有 MoveIt2 回退方案 ==========
-                        if not node.execute_cartesian_path([pose_place_msg], "进入放置位 (直线插补)"):
-                            print("🟡 直线插补受限！启动多路并发退避规划...")
-                            if not node.move_arm_cartesian(POSE_PLACE, "进入放置位 (退避规划)", preferred_orientation=active_ori, allow_position_only_fallback=True, planning_mode='descend'):
-                                success = False; break
-                            if node.last_planning_strategy:
-                                cycle_strategies.append(node.last_planning_strategy)
-                            if node.last_planning_profile_name:
-                                cycle_profiles.append(node.last_planning_profile_name)
-                            place_reached_ok = True
-                        else:
-                            place_reached_ok = True
+                        print("🟡 直线插补+IK均受限！启动多路并发退避规划...")
+                        if not node.move_arm_cartesian(POSE_PLACE, "进入放置位 (退避规划)", preferred_orientation=active_ori, allow_position_only_fallback=True, planning_mode='descend'):
+                            success = False; break
+                        if node.last_planning_strategy:
+                            cycle_strategies.append(node.last_planning_strategy)
+                        if node.last_planning_profile_name:
+                            cycle_profiles.append(node.last_planning_profile_name)
+                        place_reached_ok = True
 
                     
                     # 【第六步】 松开夹爪释放物品

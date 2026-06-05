@@ -25,6 +25,7 @@ setup(
         'console_scripts': [
             'sorting_cycle_server = agx_arm_auto_sorting.sorting_cycle_server:main',
             'dataset_collection_runner = agx_arm_auto_sorting.dataset_collection_runner:main',
+            'joint_state_logger = agx_arm_auto_sorting.joint_state_logger:main',
         ],
     },
 )

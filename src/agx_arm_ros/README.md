@@ -225,6 +225,7 @@ ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py can_port:=can0 ar
 ```bash
 python3 /home/lxf/agx_arm_ws/auto_sorting_action.py
 python3 /home/lxf/agx_arm_ws/sorting_gui_client.py
+
 ```
 
 ### 仿真gazebo
