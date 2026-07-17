@@ -42,4 +42,8 @@
     effector_type="$(arg effector_type)"
     revo2_type="$(arg revo2_type)"
   />
+
+  <!-- 传送带单元环境 (RViz 可视化 + collision 防碰撞) -->
+  <!-- 机械臂保持在 world 原点; 传送带围绕机械臂摆放; 不影响现有坐标 -->
+  <xacro:include filename="$(find agx_arm_moveit)/config/conveyor_cell.urdf.xacro" />
 </robot>

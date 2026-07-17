@@ -101,12 +101,14 @@ def generate_launch_description():
         output='screen'
     )
 
-    node_spawn_table = Node(
-        package='piper_gazebo',
-        executable='spawn_table_gazebo.py',
-        parameters=[{'scene_file': '/home/lxf/agx_arm_ws/table.scene'}],
-        output='screen'
-    )
+    # 传送带环境已在 URDF (conveyor_cell.urdf.xacro) 中定义，Gazebo 自动加载 visual+collision
+    # 不再需要 spawn_table_gazebo.py 单独生成 box（避免与 URDF collision 重复）
+    # node_spawn_table = Node(
+    #     package='piper_gazebo',
+    #     executable='spawn_table_gazebo.py',
+    #     parameters=[{'scene_file': '/home/lxf/agx_arm_ws/table.scene'}],
+    #     output='screen'
+    # )
 
     ld = LaunchDescription()
 
@@ -114,7 +116,7 @@ def generate_launch_description():
     ld.add_action(close_evt2)
     ld.add_action(node_gripper_mirror_controller)
     ld.add_action(node_agx_sim_bridge)
-    ld.add_action(node_spawn_table)
+    # ld.add_action(node_spawn_table)  # 传送带已在 URDF 中
     ld.add_action(start_gazebo_cmd)
     ld.add_action(node_robot_state_publisher)
     ld.add_action(spawn_entity_cmd)

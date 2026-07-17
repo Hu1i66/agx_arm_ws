@@ -1,0 +1,130 @@
+<?xml version="1.0"?>
+<robot name="piper_conveyor_cell" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <!--
+    传送带单元环境 (Piper 6-DOF + AGX 夹爪 自动分拣系统)
+    ============================================================
+    坐标系约定 (conveyor_frame):
+      原点 = 地面 ∩ 传送带 X=0 端 ∩ 皮带中心线
+      X: 沿传送带长度方向 (0 ~ 4.0m)
+      Y: 沿传送带宽度 (+Y 皮带右侧, -Y 机械臂侧)
+      Z: 垂直向上 (地面 Z=0, 皮带顶面 Z=0.80)
+
+    机械臂保持在世界原点 (world 0,0,0)，传送带围绕机械臂摆放:
+      规格说明: base_link @ conveyor (0.30, -0.29, 0.80) rpy=+90°
+      逆变换  : conveyor_frame @ world (0.29, 0.30, -0.80) rpy=-90°
+      这样机械臂底座 (world 0,0,0) 恰好坐在传送带平台顶面 (conveyor Z=0.80)，
+      现有 saved_poses / YOLO 外参完全不受影响。
+
+    依赖: 必须在被 include 的文件已定义 `world` link 之后使用。
+    本片段不重复定义 world。
+
+    Visual: conveyor_only.stl (仅结构, 不含机械臂/电控箱) + box 电控箱
+    Collision: box 几何体 (MoveIt 规划防碰撞 / Gazebo 物理)
+  -->
+
+  <!-- ════════ 传送带框架 (挂在 world 下) ════════ -->
+  <link name="conveyor_frame"/>
+  <joint name="world_to_conveyor_frame" type="fixed">
+    <parent link="world"/>
+    <child link="conveyor_frame"/>
+    <!-- 机械臂保持在 world 原点; 传送带下沉 0.80m 使平台顶面与 base_link 齐平 -->
+    <origin xyz="0.29 0.30 -0.80" rpy="0 0 -1.57079632679"/>
+  </joint>
+
+  <!-- ════════ 传送带结构 visual (conveyor_only.stl, 不含机械臂/电控箱) ════════ -->
+  <link name="conveyor_structure">
+    <visual name="conveyor_structure_visual">
+      <geometry>
+        <mesh filename="package://agx_arm_description/agx_arm_urdf/piper/meshes/conveyor_only.stl"
+              scale="0.001 0.001 0.001"/>
+      </geometry>
+      <material name="conveyor_steel">
+        <color rgba="0.35 0.38 0.42 1.0"/>
+      </material>
+    </visual>
+  </link>
+  <joint name="conveyor_frame_to_structure" type="fixed">
+    <parent link="conveyor_frame"/>
+    <child link="conveyor_structure"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ════════ 碰撞体 (box, 用于 MoveIt/Gazebo 防碰撞) ════════ -->
+
+  <!-- 皮带 deck (顶板) -->
+  <link name="conveyor_belt_col">
+    <collision>
+      <geometry><box size="4.0 0.5 0.03"/></geometry>
+    </collision>
+  </link>
+  <joint name="conveyor_frame_to_belt_col" type="fixed">
+    <parent link="conveyor_frame"/>
+    <child link="conveyor_belt_col"/>
+    <origin xyz="2.0 0.0 0.785" rpy="0 0 0"/>
+  </joint>
+
+  <!-- 导轨 +Y -->
+  <link name="conveyor_rail_py_col">
+    <collision><geometry><box size="4.0 0.04 0.12"/></geometry></collision>
+  </link>
+  <joint name="conveyor_frame_to_rail_py_col" type="fixed">
+    <parent link="conveyor_frame"/>
+    <child link="conveyor_rail_py_col"/>
+    <origin xyz="2.0 0.29 0.74" rpy="0 0 0"/>
+  </joint>
+
+  <!-- 导轨 -Y -->
+  <link name="conveyor_rail_ny_col">
+    <collision><geometry><box size="4.0 0.04 0.12"/></geometry></collision>
+  </link>
+  <joint name="conveyor_frame_to_rail_ny_col" type="fixed">
+    <parent link="conveyor_frame"/>
+    <child link="conveyor_rail_ny_col"/>
+    <origin xyz="2.0 -0.29 0.74" rpy="0 0 0"/>
+  </joint>
+
+  <!-- 4 支腿 (20x20mm 方管) -->
+  <xacro:macro name="conveyor_leg" params="x y name">
+    <link name="conveyor_leg_${name}">
+      <collision><geometry><box size="0.02 0.02 0.68"/></geometry></collision>
+    </link>
+    <joint name="conveyor_frame_to_leg_${name}" type="fixed">
+      <parent link="conveyor_frame"/>
+      <child link="conveyor_leg_${name}"/>
+      <origin xyz="${x} ${y} 0.34" rpy="0 0 0"/>
+    </joint>
+  </xacro:macro>
+  <xacro:conveyor_leg x="0.20"  y="0.27"  name="fr"/>
+  <xacro:conveyor_leg x="0.20"  y="-0.27" name="fl"/>
+  <xacro:conveyor_leg x="3.80"  y="0.27"  name="br"/>
+  <xacro:conveyor_leg x="3.80"  y="-0.27" name="bl"/>
+
+  <!-- 机械臂平台 (底座安装面) -->
+  <link name="conveyor_platform_col">
+    <collision><geometry><box size="0.26 0.22 0.12"/></geometry></collision>
+  </link>
+  <joint name="conveyor_frame_to_platform_col" type="fixed">
+    <parent link="conveyor_frame"/>
+    <child link="conveyor_platform_col"/>
+    <origin xyz="0.30 -0.14 0.74" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ════════ 电控箱 (visual box + collision, STL 不含) ════════ -->
+  <link name="conveyor_control_box">
+    <visual name="control_box_visual">
+      <geometry><box size="0.20 0.15 0.30"/></geometry>
+      <material name="control_box_paint">
+        <color rgba="0.95 0.95 0.97 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry><box size="0.20 0.15 0.30"/></geometry>
+    </collision>
+  </link>
+  <joint name="conveyor_frame_to_control_box" type="fixed">
+    <parent link="conveyor_frame"/>
+    <child link="conveyor_control_box"/>
+    <origin xyz="0.05 -0.365 0.55" rpy="0 0 0"/>
+  </joint>
+
+</robot>

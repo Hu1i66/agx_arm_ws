@@ -231,8 +231,8 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "table_scene_file",
-                default_value="/home/lxf/agx_arm_ws/table.scene",
-                description="Scene file exported from RViz to auto-load the desktop obstacle.",
+                default_value="/home/lxf/agx_arm_ws/conveyor.scene",
+                description="Scene file to auto-load conveyor cell collision objects into PlanningScene.",
             ),
             DeclareLaunchArgument(
                 "follow",

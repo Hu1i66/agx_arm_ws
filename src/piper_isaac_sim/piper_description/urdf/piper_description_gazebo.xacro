@@ -8,6 +8,11 @@
       <parent link="world"/>
       <child link="base_link"/>
   </joint>
+
+  <!-- 传送带单元环境 (Gazebo 可视化 + collision 物理) -->
+  <!-- 机械臂保持在 world 原点; 传送带围绕机械臂摆放; 不影响现有坐标 -->
+  <xacro:include filename="$(find agx_arm_moveit)/config/conveyor_cell.urdf.xacro" />
+
 <!-- arm -->
 <link
     name="base_link">
