@@ -64,6 +64,11 @@ sorting_cycle:
     settle_wait_sec: 0.4
     auto_recover_to_standby_on_fail: true
 
+  two_stage:
+    verify_height_m: 0.25
+    verify_xy_tolerance_m: 0.03
+    verify_timeout_s: 5.0
+
 dataset_collection:
   dataset_csv_path: /home/lxf/agx_arm_ws/sorting_dataset.csv
   dataset_version: v2_kinematic

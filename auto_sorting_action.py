@@ -3,6 +3,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient
 import time
+import threading
 import queue
 import json
 import math
@@ -226,6 +227,11 @@ class MoveItActionClient(Node):
         self.is_busy = False
         self.last_planning_profile_name = ''
         self.last_planning_strategy = ''
+
+        # ── 两阶段精定位：订阅 YOLO 检测结果 ──
+        self._latest_detection = None
+        self._detection_event = threading.Event()
+        self.det_sub = self.create_subscription(String, '/detection_info', self._detection_cb, 10)
         
         # ========== IK Solver 集成（内嵌 Pinocchio）==========
         self.enable_ik = True
@@ -236,6 +242,14 @@ class MoveItActionClient(Node):
         if self.current_joints is None:
             self.current_joints = {}
         self.current_joints.update(dict(zip(msg.name, msg.position)))
+
+    def _detection_cb(self, msg):
+        """缓存 YOLO 检测结果，唤醒等待线程。"""
+        try:
+            self._latest_detection = json.loads(msg.data)
+            self._detection_event.set()
+        except Exception:
+            pass
 
     def _init_ik_solver(self):
         """初始化内嵌 Pinocchio IK 求解器（无需 ROS2 topic 通信）"""
@@ -353,6 +367,44 @@ class MoveItActionClient(Node):
             if plan_only:
                 return False, None
             return False
+
+    def _two_stage_refine(self, obs_x, obs_y, verify_height=0.25, timeout_s=5.0):
+        """两阶段精定位：走到物体正上方做二次检测，近距离精度远高于远距离。
+        只要二次检测到物体，直接使用其结果，不再与观察位对比。
+        返回: (success, refined_xyz_or_error_msg)
+        """
+        verify_pose = {'x': obs_x, 'y': obs_y, 'z': verify_height}
+        print(f"\n🔍 [两阶段] 移动到验证位姿: ({verify_pose['x']:.4f},{verify_pose['y']:.4f},{verify_pose['z']:.4f})")
+        if not self.move_arm_pose(verify_pose, "两阶段验证位(物体正上方)", continuous=False):
+            return False, "移动到验证位姿失败"
+
+        self._detection_event.clear()
+        self._latest_detection = None
+        print(f"🔍 [两阶段] 等待二次检测... (超时={timeout_s}s)")
+
+        waited = 0.0
+        dt = 0.1
+        detection = None
+        while waited < timeout_s:
+            if rclpy.ok():
+                rclpy.spin_once(self, timeout_sec=0.0)
+            if self._detection_event.is_set():
+                detection = self._latest_detection
+                break
+            time.sleep(dt)
+            waited += dt
+
+        if detection is None:
+            return False, "超时未收到检测信息"
+        if not detection.get('detected'):
+            return False, "二次检测未发现物体"
+        bp = detection.get('base_position_m', {})
+        if not bp or not all(k in bp for k in ('x', 'y', 'z')):
+            return False, "二次检测缺少 base_position_m"
+        ver_x, ver_y, ver_z = float(bp['x']), float(bp['y']), float(bp['z'])
+
+        print(f"✅ [两阶段] 二次检测成功! 近距离精定位坐标=({ver_x:.4f},{ver_y:.4f},{ver_z:.4f})")
+        return True, {'x': ver_x, 'y': ver_y, 'z': ver_z}
 
     def move_arm_joint(self, joints, desc, continuous=False):
         print(f"\n🚀 正在规划(关节空间) -> {desc}")
@@ -958,6 +1010,11 @@ def main():
     
     # 您测量出来的待机位(关节0)
     JOINT_STANDBY = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+    # 您测量出来的观察位(关节空间，用于相机观察传送带)
+    # joint1=0, joint2=1.0669, joint3=-1.1637, joint4=0, joint5=1.2185, joint6=0
+    # 对应末端位姿: x=0.1864, y=0.0, z=0.3782, q=(~0, 0.9643, ~0, 0.2650)
+    JOINT_OBSERVE = [0.0, 1.0669023184516138, -1.1636808254746993, 0.0, 1.2184841639873214, 0.0]
     
     GRIPPER_OPEN = 0.090
     GRIPPER_CLOSE = 0.060
@@ -1017,12 +1074,22 @@ def main():
                 node.is_busy = True
                 status_msg.data = 'busy'
                 node.status_pub.publish(status_msg)
-                
+
                 print("\n🔄 收到客户端指令：一键回到待机点并关闭夹爪")
                 node.move_arm_joint(JOINT_STANDBY, "回到待机位")
                 node.operate_gripper(GRIPPER_GRAB, "闭合夹爪(待机)")
+
+            elif data.get("cmd") == "observe":
+                node.is_busy = True
+                status_msg.data = 'busy'
+                node.status_pub.publish(status_msg)
+
+                print("\n👁️ 收到客户端指令：回到观察位")
+                # 关节空间直接运动到观察位，不改变夹爪状态
+                node.move_arm_joint(JOINT_OBSERVE, "回到观察位 (关节空间)")
                 
-            elif data.get("cmd") == "sort":
+            elif data.get("cmd") in ("sort", "sort_verify"):
+                two_stage = (data.get("cmd") == "sort_verify")
                 node.is_busy = True
                 status_msg.data = 'busy'
                 node.status_pub.publish(status_msg)
@@ -1053,24 +1120,50 @@ def main():
                 POSE_PLACE_PRE['z'] += 0.08  # 放置位上方 8cm (连贯预放点)
                 POSE_PLACE_UP = POSE_PLACE.copy()
                 POSE_PLACE_UP['z'] += 0.13 # 抬起脱离高 13cm
-                
+
                 loop_count += 1
-                print(f"\n\n====================== 第 {loop_count} 次分拣 (从 {pick_id} 到 {place_id}) ======================")
+                mode_label = " [两阶段精定位]" if two_stage else ""
+                print(f"\n\n====================== 第 {loop_count} 次分拣{mode_label} (从 {pick_id} 到 {place_id}) ======================")
 
                 # 以下为具体的机械臂序列
                 # 放一个空的队列清理，以免堆积
                 while not node.cmd_queue.empty():
-                    node.cmd_queue.get_nowait() 
-            
+                    node.cmd_queue.get_nowait()
+
                 success = True
                 grasp_reached_ok = False
                 place_reached_ok = False
                 for _ in range(1):
+                    # ── 两阶段精定位 (可选) ──
+                    if two_stage:
+                        vh = float(data.get('verify_height_m', 0.25))
+                        to = float(data.get('verify_timeout_s', 5.0))
+                        # 先张开夹爪，避免遮挡相机视野
+                        node.operate_gripper(dynamic_open, "张开夹爪(两阶段检测准备)")
+                        print("🔍 [两阶段] 进入精定位流程...")
+                        refine_ok, refine_result = node._two_stage_refine(
+                            float(pick_pose['x']), float(pick_pose['y']),
+                            verify_height=vh, timeout_s=to,
+                        )
+                        if not refine_ok:
+                            print(f"❌ 两阶段精定位失败: {refine_result}")
+                            node.move_arm_joint(JOINT_STANDBY, "两阶段失败→回到待机位")
+                            node.operate_gripper(GRIPPER_GRAB, "闭合夹爪(两阶段失败)")
+                            success = False; break
+                        # 用精定位坐标更新相关位姿
+                        for p in (POSE_PICK, POSE_PICK_UP, POSE_LIFT_SOFT):
+                            p['x'] = refine_result['x']
+                            p['y'] = refine_result['y']
+
                     # 【第零步】 在前往途中或起点提前张开夹爪
                     node.operate_gripper(dynamic_open, "张开夹爪(准备抓取)")
 
                     # 【第一步】 抓取过渡(防止碰桌面) — IK 优先
-                    if not node.move_arm_pose(POSE_PICK_UP, "抓取位上方过渡点", continuous=False, planning_mode='normal'): success = False; break
+                    # 两阶段精定位：已在物体正上方(验证位)，直接下降抓取，跳过预备位
+                    if two_stage:
+                        print("⚡ 两阶段模式：已在物体正上方，直接下降抓取")
+                    elif not node.move_arm_pose(POSE_PICK_UP, "抓取位上方过渡点", continuous=False, planning_mode='normal'):
+                        success = False; break
                     if node.last_planning_strategy:
                         cycle_strategies.append(node.last_planning_strategy)
                     if node.last_planning_profile_name:

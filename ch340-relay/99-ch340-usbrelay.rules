@@ -1,0 +1,11 @@
+# Prevent brltty from claiming CH340 USB relay devices (VID:1a86 PID:7523)
+# brltty's 85-brltty.rules matches this VID:PID as a Braille device.
+# We intercept with GOTO="brltty_device_end" to skip brltty handling,
+# then set up proper permissions for the ttyUSB device.
+
+# Block brltty from grabbing this USB device
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", ENV{BRLTTY_BRAILLE_DRIVER}="", GOTO="brltty_end"
+LABEL="brltty_end"
+
+# Set proper permissions on the ttyUSB device
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", MODE="0666", GROUP="dialout", TAG+="uaccess", SYMLINK+="usbrelay"

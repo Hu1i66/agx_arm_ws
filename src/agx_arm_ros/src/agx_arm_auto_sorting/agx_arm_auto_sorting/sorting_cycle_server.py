@@ -20,7 +20,7 @@ from std_msgs.msg import String
 from std_srvs.srv import Trigger
 from trajectory_msgs.msg import JointTrajectoryPoint
 
-from .config_utils import ensure_pose_keys, load_yaml_config
+from .config_utils import ensure_pose_keys, euler_to_quaternion, load_yaml_config
 
 
 class SortingCycleServer(Node):
@@ -70,6 +70,17 @@ class SortingCycleServer(Node):
             callback_group=self.cb_group,
         )
 
+        # ── 两阶段定位：订阅 YOLO 检测结果 ──
+        self._latest_detection: Optional[Dict[str, object]] = None
+        self._detection_event = threading.Event()
+        self.create_subscription(
+            String,
+            '/detection_info',
+            self._detection_cb,
+            10,
+            callback_group=self.cb_group,
+        )
+
         self.move_client = ActionClient(
             self,
             MoveGroup,
@@ -109,6 +120,14 @@ class SortingCycleServer(Node):
     def _joint_state_cb(self, msg: JointState):
         self.latest_joint_state = msg
 
+    def _detection_cb(self, msg: String):
+        """缓存最新检测结果，唤醒等待线程。"""
+        try:
+            self._latest_detection = json.loads(msg.data)
+            self._detection_event.set()  # 唤醒 _two_stage_refine
+        except Exception:
+            pass
+
     def _cmd_cb(self, msg: String):
         try:
             data = json.loads(msg.data)
@@ -116,9 +135,15 @@ class SortingCycleServer(Node):
             self.get_logger().warn('Ignore invalid /sorting_cmds json payload.')
             return
 
-        if data.get('cmd') != 'sort':
+        cmd = data.get('cmd', '')
+        if cmd not in ('sort', 'sort_verify', 'reset', 'quit'):
             return
 
+        # reset / quit → 交由 process_commands 处理
+        if cmd in ('reset', 'quit'):
+            return
+
+        two_stage = (cmd == 'sort_verify')
         pick_pose = data.get('pick')
         place_pose = data.get('place')
         if not isinstance(pick_pose, dict) or not isinstance(place_pose, dict):
@@ -144,8 +169,28 @@ class SortingCycleServer(Node):
             'pick': {k: float(v) for k, v in pick_pose.items()},
             'place': {k: float(v) for k, v in place_pose.items()},
             'object_diameter_m': object_diameter_m,
+            '_two_stage': two_stage,
+            '_verify_height_m': float(data.get('verify_height_m',
+                                   self.cfg.get('two_stage', {}).get('verify_height_m', 0.25))),
+            '_verify_xy_tolerance_m': float(data.get('verify_xy_tolerance_m',
+                                          self.cfg.get('two_stage', {}).get('verify_xy_tolerance_m', 0.03))),
+            '_verify_timeout_s': float(data.get('verify_timeout_s',
+                                     self.cfg.get('two_stage', {}).get('verify_timeout_s', 5.0))),
         }
-        self.get_logger().info('Received sort cmd on /sorting_cmds, pick/place updated for next cycle.')
+        mode_str = 'two-stage' if two_stage else 'single'
+        self.get_logger().info(f'Received {mode_str} sort cmd, pick/place updated.')
+
+        # ── sort_verify 自动触发 (不依赖外部 trigger service) ──
+        if two_stage:
+            with self._cycle_lock:
+                if self._busy:
+                    self.get_logger().warn('Server is busy, sort_verify cmd queued.')
+                    return
+                self._busy = True
+
+            self._publish_state('RUNNING')
+            self._cycle_thread = threading.Thread(target=self._cycle_worker, daemon=True)
+            self._cycle_thread.start()
 
     def _compute_dynamic_gripper_targets(self, object_diameter_m: Optional[float]) -> Tuple[List[float], List[float]]:
         open_default = [float(v) for v in self.cfg['gripper']['open_positions_rad']]
@@ -501,6 +546,71 @@ class SortingCycleServer(Node):
         self._publish_state(state_name)
         return self._send_move_group(self._build_pose_goal_constraints(pose))
 
+    def _two_stage_refine(self, observe_pose: Dict[str, float],
+                          verify_height_m: float, verify_xy_tolerance_m: float,
+                          verify_timeout_s: float) -> Dict[str, float]:
+        """两阶段精定位：走到物体正上方做二次检测，用近距离检测坐标替代远距离坐标。"""
+        # 1. 构建预备位姿姿：观察位 xy + verify_height_m 高度 + 末端朝下
+        verify_qx, verify_qy, verify_qz, verify_qw = euler_to_quaternion(180.0, 0.0, 0.0)
+        verify_pose = {
+            'x': observe_pose['x'],
+            'y': observe_pose['y'],
+            'z': float(verify_height_m),
+            'qx': verify_qx, 'qy': verify_qy, 'qz': verify_qz, 'qw': verify_qw,
+        }
+
+        self.get_logger().info(
+            f'Two-stage: moving to verify pose ({verify_pose["x"]:.4f},{verify_pose["y"]:.4f},{verify_pose["z"]:.4f})'
+        )
+        self._publish_state('TWO_STAGE_VERIFY')
+        if not self._send_move_group(self._build_pose_goal_constraints(verify_pose)):
+            raise RuntimeError('Failed to move to two-stage verify pose.')
+
+        # 2. 等待新的检测结果
+        self._detection_event.clear()
+        self._latest_detection = None
+        self.get_logger().info(f'Two-stage: waiting for detection info (timeout={verify_timeout_s}s)...')
+        detected = self._detection_event.wait(timeout=verify_timeout_s)
+
+        detection = self._latest_detection
+        if not detected or detection is None:
+            raise RuntimeError('Two-stage: no detection info received within timeout.')
+        if not detection.get('detected'):
+            raise RuntimeError('Two-stage: detection info reports no object detected at verify pose.')
+
+        # 3. 取二次检测坐标
+        base_pos = detection.get('base_position_m', {})
+        if not base_pos or not all(k in base_pos for k in ('x', 'y', 'z')):
+            raise RuntimeError('Two-stage: detection info missing base_position_m at verify pose.')
+
+        ver_x = float(base_pos['x'])
+        ver_y = float(base_pos['y'])
+        ver_z = float(base_pos['z'])
+
+        # 4. 比较两个阶段坐标
+        dx = abs(observe_pose['x'] - ver_x)
+        dy = abs(observe_pose['y'] - ver_y)
+
+        self.get_logger().info(
+            f'Two-stage compare: observe({observe_pose["x"]:.4f},{observe_pose["y"]:.4f}) vs '
+            f'verify({ver_x:.4f},{ver_y:.4f}) → dx={dx:.4f}m dy={dy:.4f}m (tolerance={verify_xy_tolerance_m:.4f}m)'
+        )
+
+        if dx > verify_xy_tolerance_m or dy > verify_xy_tolerance_m:
+            raise RuntimeError(
+                f'Two-stage: xy deviation too large dx={dx:.4f}m dy={dy:.4f}m > {verify_xy_tolerance_m}m'
+            )
+
+        # 5. 用二次检测坐标（近距高精度）替代观察位坐标
+        refined = dict(observe_pose)
+        refined['x'] = ver_x
+        refined['y'] = ver_y
+        refined['z'] = ver_z
+        self.get_logger().info(
+            f'Two-stage: refined pick pose ({refined["x"]:.4f},{refined["y"]:.4f},{refined["z"]:.4f})'
+        )
+        return refined
+
     def _run_full_cycle(self) -> Dict[str, object]:
         cmd = self._latest_sort_cmd
         if cmd:
@@ -546,6 +656,21 @@ class SortingCycleServer(Node):
         step('GRIPPER_OPEN_PREPARE')
         if not self._gripper_command(dynamic_open):
             raise RuntimeError('Failed to open gripper before picking.')
+
+        # ── 两阶段精定位 (可选) ──
+        if cmd and cmd.get('_two_stage'):
+            self.get_logger().info('Two-stage mode enabled, refining pick pose...')
+            refined = self._two_stage_refine(
+                pick_pose,
+                verify_height_m=float(cmd['_verify_height_m']),
+                verify_xy_tolerance_m=float(cmd['_verify_xy_tolerance_m']),
+                verify_timeout_s=float(cmd['_verify_timeout_s']),
+            )
+            pick_pose = refined
+            # 重新计算 pre_pick 和 lift_pose
+            pre_pick = self._offset_pose(pick_pose, self.cfg['offsets']['pre_pick_z_offset_m'])
+            lift_pose = self._offset_pose(pick_pose, self.cfg['offsets']['lift_z_offset_m'])
+            result['pick_pose_source'] = 'two_stage_refined'
 
         if not self._go_pose(pre_pick, 'MOVE_PRE_PICK'):
             raise RuntimeError('Failed at pre-pick pose.')
