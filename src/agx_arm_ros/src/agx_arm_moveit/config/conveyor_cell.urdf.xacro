@@ -32,10 +32,11 @@
   </joint>
 
   <!-- ════════ 传送带结构 visual (conveyor_only.stl, 不含机械臂/电控箱) ════════ -->
+  <!-- 注意: Gazebo Classic 对 package:// URI 解析不可靠, 必须用 file://$(find ...) -->
   <link name="conveyor_structure">
     <visual name="conveyor_structure_visual">
       <geometry>
-        <mesh filename="package://agx_arm_description/agx_arm_urdf/piper/meshes/conveyor_only.stl"
+        <mesh filename="file://$(find agx_arm_description)/agx_arm_urdf/piper/meshes/conveyor_only.stl"
               scale="0.001 0.001 0.001"/>
       </geometry>
       <material name="conveyor_steel">
