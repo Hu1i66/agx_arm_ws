@@ -42,6 +42,8 @@ def ros_process_worker(cmd_q, st_q, pose_q, img_q, det_q):
                 try: set_logger_level(n, LoggingSeverity.ERROR)
                 except: pass
             self._pub = self.create_publisher(String, '/sorting_cmds', 10)
+            # 曝光控制命令发布器 (realsense_yolo_node.py 订阅 /camera/exposure_ctrl)
+            self._exp_pub = self.create_publisher(String, '/camera/exposure_ctrl', 10)
             self.create_subscription(String, '/sorting_status', self._on_st, 10)
             self._tf_buf = tf2_ros.Buffer()
             self._tf_lis = tf2_ros.TransformListener(self._tf_buf, self)
@@ -87,7 +89,13 @@ def ros_process_worker(cmd_q, st_q, pose_q, img_q, det_q):
             except: pass
         def _cmd_tick(self):
             while not cmd_q.empty():
-                m = String(); m.data = json.dumps(cmd_q.get()); self._pub.publish(m)
+                cmd = cmd_q.get()
+                m = String(); m.data = json.dumps(cmd)
+                # 曝光控制命令发到 /camera/exposure_ctrl, 其他命令发到 /sorting_cmds
+                if cmd.get("cmd") == "exposure":
+                    self._exp_pub.publish(m)
+                else:
+                    self._pub.publish(m)
 
     rclpy.init(); node = N()
     try: rclpy.spin(node)
@@ -109,7 +117,8 @@ def _putq(q, item):
 _ROS2_SRC = "source /opt/ros/humble/setup.bash"
 _VENV_SRC = "source /home/lxf/orange_dataset/.venv/bin/activate"
 _YOLO_SCRIPT = "/home/lxf/orange_dataset/realsense_yolo_node.py"
-_CAMERA_CMD = f"{_ROS2_SRC} && ros2 launch realsense2_camera rs_launch.py"
+# 相机启动: 显式指定 640x480@30 与另一台电脑 (pyrealsense2 直接配置) 保持一致
+_CAMERA_CMD = f"{_ROS2_SRC} && ros2 launch realsense2_camera rs_launch.py rgb_camera.color_profile:=640,480,30"
 _YOLO_CMD   = f"{_ROS2_SRC} && {_VENV_SRC} && python3 {_YOLO_SCRIPT} --ros-args -p show_gui_window:=false"
 
 # CH340 USB 继电器控制脚本（Modbus RTU）。继电器接在传送带电路的常闭(NC)接口上。
@@ -196,6 +205,9 @@ def main():
             self.conveyor_state=None
             self._conveyor_proc=None        # 当前继电器子进程(Popen)，None=无任务
             self._conveyor_run=None         # 当前任务对应的传送带意图
+            # 曝光控制状态 (与 realsense_yolo_node.py 的 self.auto_exposure/current_exposure 对应)
+            self._exposure_auto=True        # True=自动曝光, False=手动
+            self._exposure_value=100        # 手动曝光值 (微秒, 范围 1-10000)
             self.setup_ui()
             self._update_status_loop()
             self._update_camera_loop()
@@ -232,6 +244,19 @@ def main():
             self.camera_status_var=tk.StringVar(value="正在检测设备...")
             tk.Label(f,textvariable=self.camera_status_var,font=("Arial",9),fg="gray").pack(pady=(2,0))
 
+            # ── 曝光控制 (通过 /camera/exposure_ctrl 话题发给 realsense_yolo_node.py) ──
+            ef=tk.LabelFrame(f,text="曝光控制",padx=5,pady=5); ef.pack(fill=tk.X,pady=(5,0))
+            self.exposure_var=tk.StringVar(value="当前: 自动")
+            tk.Label(ef,textvariable=self.exposure_var,font=("Arial",10,"bold"),fg="green").pack(anchor=tk.W,pady=(0,3))
+            ebf=tk.Frame(ef); ebf.pack(fill=tk.X)
+            self.exp_toggle_btn=tk.Button(ebf,text="切换 自动/手动",command=self._exposure_toggle,
+                                          font=("Arial",9),width=14); self.exp_toggle_btn.pack(side=tk.LEFT,padx=(0,4))
+            self.exp_inc_btn=tk.Button(ebf,text="曝光 +",command=lambda:self._exposure_adjust(1),
+                                       font=("Arial",9),width=8,state=tk.DISABLED); self.exp_inc_btn.pack(side=tk.LEFT,padx=(0,4))
+            self.exp_dec_btn=tk.Button(ebf,text="曝光 -",command=lambda:self._exposure_adjust(-1),
+                                       font=("Arial",9),width=8,state=tk.DISABLED); self.exp_dec_btn.pack(side=tk.LEFT)
+            tk.Label(ef,text="手动模式 +/- 调节 (步长 100, 范围 1-10000)",font=("Arial",8),fg="gray").pack(anchor=tk.W,pady=(3,0))
+
         def _ui_detection(self):
             df=tk.LabelFrame(self.left_frame,text=" 检测信息",padx=5,pady=5); df.pack(fill=tk.BOTH,expand=True)
             self.det_status_var=tk.StringVar(value=" 等待检测数据...")
@@ -246,6 +271,17 @@ def main():
             self.det_dia=tk.StringVar(value="直径: --"); self.det_dist=tk.StringVar(value="距离: --")
             tk.Label(df,textvariable=self.det_dia,font=("Arial",10)).pack(anchor=tk.W)
             tk.Label(df,textvariable=self.det_dist,font=("Arial",10)).pack(anchor=tk.W)
+            ttk.Separator(df,orient='horizontal').pack(fill=tk.X,pady=5)
+            # ── 所有检测物体列表 (点击切换夹取目标) ──
+            tk.Label(df,text="所有检测物体 (点击设为夹取目标):",font=("Arial",10,"bold")).pack(anchor=tk.W)
+            lf2=tk.Frame(df); lf2.pack(fill=tk.X,pady=2)
+            self.det_listbox=tk.Listbox(lf2,height=6,font=("Arial",9),selectmode=tk.SINGLE,exportselection=False)
+            sb2=tk.Scrollbar(lf2,orient="vertical",command=self.det_listbox.yview)
+            self.det_listbox.pack(side=tk.LEFT,fill=tk.X,expand=True)
+            sb2.pack(side=tk.RIGHT,fill=tk.Y)
+            self.det_listbox.config(yscrollcommand=sb2.set)
+            self.det_listbox.bind('<<ListboxSelect>>', self._on_det_listbox_select)
+            self._det_objects=[]
             ttk.Separator(df,orient='horizontal').pack(fill=tk.X,pady=5)
             tk.Label(df,text="抓取姿态 (欧拉角 度):",font=("Arial",10,"bold")).pack(anchor=tk.W)
             rf=tk.Frame(df); rf.pack(fill=tk.X,pady=2)
@@ -371,8 +407,10 @@ def main():
                     except: break
                 if raw:
                     d=json.loads(raw); self.latest_detection=d
+                    objects = d.get('objects', []) or []
+                    # 默认主物体显示 (顶层字段, 保持向后兼容)
                     if d.get('detected'):
-                        self.det_status_var.set(" 已检测到物体")
+                        self.det_status_var.set(f" 已检测到物体 (共 {len(objects)} 个)")
                         self.pick_btn.config(state=tk.NORMAL,bg="#4CAF50")
                         self.pick_two_btn.config(state=tk.NORMAL,bg="#2196F3")
                         self.det_obj.set(f"物体: {d.get('object_name','--')}")
@@ -393,8 +431,64 @@ def main():
                             v.set(v.get().split(":")[0]+": --")
                         self.pick_btn.config(state=tk.DISABLED,bg="gray")
                         self.pick_two_btn.config(state=tk.DISABLED,bg="gray")
+                    # ── 更新所有物体列表 (realsense_yolo_node.py 发布的 objects 数组) ──
+                    prev_sel = self.det_listbox.curselection()
+                    prev_idx = prev_sel[0] if prev_sel else -1
+                    self.det_listbox.delete(0,tk.END)
+                    for obj in objects:
+                        bp = obj.get('base_position_m', {})
+                        conf_pct = obj.get('confidence',0)*100
+                        if bp:
+                            line = f"#{obj.get('index','?')} {obj.get('object_name','?')} {conf_pct:.0f}% B({bp['x']:.2f},{bp['y']:.2f},{bp['z']:.2f})"
+                        else:
+                            line = f"#{obj.get('index','?')} {obj.get('object_name','?')} {conf_pct:.0f}% (无基座坐标)"
+                        self.det_listbox.insert(tk.END, line)
+                    self._det_objects = objects
+                    # 恢复选中: 优先保持用户选择, 否则选中主物体 (第 0 项)
+                    if objects:
+                        restore_idx = prev_idx if (0 <= prev_idx < len(objects)) else 0
+                        self.det_listbox.selection_set(restore_idx)
+                        self._apply_selected_object(restore_idx)
             except: pass
             self.after(200,self._update_detection_loop)
+
+        def _apply_selected_object(self, idx):
+            """把列表中第 idx 个物体的字段提升到 self.latest_detection 顶层,
+            这样 _pick_from_detection / _pick_from_detection_two_stage 会用选中物体而不是默认主物体。"""
+            if not hasattr(self, '_det_objects') or idx >= len(self._det_objects):
+                return
+            obj = self._det_objects[idx]
+            # 提升选中物体字段到顶层 (覆盖主物体)
+            self.latest_detection['object_name'] = obj.get('object_name','--')
+            self.latest_detection['confidence'] = obj.get('confidence',0)
+            self.latest_detection['bbox_pixel'] = obj.get('bbox_pixel',{})
+            self.latest_detection['camera_position_m'] = obj.get('camera_position_m',{})
+            self.latest_detection['end_effector_position_m'] = obj.get('end_effector_position_m',{})
+            self.latest_detection['monocular_depth_m'] = obj.get('monocular_depth_m',0)
+            self.latest_detection['size_m'] = obj.get('size_m',{})
+            self.latest_detection['volume_m3'] = obj.get('volume_m3',0)
+            if 'base_position_m' in obj:
+                self.latest_detection['base_position_m'] = obj['base_position_m']
+            if 'distance_to_robot_m' in obj:
+                self.latest_detection['distance_to_robot_m'] = obj['distance_to_robot_m']
+            # 同步刷新主物体显示面板
+            self.det_obj.set(f"物体: {obj.get('object_name','--')}")
+            self.det_conf.set(f"置信度: {obj.get('confidence',0)*100:.2f}%")
+            bp = obj.get('base_position_m', {})
+            if bp and all(k in bp for k in ('x','y','z')):
+                self.det_x.set(f"  X: {bp['x']:.3f} m"); self.det_y.set(f"  Y: {bp['y']:.3f} m")
+                self.det_z.set(f"  Z: {bp['z']:.3f} m")
+            sm = obj.get('size_m',{}); dia = sm.get('diameter')
+            self.det_dia.set(f"直径: {dia:.3f} m" if dia else "直径: --")
+            dist = obj.get('distance_to_robot_m')
+            self.det_dist.set(f"距离: {dist:.3f} m" if dist else "距离: --")
+
+        def _on_det_listbox_select(self, event):
+            try:
+                sel = self.det_listbox.curselection()
+                if sel:
+                    self._apply_selected_object(sel[0])
+            except: pass
 
         # ── 单次检测直接夹取 ──
         def _pick_from_detection(self):
@@ -490,6 +584,30 @@ def main():
             if self.current_status=='busy': return messagebox.showwarning("忙碌","机械臂正在执行动作。")
             if messagebox.askyesno("确认","机械臂将以关节空间运动到观察位。确定？"):
                 self.cmd_queue.put({"cmd":"observe"}); messagebox.showinfo("已发送","观察位指令发送成功！")
+
+        # ── 曝光控制 (通过 cmd_queue → ROS 子进程 → /camera/exposure_ctrl 话题) ──
+        def _exposure_toggle(self):
+            """切换自动/手动曝光。命令经 /camera/exposure_ctrl 话题由 realsense_yolo_node.py 处理。"""
+            self._exposure_auto = not self._exposure_auto
+            if self._exposure_auto:
+                self.cmd_queue.put({"cmd":"exposure","auto":True})
+                self.exposure_var.set("当前: 自动")
+                self.exp_inc_btn.config(state=tk.DISABLED)
+                self.exp_dec_btn.config(state=tk.DISABLED)
+            else:
+                self.cmd_queue.put({"cmd":"exposure","auto":False,"value":int(self._exposure_value)})
+                self.exposure_var.set(f"当前: {int(self._exposure_value)}")
+                self.exp_inc_btn.config(state=tk.NORMAL)
+                self.exp_dec_btn.config(state=tk.NORMAL)
+
+        def _exposure_adjust(self, direction):
+            """手动模式下 +/- 调节曝光值。direction: +1 增加, -1 减少。"""
+            if self._exposure_auto:
+                return
+            step = 100 if self._exposure_value >= 100 else 10
+            self._exposure_value = max(1, min(10000, self._exposure_value + direction * step))
+            self.cmd_queue.put({"cmd":"exposure","auto":False,"value":int(self._exposure_value)})
+            self.exposure_var.set(f"当前: {int(self._exposure_value)}")
 
         def send_reset(self):
             if self.current_status=='busy': return messagebox.showwarning("忙碌","机械臂正在执行动作。")
