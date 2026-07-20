@@ -13,9 +13,9 @@ import numpy as np
 from std_msgs.msg import String
 from rclpy.logging import LoggingSeverity, set_logger_level
 
-from moveit_msgs.srv import GetCartesianPath, GetMotionPlan
+from moveit_msgs.srv import GetCartesianPath, GetMotionPlan, GetPlanningScene
 from moveit_msgs.action import ExecuteTrajectory, MoveGroup
-from moveit_msgs.msg import Constraints, JointConstraint, PositionConstraint, OrientationConstraint, BoundingVolume, MotionPlanRequest, WorkspaceParameters
+from moveit_msgs.msg import Constraints, JointConstraint, PositionConstraint, OrientationConstraint, BoundingVolume, MotionPlanRequest, WorkspaceParameters, PlanningScene as PlanningSceneMsg, PlanningSceneComponents, AllowedCollisionEntry
 from shape_msgs.msg import SolidPrimitive
 from geometry_msgs.msg import Pose, Point, Quaternion
 from sensor_msgs.msg import JointState
@@ -211,6 +211,11 @@ class MoveItActionClient(Node):
         
         self._gripper_action_client = ActionClient(self, FollowJointTrajectory, '/gripper_controller/follow_joint_trajectory')
         self._joint_states_pub = self.create_publisher(JointState, '/control/joint_states', 10)
+        # PlanningScene diff 话题发布器：用于临时禁用/恢复 control_box 等碰撞体的碰撞检测
+        # 通过 AllowedCollisionMatrix (ACM) diff 实现，不影响场景中物体的实际存在
+        self._planning_scene_pub = self.create_publisher(PlanningSceneMsg, '/planning_scene', 10)
+        # GetPlanningScene 服务客户端：用于获取当前 ACM，避免 diff 替换整个 ACM 破坏自碰撞对
+        self._get_scene_client = self.create_client(GetPlanningScene, '/get_planning_scene')
         self.current_joints = None
         # 监听默认的仿真关节状态
         self._joint_states_sub = self.create_subscription(JointState, '/joint_states', self._joint_states_cb, 10)
@@ -280,6 +285,100 @@ class MoveItActionClient(Node):
                 set_logger_level(logger_name, LoggingSeverity.ERROR)
             except Exception:
                 pass
+
+    def _set_bin_collision_allowed(self, allowed=True, obj_ids=None):
+        """临时允许/恢复指定碰撞体与机械臂所有连杆的碰撞检测。
+
+        通过 /planning_scene 话题发布 AllowedCollisionMatrix (ACM) diff 实现。
+        料框放置位规划失败时调用此方法临时绕过传送带碰撞体，
+        让 RRTConnect 能在原本"碰撞"的目标状态采样成功。
+
+        ⚠️ 关键：必须先调用 /get_planning_scene 获取当前 ACM，只修改 obj_ids 相关条目，
+        保留所有原有碰撞对（包括夹爪自碰撞对 gripper_base-gripper_link1 等）。
+        否则 ACM diff 会替换整个 ACM，导致夹爪自碰撞检测被启用，所有规划都失败。
+
+        ⚠️ 料框1放置位有多个碰撞体（move_group 日志确认）：
+        - 'control_box' (Object, conveyor.scene) 与 link5 碰撞
+        - 'rail_ny' (Object, conveyor.scene) 与 gripper_link2 碰撞
+        - 'conveyor_control_box' (Robot link, conveyor_cell.urdf.xacro) 与 gripper_link1 碰撞
+        因此需要同时禁用所有传送带碰撞体。
+
+        Args:
+            allowed: True=禁用碰撞检测(允许碰撞), False=恢复碰撞检测
+            obj_ids: 要操作的碰撞体名称列表，默认包含所有传送带碰撞体
+        """
+        if obj_ids is None:
+            # 传送带所有碰撞体：conveyor.scene 中的 Object + conveyor_cell.urdf.xacro 中的 Robot link
+            obj_ids = [
+                # conveyor.scene 中的 Object（场景物体）
+                'belt_deck', 'rail_py', 'rail_ny',
+                'leg_fr', 'leg_fl', 'leg_br', 'leg_bl',
+                'platform', 'control_box',
+                # conveyor_cell.urdf.xacro 中的 Robot link（机器人连杆）
+                'conveyor_structure', 'conveyor_belt_col', 'conveyor_control_box',
+            ]
+        try:
+            # 1. 等待 GetPlanningScene 服务
+            if not self._get_scene_client.wait_for_service(timeout_sec=2.0):
+                self.get_logger().error('❌ /get_planning_scene 服务不可用，无法安全修改 ACM')
+                return
+
+            # 2. 获取当前 PlanningScene 的 ACM 组件
+            req = GetPlanningScene.Request()
+            req.components.components = PlanningSceneComponents.ALLOWED_COLLISION_MATRIX
+            future = self._get_scene_client.call_async(req)
+            rclpy.spin_until_future_complete(self, future, timeout_sec=2.0)
+            if future.result() is None:
+                self.get_logger().error('❌ 获取 PlanningScene 超时，无法安全修改 ACM')
+                return
+            current_acm = future.result().scene.allowed_collision_matrix
+
+            # 3. 构建新 ACM：基于当前 ACM，只修改 obj_ids 相关条目
+            new_entry_names = list(current_acm.entry_names)
+            # 添加缺失的 obj_ids
+            for obj_id in obj_ids:
+                if obj_id not in new_entry_names:
+                    new_entry_names.append(obj_id)
+
+            n = len(new_entry_names)
+            # 构建当前 ACM 的查找表（name -> index）
+            cur_idx = {name: i for i, name in enumerate(current_acm.entry_names)}
+
+            new_entry_values = []
+            for i, name_i in enumerate(new_entry_names):
+                entry = AllowedCollisionEntry()
+                row = []
+                for j, name_j in enumerate(new_entry_names):
+                    if i == j:
+                        # 对角线：自身永远允许
+                        row.append(True)
+                    elif name_i in obj_ids or name_j in obj_ids:
+                        # 任一端是 obj_id：按 allowed 设置（禁用/恢复碰撞检测）
+                        row.append(bool(allowed))
+                    else:
+                        # 其他碰撞对：保持当前 ACM 中的值（保留夹爪自碰撞对等）
+                        if name_i in cur_idx and name_j in cur_idx:
+                            row.append(bool(current_acm.entry_values[cur_idx[name_i]].enabled[cur_idx[name_j]]))
+                        else:
+                            # 当前 ACM 中没有的条目：默认禁止碰撞
+                            row.append(False)
+                entry.enabled = row
+                new_entry_values.append(entry)
+
+            # 4. 发布修改后的 ACM diff
+            ps = PlanningSceneMsg()
+            ps.is_diff = True
+            ps.robot_state.is_diff = True
+            ps.allowed_collision_matrix.entry_names = new_entry_names
+            ps.allowed_collision_matrix.entry_values = new_entry_values
+            self._planning_scene_pub.publish(ps)
+            # 给 move_group 一点时间合并 ACM diff
+            time.sleep(0.15)
+            action = "禁用" if allowed else "恢复"
+            self.get_logger().info(
+                f"🛡️ 已{action}碰撞检测: {obj_ids} (ACM 条目数: {n}, 保留原有 {len(current_acm.entry_names)} 条)")
+        except Exception as e:
+            self.get_logger().error(f"❌ 设置 ACM 失败: {e}")
 
     def cmd_callback(self, msg):
         # 简单将 JSON 命令推入队列给主线程处理
@@ -1015,33 +1114,69 @@ def main():
     # joint1=0, joint2=1.0669, joint3=-1.1637, joint4=0, joint5=1.2185, joint6=0
     # 对应末端位姿: x=0.1864, y=0.0, z=0.3782, q=(~0, 0.9643, ~0, 0.2650)
     JOINT_OBSERVE = [0.0, 1.0669023184516138, -1.1636808254746993, 0.0, 1.2184841639873214, 0.0]
-    
+
+    # ========== 料框关节点位 (用户标定, 关节空间) ==========
+    # 抓取后流程: pick_up_joints -> bin_above -> bin_place -> 开夹爪 -> bin_above -> observe
+    # 料框1上方 (末端 x=-0.086, y=0.317, z=0.173)
+    JOINT_BIN1_ABOVE = [1.8195755583741684, 1.7968862780982422, -1.0943388942929646,
+                        0.07860962950982461, 0.8454898495436131, 0.10438814256178085]
+    # 料框1放置位 (末端 x=-0.109, y=0.329, z=-0.107)
+    JOINT_BIN1_PLACE = [1.8810635079219287, 2.641887435451297, -1.1993728086779836,
+                        0.2364746603527117, 0.1650732406536237, 0.060702551384362785]
+    # 料框2上方 (末端 x=-0.141, y=-0.314, z=0.106)
+    JOINT_BIN2_ABOVE = [-1.980896341136004, 1.9832350823336766, -1.06501736285946,
+                        -0.07853981633974483, 0.6292086486364757, 0.0]
+    # 料框2放置位 (末端 x=-0.145, y=-0.333, z=-0.093)
+    JOINT_BIN2_PLACE = [-1.980721808210805, 2.621257643692724, -1.2797103141472823,
+                        0.0, 0.31895892080196375, 0.0]
+    # 料框编号 -> (上方关节, 放置位关节)
+    BIN_JOINTS = {
+        1: (JOINT_BIN1_ABOVE, JOINT_BIN1_PLACE),
+        2: (JOINT_BIN2_ABOVE, JOINT_BIN2_PLACE),
+    }
+
     GRIPPER_OPEN = 0.090
     GRIPPER_CLOSE = 0.060
     GRIPPER_GRAB = 0.000
     GRIPPER_SETTLE_SEC = 0.30
-    GRIPPER_REGRIP_DELTA = 0.006
+
+    # ── 抓取点 z 补偿: link6 原点到夹爪夹持点的 z 距离 ──
+    # 实测 (2026-07-20): 青苹果 det_z=0.07, 正确夹住时 link6_z=0.136, offset=0.066
+    # 当前值 0.072 = 实测 0.066 + 微调 0.006 (用户从 0.066 上调)
+    # 原值 0.11 偏高 4.4cm 导致空夹; 若仍空夹→减小, 若碰桌面→增大, 步长 0.005
+    GRIPPER_PICK_Z_OFFSET = 0.064
+
+    # ── 按物体类别的 z 抓取修正 (单位: 米) ──
+    # 在 GRIPPER_PICK_Z_OFFSET 基础上叠加; 正值=抬高(防碰台面), 负值=降低(防空夹)
+    # 物体类别从 pick_name 提取 (如 "lemon (detected)" → "lemon")
+    # 未列出的类别用 0 (无修正); 步长 0.005, 调到刚好夹住为止
+    PER_OBJECT_Z_CORRECTION = {
+        'lemon': 0.025,        # 柠檬 height_m +20% 后深度估算偏高 → 下探过多碰台面, 抬高 2cm 补偿
+        'green apple': -0.015, # 青苹果三维 +10% 后深度估算偏低 → 夹取不够深, 多下降 1.5cm
+        'strawberry': 0.010,   # 草莓深度估算偏高 → 下探碰台面, 抬高 1cm 补偿
+    }
 
     def compute_gripper_targets(object_diameter_m):
         # target_pos is the signed opening magnitude in this action server.
-        # Use small squeeze margin to hold the object while avoiding deep penetration.
+        # 一次性闭合: 直接夹到目标力度, 无二次补压。
+        # 挤压余量 0.020 (比物体直径小 20mm), 兼顾夹紧力与防过载。
         if object_diameter_m is None:
             return GRIPPER_OPEN, GRIPPER_CLOSE
         d = float(object_diameter_m)
         d = max(0.040, min(0.085, d))
         open_target = max(0.060, min(0.095, d + 0.020))
-        close_target = max(0.036, min(0.080, d - 0.006))
+        close_target = max(0.020, min(0.080, d - 0.020))
         if close_target >= open_target:
-            close_target = max(0.038, open_target - 0.006)
+            close_target = max(0.022, open_target - 0.028)
         return open_target, close_target
     
     loop_count = 0
     try:
         print("\n\n======== 🔵 自动分拣服务端已启动 (等待 GUI 客户端指令) ========\n")
         
-        # 初始运行时回到待机位
-        node.move_arm_joint(JOINT_STANDBY, "初始回到零点/待机位 (Standby)")
-        node.operate_gripper(GRIPPER_GRAB, "初始化闭合夹爪(待机)")
+        # 初始运行时到观察位待机 (用户要求: 程序一启动就到观察位)
+        node.move_arm_joint(JOINT_OBSERVE, "初始回到观察位 (Observe)")
+        node.operate_gripper(GRIPPER_OPEN, "初始化张开夹爪(待机)")
         
         while rclpy.ok():
             # 持续向客户端广播自身状态（当前为空闲）
@@ -1066,18 +1201,18 @@ def main():
                 
             if data.get("cmd") == "quit":
                 print("\n🛑 收到来自客户端的退出指令，准备复位...")
-                node.move_arm_joint(JOINT_STANDBY, "退出前回到待机位")
-                node.operate_gripper(GRIPPER_GRAB, "退出前闭合夹爪")
+                node.move_arm_joint(JOINT_OBSERVE, "退出前回到观察位")
+                node.operate_gripper(GRIPPER_OPEN, "退出前张开夹爪")
                 break
-                
+
             elif data.get("cmd") == "reset":
                 node.is_busy = True
                 status_msg.data = 'busy'
                 node.status_pub.publish(status_msg)
 
-                print("\n🔄 收到客户端指令：一键回到待机点并关闭夹爪")
-                node.move_arm_joint(JOINT_STANDBY, "回到待机位")
-                node.operate_gripper(GRIPPER_GRAB, "闭合夹爪(待机)")
+                print("\n🔄 收到客户端指令：一键回到观察位并关闭夹爪")
+                node.move_arm_joint(JOINT_OBSERVE, "回到观察位")
+                node.operate_gripper(GRIPPER_OPEN, "张开夹爪(待机)")
 
             elif data.get("cmd") == "observe":
                 node.is_busy = True
@@ -1099,27 +1234,36 @@ def main():
                 cycle_profiles = []
                 object_diameter_m = data.get("object_diameter_m", None)
                 dynamic_open, dynamic_close = compute_gripper_targets(object_diameter_m)
-                
+
                 pick_pose = data["pick"]
-                place_pose = data["place"]
                 pick_id = data.get("pick_name", "Pick")
-                place_id = data.get("place_name", "Place")
                 cycle_id = str(data.get("cycle_id", ""))
-                
+
+                # 从 pick_name 提取物体类别 (如 "lemon (detected)" → "lemon"), 查 z 修正表
+                obj_class = pick_id.split(' (')[0].strip().lower()
+                z_correction = PER_OBJECT_Z_CORRECTION.get(obj_class, 0.0)
+                if z_correction:
+                    print(f"📏 物体='{obj_class}', z 修正={z_correction:+.3f}m (叠加在 GRIPPER_PICK_Z_OFFSET 上)")
+
+                # 料框编号 (1 或 2), 决定放置关节点位
+                try:
+                    bin_num = int(data.get("bin", 1))
+                except (TypeError, ValueError):
+                    bin_num = 1
+                if bin_num not in BIN_JOINTS:
+                    print(f"⚠️ 无效的 bin={bin_num}, 默认使用料框1")
+                    bin_num = 1
+                BIN_ABOVE_JOINTS, BIN_PLACE_JOINTS = BIN_JOINTS[bin_num]
+                place_id = f"料框{bin_num}"
+
                 POSE_PICK = pick_pose.copy()
-                # 预留夹爪长度11cm
-                POSE_PICK['z'] += 0.11
+                # link6 原点到夹爪夹持点的 z 距离 (实测 0.066, 见 GRIPPER_PICK_Z_OFFSET)
+                # + 按物体类别的 z 修正 (PER_OBJECT_Z_CORRECTION, 柠檬等深度估算偏差大的物体)
+                POSE_PICK['z'] += GRIPPER_PICK_Z_OFFSET + z_correction
                 POSE_PICK_UP = POSE_PICK.copy()
                 POSE_PICK_UP['z'] += 0.13  # 抬起脱离高 13cm
                 POSE_LIFT_SOFT = POSE_PICK.copy()
                 POSE_LIFT_SOFT['z'] += 0.035  # 先小幅抬起，降低惯性导致的滑脱
-                
-                POSE_PLACE = place_pose.copy()
-                POSE_PLACE['z'] += 0.11  # 预留夹爪长度11cm
-                POSE_PLACE_PRE = POSE_PLACE.copy()
-                POSE_PLACE_PRE['z'] += 0.08  # 放置位上方 8cm (连贯预放点)
-                POSE_PLACE_UP = POSE_PLACE.copy()
-                POSE_PLACE_UP['z'] += 0.13 # 抬起脱离高 13cm
 
                 loop_count += 1
                 mode_label = " [两阶段精定位]" if two_stage else ""
@@ -1147,8 +1291,8 @@ def main():
                         )
                         if not refine_ok:
                             print(f"❌ 两阶段精定位失败: {refine_result}")
-                            node.move_arm_joint(JOINT_STANDBY, "两阶段失败→回到待机位")
-                            node.operate_gripper(GRIPPER_GRAB, "闭合夹爪(两阶段失败)")
+                            node.move_arm_joint(JOINT_OBSERVE, "两阶段失败→回到观察位")
+                            node.operate_gripper(GRIPPER_OPEN, "张开夹爪(两阶段失败)")
                             success = False; break
                         # 用精定位坐标更新相关位姿
                         for p in (POSE_PICK, POSE_PICK_UP, POSE_LIFT_SOFT):
@@ -1171,6 +1315,13 @@ def main():
 
                     # 记录抓取过渡点的关节角，用于百分百安全抬起
                     pick_up_joints = node.current_joints.copy() if node.current_joints else None
+
+                    # ⚠️ 下降前禁用所有传送带碰撞体: z 补偿降低后夹爪手指(gripper_link1/2)会穿透
+                    # belt_deck 台面和 conveyor_belt_col 侧面碰撞模型，导致抬起时起点被判碰撞 → -2。
+                    # 日志确认两种碰撞: belt_deck↔gripper_link1, conveyor_belt_col↔gripper_link1。
+                    # 物理上物体在台面上方 7cm，夹爪不会真撞台面，仅碰撞模型偏保守。
+                    # 恢复在回观察位之后(下方错误处理/成功路径)。
+                    node._set_bin_collision_allowed(allowed=True)
 
                     # 【第二步】 下降抓取 — 优先直线插补（短距），IK 作为备用
                     # 使用 PICK_UP 时 IK 算出的实际末端姿态，确保姿态匹配
@@ -1201,16 +1352,11 @@ def main():
                             cycle_profiles.append(node.last_planning_profile_name)
 
                     
-                    # 【第三步】 闭合夹爪
+                    # 【第三步】 一次性闭合夹爪 (无二次补压, 直接夹到位)
                     node.operate_gripper(dynamic_close, "闭合夹爪(拿取)")
                     # 闭合后短暂停顿，让物体接触稳定后再上升，减少滑脱/弹飞。
                     time.sleep(GRIPPER_SETTLE_SEC)
 
-                    # 二次补压：在稳定接触后再微量夹紧，提升竖直抬升抗滑能力。
-                    regrip_target = max(0.030, dynamic_close - GRIPPER_REGRIP_DELTA)
-                    node.operate_gripper(regrip_target, "二次补压(防滑)")
-                    time.sleep(0.25)
-                    
                     # 【第四步】 抬起脱离 (一键无缝连贯倒回之前的安全关节快照空间)
                     if pick_up_joints:
                         sorted_joints = [pick_up_joints[f'joint{i}'] for i in range(1, 7)]
@@ -1228,61 +1374,35 @@ def main():
                             cycle_profiles.append(node.last_planning_profile_name)
                         grasp_reached_ok = True
                     
-                    # 【第五步】 移动到放置位上方5cm — IK 优先
-                    if not node.move_arm_pose(POSE_PLACE_PRE, "进入放置预备位 (上方5cm)", continuous=True, planning_mode='normal'): success = False; break
-                    if node.last_planning_strategy:
-                        cycle_strategies.append(node.last_planning_strategy)
-                    if node.last_planning_profile_name:
-                        cycle_profiles.append(node.last_planning_profile_name)
+                    # 【第五步】 关节空间移动到料框上方 (用户标定点位)
+                    # ⚠️ 临时禁用传送带所有碰撞体：料框放置位机械臂与多个传送带碰撞体几何相交
+                    # (control_box↔link5, rail_ny↔gripper_link2, conveyor_control_box↔gripper_link1 等)，
+                    # 导致 RRTConnect 无法在目标状态采样 (错误码 99999)。通过 ACM diff 临时允许碰撞，第九步后恢复。
+                    node._set_bin_collision_allowed(allowed=True)
+                    if not node.move_arm_joint(BIN_ABOVE_JOINTS, f"移动到{place_id}上方 (关节空间)", continuous=False):
+                        success = False; break
 
-                    # 记录放置过渡点的关节角，用于百分百安全抬起
-                    place_up_joints = node.current_joints.copy() if node.current_joints else None
+                    # 【第六步】 关节空间移动到料框放置位 (用户标定点位)
+                    # ⚠️ continuous=False: 上一步执行后需 0.5s 稳定时间，否则起点偏差 > 0.01 触发 -4 错误
+                    if not node.move_arm_joint(BIN_PLACE_JOINTS, f"移动到{place_id}放置位 (关节空间)", continuous=False):
+                        success = False; break
+                    place_reached_ok = True
 
-                    # 【第五点五步】 连贯微降到放置位 — 优先直线插补，IK 作为备用
-                    place_fallback_ori = node._build_pick_orientation(POSE_PLACE)[0]
-                    active_ori = getattr(node, 'last_successful_orientation', place_fallback_ori)
-                    pose_place_msg = node._create_pose(POSE_PLACE, active_ori)
+                    # 【第七步】 松开夹爪释放物品
+                    node.operate_gripper(dynamic_open, f"松开夹爪(在{place_id}放置位释放)")
+                    time.sleep(GRIPPER_SETTLE_SEC)
 
-                    place_success = False
-                    # 先尝试直线插补（放置时直线运动更安全，阈值放宽到50%）
-                    if node.execute_cartesian_path([pose_place_msg], "进入放置位 (直线插补)", fraction_threshold=0.50):
-                        place_success = True
-                        place_reached_ok = True
-                    elif node.enable_ik and node.ik_solver is not None:
-                        # 直线插补失败，尝试 IK 多姿态求解
-                        place_orientations = node._build_pick_orientations_multi(POSE_PLACE)
-                        ik_ok, ik_joints = node.move_arm_via_ik(POSE_PLACE, place_orientations, "进入放置位 (IK多姿态)", continuous=True)
-                        if ik_ok:
-                            place_success = True
-                            place_reached_ok = True
-                            cycle_strategies.append('ik_joint_space')
-                            cycle_profiles.append('ik_solution')
+                    # 【第八步】 关节空间回到料框上方 (抬起脱离放置位)
+                    if not node.move_arm_joint(BIN_ABOVE_JOINTS, f"从{place_id}放置位抬起 (关节空间)", continuous=False):
+                        success = False; break
 
-                    if not place_success:
-                        print("🟡 直线插补+IK均受限！启动多路并发退避规划...")
-                        if not node.move_arm_cartesian(POSE_PLACE, "进入放置位 (退避规划)", preferred_orientation=active_ori, allow_position_only_fallback=True, planning_mode='descend'):
-                            success = False; break
-                        if node.last_planning_strategy:
-                            cycle_strategies.append(node.last_planning_strategy)
-                        if node.last_planning_profile_name:
-                            cycle_profiles.append(node.last_planning_profile_name)
-                        place_reached_ok = True
+                    # 【第九步】 关节空间回到观察位 (等待下一次抓取)
+                    if not node.move_arm_joint(JOINT_OBSERVE, f"回到观察位 (关节空间)", continuous=False):
+                        success = False; break
 
-                    
-                    # 【第六步】 松开夹爪释放物品
-                    node.operate_gripper(dynamic_open, "松开夹爪(释放)")
-                    
-                    # 【第七步】 撤出放置位回到上方过渡点 (一键无缝连贯倒回之前的安全关节快照空间)
-                    if place_up_joints:
-                        sorted_joints = [place_up_joints[f'joint{i}'] for i in range(1, 7)]
-                        if not node.move_arm_joint(sorted_joints, "撤出物品上方 (直接原路逆向)", continuous=True): success = False; break
-                    else:
-                        if not node.move_arm_cartesian(POSE_PLACE_UP, "撤出物品上方 (退避规划)", preferred_orientation=active_ori, allow_position_only_fallback=True, planning_mode='retreat'):
-                            success = False; break
-                        if node.last_planning_strategy:
-                            cycle_strategies.append(node.last_planning_strategy)
-                        if node.last_planning_profile_name:
-                            cycle_profiles.append(node.last_planning_profile_name)
+                # ⚠️ 碰撞检测恢复已下移至"回观察位之后"。
+                # 原来在此处恢复会导致: 若抓取/抬起失败时机械臂仍在低位，
+                # 恢复后下方错误处理中的"回观察位"也会因起点碰撞(belt_deck↔gripper_link1)而失败(-2)。
 
                 final_strategy = 'cartesian_only'
                 if 'free_yaw' in cycle_strategies:
@@ -1315,11 +1435,16 @@ def main():
                     node.cycle_result_pub.publish(result_msg)
                     
                     node.operate_gripper(GRIPPER_OPEN, "防碰撞提前张开夹爪")
-                    node.move_arm_joint(JOINT_STANDBY, "自动回到待机点")
-                    node.operate_gripper(GRIPPER_GRAB, "闭合夹爪(待机)")
+                    node.move_arm_joint(JOINT_OBSERVE, "自动回到观察位")
+                    # 安全回到观察位后恢复碰撞检测 (无论回观察位是否成功都恢复，避免影响下一轮)
+                    node._set_bin_collision_allowed(allowed=False)
+                    node.operate_gripper(GRIPPER_OPEN, "张开夹爪(待机)")
                     
                     time.sleep(0.5)
                     continue
+
+                # 成功完成分拣后恢复碰撞检测
+                node._set_bin_collision_allowed(allowed=False)
 
                 print(f"🎉 第 {loop_count} 次回合顺利完成！休整一下...")
                 result_msg = String()
@@ -1341,8 +1466,8 @@ def main():
     except KeyboardInterrupt:
         print("\n⏹️ 收到 Ctrl+C，正在复位机械臂...")
         try:
-            node.move_arm_joint(JOINT_STANDBY, "退出前回到待机位")
-            node.operate_gripper(GRIPPER_GRAB, "退出前闭合夹爪")
+            node.move_arm_joint(JOINT_OBSERVE, "退出前回到观察位")
+            node.operate_gripper(GRIPPER_OPEN, "退出前张开夹爪")
         except Exception:
             pass
         print("⏹️ 动作停止，安全退出。")

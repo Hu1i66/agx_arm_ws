@@ -26,8 +26,20 @@ def euler_to_quaternion(roll_deg, pitch_deg, yaw_deg):
 
 # ═══════════════════════ ROS 子进程 ═══════════════════════
 
-def ros_process_worker(cmd_q, st_q, pose_q, img_q, det_q):
-    """ROS2 子进程 — camera/YOLO 回调即时推送 JPEG。 无 Tkinter 依赖。"""
+def ros_process_worker(cmd_q, st_q, pose_q, img_q, det_q, conv_q, mp_status_q):
+    """ROS2 子进程 — camera/YOLO 回调即时推送 JPEG。 无 Tkinter 依赖。
+
+    ⚠️ auto_start_pipeline (相机/YOLO 自动拉起) 也在此子进程中以守护线程运行。
+    原因: 主进程加载了 Tcl/Tk C 库, 多线程中 fork() (subprocess.run/Popen)
+    会破坏 Tcl 引用计数 → "Tcl_Release couldn't find reference" → 段错误。
+    本子进程无 Tcl 依赖, fork() 安全。
+    """
+    # 在 ROS worker 子进程中启动自动启动管线 (此进程无 Tcl, fork 安全)
+    def _mp_set_status(msg):
+        try: mp_status_q.put_nowait(msg)
+        except: pass
+    threading.Thread(target=auto_start_pipeline, args=(_mp_set_status,), daemon=True).start()
+
     import rclpy
     from rclpy.node import Node
     from rclpy.logging import LoggingSeverity, set_logger_level
@@ -90,6 +102,21 @@ def ros_process_worker(cmd_q, st_q, pose_q, img_q, det_q):
         def _cmd_tick(self):
             while not cmd_q.empty():
                 cmd = cmd_q.get()
+                # 传送带继电器控制: 在 ROS worker 进程中执行 (主进程有 Tcl, fork 会导致崩溃)
+                if cmd.get("cmd") == "conveyor":
+                    relay_action = cmd.get("relay_action", "off")
+                    try:
+                        r = subprocess.run(
+                            ['python3', _RELAY_SCRIPT, relay_action],
+                            capture_output=True, text=True, timeout=10)
+                        ok = (r.returncode == 0 and '✅' in (r.stdout or ''))
+                        err = (r.stderr or r.stdout or '').strip()[-300:]
+                    except Exception as e:
+                        ok = False; err = str(e)
+                    try:
+                        _putq(conv_q, {'ok': ok, 'err': err})
+                    except: pass
+                    continue
                 m = String(); m.data = json.dumps(cmd)
                 # 曝光控制命令发到 /camera/exposure_ctrl, 其他命令发到 /sorting_cmds
                 if cmd.get("cmd") == "exposure":
@@ -176,9 +203,11 @@ def main():
     cmd_q = multiprocessing.Queue(); st_q = multiprocessing.Queue()
     pose_q = multiprocessing.Queue(); img_q = multiprocessing.Queue(maxsize=1)
     det_q = multiprocessing.Queue(maxsize=1)
+    conv_q = multiprocessing.Queue()  # 传送带继电器结果队列 (ROS worker → GUI)
+    mp_status_q = multiprocessing.Queue()  # 相机/YOLO 启动状态消息队列 (ROS worker → GUI)
 
     ros_proc = multiprocessing.Process(target=ros_process_worker,
-                                       args=(cmd_q,st_q,pose_q,img_q,det_q), name="ros")
+                                       args=(cmd_q,st_q,pose_q,img_q,det_q,conv_q,mp_status_q), name="ros")
     ros_proc.start()
     _log("ROS proc started")
 
@@ -189,6 +218,7 @@ def main():
             super().__init__()
             self.cmd_queue=cmd_q; self.status_queue=st_q; self.pose_queue=pose_q
             self.image_queue=img_q; self.detection_queue=det_q
+            self.conveyor_queue=conv_q  # 传送带继电器结果队列 (ROS worker → GUI)
             self.title("机械臂分拣控制面板")
             self.geometry("1350x680"); self.configure(padx=10, pady=10)
             self.poses = {}; self.load_poses()
@@ -200,18 +230,36 @@ def main():
             self.default_grasp_roll=tk.DoubleVar(value=180.0)
             self.default_grasp_pitch=tk.DoubleVar(value=0.0)
             self.default_grasp_yaw=tk.DoubleVar(value=0.0)
+            # 放置料框选择: 1=料框1, 2=料框2 (抓取前由用户选定, 决定放置关节点位)
+            self.bin_var=tk.IntVar(value=1)
             # 传送带(继电器)状态: True=运行, False=停止, None=未知
             self._conveyor_busy=False
             self.conveyor_state=None
-            self._conveyor_proc=None        # 当前继电器子进程(Popen)，None=无任务
             self._conveyor_run=None         # 当前任务对应的传送带意图
+            self._conveyor_start_time=0     # 继电器命令发送时间 (用于超时检测)
             # 曝光控制状态 (与 realsense_yolo_node.py 的 self.auto_exposure/current_exposure 对应)
             self._exposure_auto=True        # True=自动曝光, False=手动
             self._exposure_value=100        # 手动曝光值 (微秒, 范围 1-10000)
+            # ── 自动分拣状态机 ──
+            self.auto_sort_running=False       # 是否运行中
+            self.auto_sort_state='IDLE'        # 当前状态
+            self._auto_sort_current_obj=None   # 当前分拣物体 (用于重试)
+            self._auto_sort_retry_count=0      # 重试计数 (0=首次, 1=重试)
+            self._auto_error_seen=False        # SORTING 中是否看到 error
+            self._auto_sort_stop_requested=False  # 停止请求标志
+            self._auto_sort_line_u=380         # 分界线 u 坐标 (向右偏移, 物体更早被分拣)
+            self._auto_sort_tick_id=None       # after 句柄
+            self._conv_stop_retry=0            # 传送带停止重试计数
+            self._conv_stopped_ts=0            # 传送带停止完成时间戳 (用于观察 1s 等物体静止)
             self.setup_ui()
             self._update_status_loop()
             self._update_camera_loop()
             self._update_detection_loop()
+            self._draw_dividing_line()  # 初始化分界线 (默认隐藏)
+            # 启动时自动发送传送带停止命令:
+            # 1) 确保传送带处于停止状态 (安全默认)
+            # 2) 继电器调用已委托给 ROS worker 进程, 不会触发 Tcl 崩溃
+            self.after(800, lambda: self._conveyor_set(False))
 
         def load_poses(self):
             f='/home/lxf/agx_arm_ws/saved_poses.json'
@@ -330,8 +378,10 @@ def main():
             ft=tk.LabelFrame(self.right_frame,text="分拣任务下发",padx=10,pady=10); ft.pack(fill="x",pady=5)
             tk.Label(ft,text="夹取点 (Pick):").grid(row=0,column=0,pady=10)
             self.pick_combo=ttk.Combobox(ft,state="readonly",width=15); self.pick_combo.grid(row=0,column=1,padx=10)
-            tk.Label(ft,text="放置点 (Place):").grid(row=0,column=2,pady=10)
-            self.place_combo=ttk.Combobox(ft,state="readonly",width=15); self.place_combo.grid(row=0,column=3,padx=10)
+            tk.Label(ft,text="放置料框:").grid(row=0,column=2,pady=10)
+            bf=tk.Frame(ft); bf.grid(row=0,column=3,padx=10)
+            tk.Radiobutton(bf,text="料框1",variable=self.bin_var,value=1,font=("Arial",11,"bold")).pack(side=tk.LEFT)
+            tk.Radiobutton(bf,text="料框2",variable=self.bin_var,value=2,font=("Arial",11,"bold")).pack(side=tk.LEFT,padx=(8,0))
             tk.Button(ft,text="添加至分拣队列",command=self.add_to_queue,font=("Arial",11,"bold"),bg="lightblue",width=18).grid(row=1,column=0,columnspan=2,pady=10)
             tk.Button(ft,text="立即发送分拣指令",command=self.send_sort,font=("Arial",11,"bold"),bg="lightgreen",width=18).grid(row=1,column=2,columnspan=2,pady=10)
             self.update_comboboxes()
@@ -348,21 +398,33 @@ def main():
                                             font=("Arial",12,"bold"),bg="#f44336",fg="white")
             self.conveyor_off_btn.pack(side=tk.LEFT,expand=True,fill="x",padx=(4,0))
             tk.Label(fc,text=" 继电器接常闭: 传送带开=继电器off / 传送带关=继电器on",font=("Arial",8),fg="gray").pack(pady=(6,0))
+            # ── 自动分拣控制 ──
+            fas=tk.LabelFrame(self.right_frame,text=" 自动分拣",padx=10,pady=10); fas.pack(fill="x",pady=5)
+            self.auto_sort_state_var=tk.StringVar(value="[IDLE] 未运行")
+            tk.Label(fas,textvariable=self.auto_sort_state_var,font=("Arial",10,"bold"),fg="purple").pack(anchor=tk.W,pady=(0,5))
+            bf2=tk.Frame(fas); bf2.pack(fill="x")
+            self.auto_sort_start_btn=tk.Button(bf2,text=" 开始自动分拣 ",command=self.start_auto_sort,
+                                              font=("Arial",12,"bold"),bg="#9C27B0",fg="white")
+            self.auto_sort_start_btn.pack(side=tk.LEFT,expand=True,fill="x",padx=(0,4))
+            self.auto_sort_stop_btn=tk.Button(bf2,text=" 停止自动分拣 ",command=self.stop_auto_sort,
+                                             font=("Arial",12,"bold"),bg="#FF5722",fg="white",state=tk.DISABLED)
+            self.auto_sort_stop_btn.pack(side=tk.LEFT,expand=True,fill="x",padx=(4,0))
+            tk.Label(fas,text=" 分界线 u=380 | 苹果/草莓/橙→框1 | 柠檬/桃/梨→框2 | 失败重试1次",
+                     font=("Arial",8),fg="gray").pack(pady=(6,0))
             fa=tk.Frame(self.right_frame); fa.pack(pady=10)
             tk.Button(fa,text="回到观察位",command=self.send_observe,font=("Arial",12,"bold"),bg="#2196F3",fg="white",width=40).pack(pady=5)
-            tk.Button(fa,text="一键回到待机点并关闭夹爪",command=self.send_reset,font=("Arial",12,"bold"),bg="orange",width=40).pack(pady=5)
+            tk.Button(fa,text="一键回到观察位并关闭夹爪",command=self.send_reset,font=("Arial",12,"bold"),bg="orange",width=40).pack(pady=5)
             tk.Button(fa,text="退出服务端系统",command=self.send_quit,font=("Arial",12,"bold"),bg="tomato",fg="white",width=40).pack(pady=5)
 
         def update_comboboxes(self):
             names=list(self.poses.keys())
-            for cb in(self.pick_combo,self.place_combo,getattr(self,'del_combo',None)):
+            for cb in(self.pick_combo,getattr(self,'del_combo',None)):
                 if cb: cb['values']=names
             if names:
                 if not self.pick_combo.get(): self.pick_combo.current(0)
-                if not self.place_combo.get(): self.place_combo.current(0)
                 if hasattr(self,'del_combo') and not self.del_combo.get(): self.del_combo.current(0)
             else:
-                for cb in(self.pick_combo,self.place_combo,getattr(self,'del_combo',None)):
+                for cb in(self.pick_combo,getattr(self,'del_combo',None)):
                     if cb: cb.set('')
 
         # ── 相机画面 ──
@@ -411,8 +473,10 @@ def main():
                     # 默认主物体显示 (顶层字段, 保持向后兼容)
                     if d.get('detected'):
                         self.det_status_var.set(f" 已检测到物体 (共 {len(objects)} 个)")
-                        self.pick_btn.config(state=tk.NORMAL,bg="#4CAF50")
-                        self.pick_two_btn.config(state=tk.NORMAL,bg="#2196F3")
+                        # 自动分拣运行时保持手动按钮禁用
+                        if not self.auto_sort_running:
+                            self.pick_btn.config(state=tk.NORMAL,bg="#4CAF50")
+                            self.pick_two_btn.config(state=tk.NORMAL,bg="#2196F3")
                         self.det_obj.set(f"物体: {d.get('object_name','--')}")
                         self.det_conf.set(f"置信度: {d.get('confidence',0)*100:.2f}%")
                         self.det_meth.set(f"方法: {d.get('method','--')}")
@@ -497,8 +561,7 @@ def main():
             if not d.get('detected'): return messagebox.showwarning("未检测到","当前未发现物体。")
             bp=d.get('base_position_m',{})
             if not bp or not all(k in bp for k in('x','y','z')): return messagebox.showerror("坐标缺失","缺少 base_position_m。")
-            pn=self.place_combo.get()
-            if not pn or pn not in self.poses: return messagebox.showerror("错误","请选择有效的放置点。")
+            bin_num=self.bin_var.get()
             try: r=float(self.default_grasp_roll.get()); p=float(self.default_grasp_pitch.get()); y=float(self.default_grasp_yaw.get())
             except ValueError: return messagebox.showerror("姿态错误","R/P/Y 必须是数字。")
             qx,qy,qz,qw=euler_to_quaternion(r,p,y)
@@ -509,19 +572,16 @@ def main():
             dia_str=f"物体直径: {dia} m\n\n" if dia else ""
             txt=(f"检测坐标夹取确认\n\nPick: {d.get('object_name','物体')} (detected)\n"
                  f"  坐标: ({pp['x']:.3f}, {pp['y']:.3f}, {pp['z']:.3f})\n  姿态: R={r}  P={p}  Y={y} \n\n"
-                 f"Place: {pn}\n  坐标: ({self.poses[pn]['x']:.3f}, {self.poses[pn]['y']:.3f}, {self.poses[pn]['z']:.3f})\n\n"
+                 f"Place: 料框{bin_num} (关节空间预设点位)\n\n"
                  f"{dia_str}确定发送？")
             if not messagebox.askyesno("确认",txt): return
-            pqx,pqy,pqz,pqw=euler_to_quaternion(180,0,0)
-            pp2={'x':round(float(self.poses[pn]['x']),3),'y':round(float(self.poses[pn]['y']),3),'z':round(float(self.poses[pn]['z']),3),
-                 'qx':round(pqx,6),'qy':round(pqy,6),'qz':round(pqz,6),'qw':round(pqw,6)}
-            cmd={"cmd":"sort","pick":pp,"place":pp2,"pick_name":f"{d.get('object_name','物体')} (detected)","place_name":pn}
+            cmd={"cmd":"sort","pick":pp,"bin":bin_num,"pick_name":f"{d.get('object_name','物体')} (detected)","place_name":f"料框{bin_num}"}
             if dia: cmd["object_diameter_m"]=float(dia)
             if self.current_status=='busy':
                 if messagebox.askyesno("忙碌","加入排队队列？"):
                     self.task_queue.append(cmd); self.refresh_queue_listbox()
                     messagebox.showinfo("已加入","任务已加入排队队列。")
-            else: self.last_dispatch_time=time.time(); self.cmd_queue.put(cmd); messagebox.showinfo("已发送",f"夹取指令已发送！\n检测物体 -> 【{pn}】")
+            else: self.last_dispatch_time=time.time(); self.cmd_queue.put(cmd); messagebox.showinfo("已发送",f"夹取指令已发送！\n检测物体 -> 【料框{bin_num}】")
 
         # ── 两阶段精定位夹取 ──
         def _pick_from_detection_two_stage(self):
@@ -530,8 +590,7 @@ def main():
             if not d.get('detected'): return messagebox.showwarning("未检测到","当前未发现物体。")
             bp=d.get('base_position_m',{})
             if not bp or not all(k in bp for k in('x','y','z')): return messagebox.showerror("坐标缺失","缺少 base_position_m。")
-            pn=self.place_combo.get()
-            if not pn or pn not in self.poses: return messagebox.showerror("错误","请选择有效的放置点。")
+            bin_num=self.bin_var.get()
             try: r=float(self.default_grasp_roll.get()); p=float(self.default_grasp_pitch.get()); y=float(self.default_grasp_yaw.get())
             except ValueError: return messagebox.showerror("姿态错误","R/P/Y 必须是数字。")
             qx,qy,qz,qw=euler_to_quaternion(r,p,y)
@@ -542,19 +601,16 @@ def main():
             dia_str=f"物体直径: {dia} m\n" if dia else ""
             txt=(f" 两阶段精定位夹取确认\n\n观察位检测坐标:\n  ({pp['x']:.3f}, {pp['y']:.3f}, {pp['z']:.3f})\n\n"
                  f"-> 机械臂移动到物体正上方\n-> YOLO 近距离二次检测\n-> 以二次结果为准直接抓取\n\n"
-                 f"Place: {pn}\n  坐标: ({self.poses[pn]['x']:.3f}, {self.poses[pn]['y']:.3f}, {self.poses[pn]['z']:.3f})\n"
+                 f"Place: 料框{bin_num} (关节空间预设点位)\n"
                  f"{dia_str}\n确定发送？")
             if not messagebox.askyesno("确认两阶段精定位夹取",txt): return
-            pqx,pqy,pqz,pqw=euler_to_quaternion(180,0,0)
-            pp2={'x':round(float(self.poses[pn]['x']),3),'y':round(float(self.poses[pn]['y']),3),'z':round(float(self.poses[pn]['z']),3),
-                 'qx':round(pqx,6),'qy':round(pqy,6),'qz':round(pqz,6),'qw':round(pqw,6)}
-            cmd={"cmd":"sort_verify","pick":pp,"place":pp2,"pick_name":f"{d.get('object_name','物体')} (two-stage)","place_name":pn}
+            cmd={"cmd":"sort_verify","pick":pp,"bin":bin_num,"pick_name":f"{d.get('object_name','物体')} (two-stage)","place_name":f"料框{bin_num}"}
             if dia: cmd["object_diameter_m"]=float(dia)
             if self.current_status=='busy':
                 if messagebox.askyesno("忙碌","加入排队队列？"):
                     self.task_queue.append(cmd); self.refresh_queue_listbox()
                     messagebox.showinfo("已加入","两阶段精定位任务已加入排队队列。")
-            else: self.last_dispatch_time=time.time(); self.cmd_queue.put(cmd); messagebox.showinfo("已发送",f"两阶段精定位指令已发送！\n检测物体 -> 【{pn}】")
+            else: self.last_dispatch_time=time.time(); self.cmd_queue.put(cmd); messagebox.showinfo("已发送",f"两阶段精定位指令已发送！\n检测物体 -> 【料框{bin_num}】")
 
         # ── 原有功能 ──
         def fetch_current_pose(self):
@@ -611,13 +667,14 @@ def main():
 
         def send_reset(self):
             if self.current_status=='busy': return messagebox.showwarning("忙碌","机械臂正在执行动作。")
-            if messagebox.askyesno("确认","机械臂将回到待机位并关闭夹爪。确定？"):
+            if messagebox.askyesno("确认","机械臂将回到观察位并关闭夹爪。确定？"):
                 self.cmd_queue.put({"cmd":"reset"}); self.clear_queue(); messagebox.showinfo("已发送","复位指令发送成功！")
 
         def add_to_queue(self):
-            pn,pp=self.pick_combo.get(),self.place_combo.get()
-            if not pn or not pp: return messagebox.showerror("错误","请选择完整的夹取点和放置点！")
-            self.task_queue.append({"cmd":"sort","pick":self.poses[pn],"place":self.poses[pp],"pick_name":pn,"place_name":pp})
+            pn=self.pick_combo.get()
+            if not pn: return messagebox.showerror("错误","请选择夹取点！")
+            bin_num=self.bin_var.get()
+            self.task_queue.append({"cmd":"sort","pick":self.poses[pn],"bin":bin_num,"pick_name":pn,"place_name":f"料框{bin_num}"})
             self.refresh_queue_listbox()
 
         def remove_from_queue(self):
@@ -642,22 +699,24 @@ def main():
 
         def send_sort(self):
             if self.current_status=='busy': return messagebox.showwarning("忙碌","机械臂正在执行动作。")
-            pn,pp=self.pick_combo.get(),self.place_combo.get()
-            if not pn or not pp: return messagebox.showerror("错误","请选择完整的夹取点和放置点！")
+            pn=self.pick_combo.get()
+            if not pn: return messagebox.showerror("错误","请选择夹取点！")
+            bin_num=self.bin_var.get()
             self.last_dispatch_time=time.time()
-            self.cmd_queue.put({"cmd":"sort","pick":self.poses[pn],"place":self.poses[pp],"pick_name":pn,"place_name":pp})
-            messagebox.showinfo("已发送",f"分拣指令已发送！\n【{pn}】->【{pp}】")
+            self.cmd_queue.put({"cmd":"sort","pick":self.poses[pn],"bin":bin_num,"pick_name":pn,"place_name":f"料框{bin_num}"})
+            messagebox.showinfo("已发送",f"分拣指令已发送！\n【{pn}】->【料框{bin_num}】")
 
         def send_quit(self):
-            if messagebox.askyesno("确认","让服务端回到待机位、关闭夹爪并结束程序。确定？"):
+            if messagebox.askyesno("确认","让服务端回到观察位、关闭夹爪并结束程序。确定？"):
                 self.cmd_queue.put({"cmd":"quit"}); self.after(500,self.destroy)
 
         # ── 传送带控制 ──
-        # 实现说明：不使用子线程。Tkinter 非线程安全，从子线程调用
-        # self.after()/任何 Tk 方法会破坏 Tcl 引用计数，触发
-        # "Tcl_Release couldn't find reference for 0x..." 并核心转储。
-        # 改用 subprocess.Popen 非阻塞启动继电器脚本，主线程用 after() 轮询
-        # 进程是否结束，保证所有 Tk 访问都在主线程。
+        # 实现说明：继电器脚本调用委托给 ROS worker 子进程执行。
+        # 原因：主进程有 Tcl/Tk 事件循环，直接调用 subprocess.Popen/fork 会与
+        # auto_start_pipeline 线程的 fork 竞争，破坏 Tcl 内部引用计数 →
+        # "Tcl_Release couldn't find reference for 0x..." 核心转储。
+        # ROS worker 是独立进程(无 Tcl)，可安全调用 subprocess.run。
+        # GUI 只通过 cmd_queue 发命令、通过 conveyor_queue 收结果，全程主线程操作。
         def _conveyor_set(self, run):
             """设置传送带运行/停止。
 
@@ -679,36 +738,36 @@ def main():
             relay_action='off' if run else 'on'   # ← 关键反转点：传送带开=relay off, 传送带关=relay on
             try:
                 self._conveyor_run=run
-                self._conveyor_proc=subprocess.Popen(
-                    ['python3',_RELAY_SCRIPT,relay_action],
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                self._conveyor_start_time=time.time()
+                # 委托给 ROS worker 进程执行 (避免主进程 fork 与 Tcl 冲突)
+                self.cmd_queue.put({"cmd":"conveyor","relay_action":relay_action})
                 self.after(50, self._conveyor_poll)
             except Exception as e:
                 self._conveyor_done(run, False, str(e))
 
         def _conveyor_poll(self):
-            """主线程轮询继电器子进程是否结束。不阻塞 GUI，不跨线程访问 Tkinter。"""
-            proc=self._conveyor_proc
-            if proc is None:
-                return
-            if proc.poll() is None:
-                self.after(50, self._conveyor_poll)   # 仍在运行，继续等
-                return
-            # 进程已退出，读取输出（已退出故 communicate 立即返回）
+            """主线程轮询 conveyor_queue 是否有继电器结果。不阻塞 GUI，不跨线程访问 Tkinter。"""
             try:
-                out, err=proc.communicate()
-            except Exception:
-                out, err='', ''
-            ok=(proc.returncode==0 and '✅' in (out or ''))
-            errstr=(err or out or '').strip()[-300:]
+                result=self.conveyor_queue.get_nowait()
+            except queue.Empty:
+                # 超时检查 (12秒, 继电器脚本内部 timeout=10s + 队列传输余量)
+                if time.time()-self._conveyor_start_time > 12.0:
+                    run=self._conveyor_run
+                    self._conveyor_run=None
+                    self._conveyor_done(run, False, "继电器通信超时 (ROS worker 无响应)")
+                    return
+                self.after(50, self._conveyor_poll)   # 还没结果, 继续等
+                return
             run=self._conveyor_run
-            self._conveyor_proc=None; self._conveyor_run=None
-            self._conveyor_done(run, ok, errstr)
+            self._conveyor_run=None
+            self._conveyor_done(run, result.get('ok',False), result.get('err',''))
 
         def _conveyor_done(self, run, ok, err):
             self._conveyor_busy=False
-            self.conveyor_on_btn.config(state=tk.NORMAL)
-            self.conveyor_off_btn.config(state=tk.NORMAL)
+            # 自动分拣运行时保持手动按钮禁用
+            if not self.auto_sort_running:
+                self.conveyor_on_btn.config(state=tk.NORMAL)
+                self.conveyor_off_btn.config(state=tk.NORMAL)
             if ok:
                 self.conveyor_state=run
                 if run:
@@ -721,7 +780,10 @@ def main():
                 self.conveyor_state=None
                 self.conveyor_state_var.set("传送带状态: 切换失败")
                 self.conveyor_state_label.config(fg="gray")
-                messagebox.showerror("传送带控制失败", f"继电器通信失败:\n{err}")
+                if self.auto_sort_running:
+                    self._auto_sort_log(f"传送带切换失败: {err}")
+                else:
+                    messagebox.showerror("传送带控制失败", f"继电器通信失败:\n{err}")
 
         def _update_status_loop(self):
             while not self.status_queue.empty():
@@ -731,7 +793,9 @@ def main():
             if s=='idle':
                 self.status_var.set("当前服务器状态: 空闲 (Idle)"); self.status_label.configure(fg="green")
                 self.error_notified=False
-                if getattr(self,'queue_running',False):
+                # ⚠️ 自动分拣运行时禁止弹出排队任务: 状态机自己通过 _dispatch_sort_cmd 直接
+                # 下发 sort_verify, 排队队列的 cmd_queue.put 会与服务端正在处理的指令冲突。
+                if not self.auto_sort_running and getattr(self,'queue_running',False):
                     if self.task_queue and (time.time()-self.last_dispatch_time>1.5):
                         self.cmd_queue.put(self.task_queue.pop(0)); self.refresh_queue_listbox()
                         self.last_dispatch_time=time.time()
@@ -741,28 +805,290 @@ def main():
             elif s=='busy': self.status_var.set("当前服务器状态: 忙碌 (Busy)"); self.status_label.configure(fg="red")
             elif s=='error':
                 self.status_var.set("当前服务器状态: 异常 (Error)"); self.status_label.configure(fg="orange")
-                if not getattr(self,'error_notified',False):
+                if self.auto_sort_running:
+                    pass  # 自动分拣运行时, 状态机自行处理 error, 不弹窗
+                elif not getattr(self,'error_notified',False):
                     self.error_notified=True; self.clear_queue()
                     messagebox.showwarning("规划失败","机械臂执行失败。任务队列已清空。")
             self.after(500,self._update_status_loop)
+
+        # ═══════════════════════ 自动分拣 ═══════════════════════
+
+        def _auto_sort_log(self, msg):
+            """自动分拣日志: 写文件 + 更新状态标签。"""
+            _log(f"[AUTO_SORT] [{self.auto_sort_state}] {msg}")
+            try:
+                self.auto_sort_state_var.set(f"[{self.auto_sort_state}] {msg}")
+            except: pass
+
+        def _bin_for_object(self, name):
+            """分拣规则: apple/green apple/strawberry/orange→料框1, lemon/honey peach/pear→料框2。"""
+            n = (name or '').lower().strip()
+            for k in ('apple', 'green apple', 'strawberry', 'orange'):
+                if k in n: return 1
+            for k in ('lemon', 'honey peach', 'pear'):
+                if k in n: return 2
+            return 1  # 未知默认料框1
+
+        def _pick_object_left_of_line(self):
+            """筛选 x1 ≤ 分界线 且有 base_position_m 的物体, 返回 center_u 最大的。"""
+            d = self.latest_detection
+            if not d or not d.get('detected'): return None
+            objects = d.get('objects', []) or []
+            candidates = []
+            for obj in objects:
+                bp = obj.get('base_position_m')
+                if not bp or not all(k in bp for k in ('x','y','z')): continue
+                bbox = obj.get('bbox_pixel', {})
+                x1 = bbox.get('x1'); x2 = bbox.get('x2')
+                if x1 is None or x2 is None: continue
+                if x1 <= self._auto_sort_line_u:
+                    center_u = (x1 + x2) / 2.0
+                    candidates.append((center_u, obj))
+            if not candidates: return None
+            candidates.sort(key=lambda t: t[0], reverse=True)  # center_u 降序
+            return candidates[0][1]
+
+        def _dispatch_sort_cmd(self, obj, retry=False):
+            """构造 sort_verify 命令并发送 (两阶段精定位)。"""
+            bp = obj['base_position_m']
+            try:
+                r = float(self.default_grasp_roll.get())
+                p = float(self.default_grasp_pitch.get())
+                y = float(self.default_grasp_yaw.get())
+            except ValueError:
+                r, p, y = 180.0, 0.0, 0.0
+            qx, qy, qz, qw = euler_to_quaternion(r, p, y)
+            pick = {'x': round(float(bp['x']), 3), 'y': round(float(bp['y']), 3), 'z': round(float(bp['z']), 3),
+                    'qx': round(qx, 6), 'qy': round(qy, 6), 'qz': round(qz, 6), 'qw': round(qw, 6)}
+            name = obj.get('object_name', '物体')
+            bin_num = self._bin_for_object(name)
+            dia = obj.get('size_m', {}).get('diameter')
+            cmd = {"cmd": "sort_verify", "pick": pick, "bin": bin_num,
+                   "pick_name": f"{name} (auto-sort{'-retry' if retry else ''})",
+                   "place_name": f"料框{bin_num}"}
+            if dia: cmd["object_diameter_m"] = round(float(dia), 3)
+            self.last_dispatch_time = time.time()
+            self.cmd_queue.put(cmd)
+            self._auto_sort_log(f"分拣: {name}→料框{bin_num} {'[重试]' if retry else ''}")
+
+        def _set_manual_buttons_state(self, state):
+            """批量禁用/启用手动按钮。state: tk.NORMAL 或 tk.DISABLED。"""
+            for btn in (getattr(self, 'conveyor_on_btn', None), getattr(self, 'conveyor_off_btn', None),
+                        getattr(self, 'pick_btn', None), getattr(self, 'pick_two_btn', None),
+                        getattr(self, 'qrun', None)):
+                if btn is not None:
+                    try: btn.config(state=state)
+                    except: pass
+
+        def _draw_dividing_line(self):
+            """在相机画布上画黄色虚线。位置由 self._auto_sort_line_u 决定 (原图 640 宽 → canvas 400 宽等比映射)。"""
+            try:
+                # 原图 u 坐标 → canvas x 坐标 (等比缩放)
+                x_line = int(self._canvas_w * self._auto_sort_line_u / 640)
+                self._div_line_id = self.camera_canvas.create_line(
+                    x_line, 0, x_line, self._canvas_h, fill='yellow', dash=(6, 4), width=2)
+                self._div_label_id = self.camera_canvas.create_text(
+                    x_line + 5, 12, text=f"分界线 u={self._auto_sort_line_u}", fill='yellow', anchor=tk.NE, font=("Arial", 9, "bold"))
+                self.camera_canvas.itemconfig(self._div_line_id, state='hidden')
+                self.camera_canvas.itemconfig(self._div_label_id, state='hidden')
+            except Exception as e:
+                _log(f"画分界线失败: {e}")
+
+        def start_auto_sort(self):
+            """启动自动分拣。"""
+            if self.auto_sort_running: return
+            self.auto_sort_running = True
+            self._auto_sort_current_obj = None
+            self._auto_sort_retry_count = 0
+            self._auto_error_seen = False
+            self._auto_sort_stop_requested = False
+            self._conv_stop_retry = 0
+            self._conv_stopped_ts = 0
+            self._set_manual_buttons_state(tk.DISABLED)
+            self.auto_sort_start_btn.config(state=tk.DISABLED, text=" 自动分拣运行中 ")
+            self.auto_sort_stop_btn.config(state=tk.NORMAL)
+            # 显示分界线
+            if hasattr(self, '_div_line_id'):
+                self.camera_canvas.itemconfig(self._div_line_id, state='normal')
+                self.camera_canvas.itemconfig(self._div_label_id, state='normal')
+            self._auto_sort_log("自动分拣启动")
+            self.auto_sort_state = 'CHECK_LEFT'
+            self._auto_sort_tick()
+
+        def stop_auto_sort(self):
+            """停止自动分拣 (等当前分拣完成后完全停止)。"""
+            if not self.auto_sort_running: return
+            self._auto_sort_stop_requested = True
+            self.auto_sort_stop_btn.config(state=tk.DISABLED)
+            # 立即停传送带
+            if self.conveyor_state == True and not self._conveyor_busy:
+                self._conveyor_set(False)
+            self.auto_sort_state = 'STOPPING'
+            self._auto_sort_log("停止请求已发出, 等待当前任务结束")
+
+        def _finish_auto_sort(self):
+            """完全停止, 恢复按钮。"""
+            self.auto_sort_running = False
+            self.auto_sort_state = 'IDLE'
+            self._auto_sort_current_obj = None
+            self._auto_sort_retry_count = 0
+            self._auto_error_seen = False
+            self._auto_sort_stop_requested = False
+            self._conv_stop_retry = 0
+            self._conv_stopped_ts = 0
+            self._set_manual_buttons_state(tk.NORMAL)
+            self.auto_sort_start_btn.config(state=tk.NORMAL, text=" 开始自动分拣 ")
+            self.auto_sort_stop_btn.config(state=tk.DISABLED)
+            # 隐藏分界线
+            if hasattr(self, '_div_line_id'):
+                self.camera_canvas.itemconfig(self._div_line_id, state='hidden')
+                self.camera_canvas.itemconfig(self._div_label_id, state='hidden')
+            self._auto_sort_log("自动分拣已停止")
+            if self._auto_sort_tick_id is not None:
+                try: self.after_cancel(self._auto_sort_tick_id)
+                except: pass
+                self._auto_sort_tick_id = None
+
+        def _auto_sort_tick(self):
+            """状态机主循环, 每 300ms 调用一次。"""
+            if not self.auto_sort_running: return
+            try:
+                st = self.auto_sort_state
+                if st == 'CHECK_LEFT':       self._tick_check_left()
+                elif st == 'CONVEYOR_WAIT':  self._tick_conveyor_wait()
+                elif st == 'CONVEYOR_STOPPING': self._tick_conveyor_stopping()
+                elif st == 'SORTING':        self._tick_sorting()
+                elif st == 'STOPPING':       self._tick_stopping()
+            except Exception as e:
+                self._auto_sort_log(f"tick 异常: {e}")
+            self._auto_sort_tick_id = self.after(300, self._auto_sort_tick)
+
+        def _tick_check_left(self):
+            """检查分界线左侧有无物体。"""
+            # 等服务端空闲
+            if self.current_status == 'busy': return
+            obj = self._pick_object_left_of_line()
+            if obj is not None:
+                self._auto_sort_current_obj = obj
+                self._auto_sort_retry_count = 0
+                self._auto_error_seen = False
+                self._dispatch_sort_cmd(obj, retry=False)
+                self.auto_sort_state = 'SORTING'
+            else:
+                # 无物体, 开传送带
+                if not self._conveyor_busy and self.conveyor_state != True:
+                    self._conveyor_set(True)
+                self.auto_sort_state = 'CONVEYOR_WAIT'
+                self._auto_sort_log("左侧无物体, 开启传送带")
+
+        def _tick_conveyor_wait(self):
+            """传送带运行中, 等待物体跨越分界线。"""
+            if self._conveyor_busy: return  # 等传送带切换完成
+            if self.conveyor_state != True:
+                # 传送带未运行 (可能切换失败), 重新开
+                self._conveyor_set(True)
+                return
+            obj = self._pick_object_left_of_line()
+            if obj is not None:
+                self._auto_sort_current_obj = obj
+                self._auto_sort_retry_count = 0
+                self._auto_error_seen = False
+                self._conveyor_set(False)
+                self._conv_stop_retry = 0
+                self._conv_stopped_ts = 0  # 重置停止观察时间戳
+                self.auto_sort_state = 'CONVEYOR_STOPPING'
+                name = obj.get('object_name', '?')
+                self._auto_sort_log(f"检测到物体越线: {name}, 停止传送带")
+
+        def _tick_conveyor_stopping(self):
+            """等传送带停止后, 再观察 1s 确保物体完全静止, 然后重新选物体并分拣。
+
+            ⚠️ 必须等 1s: 传送带断电后物体可能因惯性继续滑动一小段距离,
+            若立即用当前检测坐标分拣, 会抓到物体已经离开的位置 → 空夹。
+            EMA 滤波也需要几帧才能收敛到静止后的真实位置。
+            """
+            if self._conveyor_busy: return  # 等传送带停止完成
+            if self.conveyor_state == False:
+                # 第一次检测到已停止, 记录时间戳, 进入观察期
+                if self._conv_stopped_ts == 0:
+                    self._conv_stopped_ts = time.time()
+                    self._auto_sort_log("传送带已停, 观察 1s 等物体静止")
+                    return
+                # 观察 1s 等物体完全静止 + EMA 滤波收敛
+                if time.time() - self._conv_stopped_ts < 1.0:
+                    return
+                # 观察完成, 重新选物体 (位置可能在停止/惯性滑动后变化)
+                self._conv_stopped_ts = 0
+                obj = self._pick_object_left_of_line()
+                if obj is None:
+                    self._auto_sort_log("物体已离开视野, 回到检测")
+                    self.auto_sort_state = 'CHECK_LEFT'
+                    return
+                self._auto_sort_current_obj = obj
+                self._dispatch_sort_cmd(obj, retry=False)
+                self.auto_sort_state = 'SORTING'
+            else:
+                # 传送带未停止, 重试
+                self._conv_stop_retry += 1
+                if self._conv_stop_retry <= 3:
+                    self._conveyor_set(False)
+                else:
+                    self._auto_sort_log("传送带停止失败, 进入停止流程")
+                    self.auto_sort_state = 'STOPPING'
+
+        def _tick_sorting(self):
+            """等分拣完成, 处理 error 重试/跳过。"""
+            st = self.current_status
+            if st == 'busy':
+                return  # 正在执行
+            if st == 'error':
+                self._auto_error_seen = True
+                return  # 等服务端自动恢复 → idle
+            if st == 'idle':
+                if self._auto_error_seen:
+                    # error 后恢复完成, 决定重试或跳过
+                    self._auto_error_seen = False
+                    if self._auto_sort_retry_count == 0:
+                        self._auto_sort_retry_count = 1
+                        obj = self._auto_sort_current_obj
+                        if obj:
+                            self._dispatch_sort_cmd(obj, retry=True)
+                            self._auto_sort_log("分拣失败, 重试一次")
+                            return  # 留在 SORTING 等待结果
+                        else:
+                            self._auto_sort_log("无重试目标, 跳过")
+                    else:
+                        self._auto_sort_log("重试仍失败, 跳过该物体")
+                # 成功或跳过 → 回 CHECK_LEFT
+                self._auto_sort_current_obj = None
+                self._auto_sort_retry_count = 0
+                self.auto_sort_state = 'CHECK_LEFT'
+                self._auto_sort_log("分拣完成, 继续检测")
+
+        def _tick_stopping(self):
+            """停止流程: 等当前任务完成, 回观察位, 结束。"""
+            # 确保传送带已停
+            if self.conveyor_state != False and not self._conveyor_busy:
+                self._conveyor_set(False)
+                return
+            if self._conveyor_busy: return
+            # 等当前分拣/恢复完成
+            if self.current_status in ('busy', 'error'): return
+            # idle → 安全结束
+            self._finish_auto_sort()
 
     # =========== 启动 GUI ===========
     app = SortingApp()
     app.protocol("WM_DELETE_WINDOW", lambda: app.destroy())
 
-    # 线程安全的相机/YOLO 状态上报：子线程只往 queue 放消息，
-    # 主线程用 after() 轮询取消息再更新 Tkinter，避免跨线程访问 Tk
-    # 触发 "Tcl_Release couldn't find reference" 崩溃。
-    status_msg_q = queue.Queue()
-    def set_status(msg):
-        try: status_msg_q.put_nowait(msg)
-        except: pass
-
-    threading.Thread(target=auto_start_pipeline, args=(set_status,), daemon=True).start()
-
+    # 相机/YOLO 启动状态轮询：auto_start_pipeline 现在在 ROS worker 子进程中运行，
+    # 状态消息通过 mp_status_q (multiprocessing.Queue) 跨进程传回主线程。
+    # 主线程用 after() 轮询取消息再更新 Tkinter，避免跨线程/跨进程访问 Tk。
+    # ⚠️ 主进程中不再有任何 fork() (subprocess.run/Popen) 调用，Tcl 引用计数不会被破坏。
     def poll_status_msg():
         while True:
-            try: msg=status_msg_q.get_nowait()
+            try: msg=mp_status_q.get_nowait()
             except queue.Empty: break
             try: app.camera_status_var.set(msg)
             except: pass
