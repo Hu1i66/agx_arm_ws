@@ -222,10 +222,162 @@ ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py can_port:=can0 ar
 
 > 该 launch 文件同时启动机械臂控制节点和 MoveIt2，自动将关节反馈 (`/feedback/joint_states`) 接入 MoveIt，无需手动分两个终端启动。支持所有 `agx_arm_ctrl` 的参数（如 `tcp_offset`、`speed_percent` 等），详见 [Moveit](./src/agx_arm_moveit/README.md)。
 
-```bash
-python3 /home/lxf/agx_arm_ws/auto_sorting_action.py
-python3 /home/lxf/agx_arm_ws/sorting_gui_client.py
+---
+
+## GraspNet 抓取分拣全链路 (眼在手外 eye-to-hand)
+
+基于 D455 深度相机 + GraspNet-1Billion + YOLOv8 的传送带物品自动分拣系统。
+相机固定安装在传送带上方 (eye-to-hand 配置), 通过手眼标定将相机坐标系映射到机械臂基坐标系。
+
+### 系统架构
+
 ```
+D455 相机 (固定) ──→ realsense_yolo_node (YOLO检测 + D455深度)
+                   │                      ↓
+                   │                 /detection_info (JSON)
+                   │                      ↓
+                   ├─→ graspnet_service_node (GraspNet 6DoF位姿推理)
+                   │                      ↓
+                   │                 /graspnet/result (JSON)
+                   │                      ↓
+                   └──→ auto_sorting_action (MoveIt规划 + IK + 抓取执行)
+                                          ↓
+                                   sorting_gui_client (GUI控制面板)
+```
+
+### 前置条件
+
+1. **CAN 已激活**: `bash /home/lxf/piper_ws/src/piper_ros/can_activate.sh can0 1000000`
+2. **机械臂已使能**: `python3 /home/lxf/agx_arm_ws/activate_robot.py`
+3. **D455 相机已连接** (固定安装在传送带上方)
+4. **CH340 继电器已连接** (传送带控制)
+5. **手眼标定数据**: `/home/lxf/handeye/result/2026-07-25_03-57-46_calibration.json`
+6. **GraspNet checkpoint**: `/home/lxf/graspnet/checkpoints/checkpoint-rs.tar`
+
+### 一键前置检查
+
+```bash
+bash /home/lxf/agx_arm_ws/start_graspnet_pipeline.sh
+```
+该脚本检查 CAN、D455、机械臂使能、GraspNet checkpoint、手眼标定数据、agx_arm_msgs 编译状态,通过后打印各终端启动命令。
+
+### 启动流程 (7 个终端依次执行)
+
+#### T1 — MoveIt2 + 机械臂控制
+
+```bash
+source /opt/ros/humble/setup.bash && \
+source /home/lxf/agx_arm_ws/install/setup.bash && \
+ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py \
+  can_port:=can0 arm_type:=piper effector_type:=agx_gripper
+```
+
+#### T2 — D455 相机 (align_depth + 禁用自带 TF)
+
+```bash
+source /opt/ros/humble/setup.bash && \
+ros2 launch realsense2_camera rs_launch.py \
+  rgb_camera.color_profile:=640,480,30 \
+  align_depth.enable:=true \
+  depth_module.profile:=640,480,30 \
+  publish_tf:=false
+```
+
+> ⚠️ 必须设置 `publish_tf:=false`, 由 T2b 发布眼在手外静态 TF, 避免冲突。
+
+#### T2b — 相机 TF 发布器 (眼在手外静态变换)
+
+```bash
+source /opt/ros/humble/setup.bash && \
+ros2 launch /home/lxf/agx_arm_ws/launch/eye_to_hand_camera_tf.launch.py
+```
+
+发布 `base_link → camera_color_optical_frame` 静态变换, 供 RViz/MoveIt 可视化。
+验证: `ros2 run tf2_ros tf2_echo base_link camera_color_optical_frame` 应显示平移 `[0.673, 0.011, 0.597]`。
+
+#### T3 — YOLO 检测节点 (D455 深度)
+
+```bash
+cd /home/lxf/orange_dataset && \
+source .venv/bin/activate && \
+source /opt/ros/humble/setup.bash && \
+python3 realsense_yolo_node.py \
+  --ros-args -p show_gui_window:=false \
+  -p use_depth_camera:=true
+```
+
+就绪标志: 日志输出 `YOLO 已上线` 和 `🔧 手眼标定参数已加载 (eye-to-hand)`。
+
+**在线调参** (标定偏差补偿, 无需重启):
+```bash
+ros2 param set /object_detector x_offset_m -0.025   # X 补偿 (负=减)
+ros2 param set /object_detector y_offset_m 0.005     # Y 补偿 (正=加)
+ros2 param set /object_detector z_offset_m 0.030     # Z 补偿 (正=抬高, 防撞台面)
+ros2 param set /object_detector depth_offset_m 0.0   # 深度补偿 (默认0)
+```
+
+#### T4 — GraspNet 抓取位姿服务节点
+
+```bash
+cd /home/lxf/agx_arm_ws && \
+source /home/lxf/orange_dataset/.venv/bin/activate && \
+source /opt/ros/humble/setup.bash && \
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp && \
+export CYCLONEDDS_URI=file:///home/lxf/ROS2-Gazebo-GO2/src/docker/cyclonedds.xml && \
+python3 graspnet_service_node.py
+```
+
+就绪标志: 日志输出 `graspnet_service_node 就绪, 等待请求...`。
+
+> ⚠️ 必须设置 `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` 确保与其他节点 DDS 一致。
+
+#### T5 — 分拣动作执行节点
+
+```bash
+cd /home/lxf/agx_arm_ws && \
+source /opt/ros/humble/setup.bash && \
+source install/setup.bash && \
+python3 auto_sorting_action.py
+```
+
+#### T6 — GUI 控制面板
+
+```bash
+cd /home/lxf/agx_arm_ws && \
+source /opt/ros/humble/setup.bash && \
+source install/setup.bash && \
+python3 sorting_gui_client.py
+```
+
+### 使用流程
+
+1. 启动 T1→T2→T2b→T3→T4→T5→T6 (按顺序)
+2. 等 T3 输出 `YOLO 已上线`, T4 输出 `就绪, 等待请求...`
+3. 在传送带放置物体 (苹果/橘子/香蕉/柠檬/桃/梨/草莓)
+4. 在 GUI 选择放置料框 (料框1/料框2)
+5. **手动抓取**: 点击 `GraspNet抓取` 按钮触发单次 GraspNet 抓取
+6. **自动分拣**: 点击紫色 `开始自动分拣` 按钮
+   - 物体从画面左侧向右移动, 越过分界线 (u=260) 后传送带停止
+   - 系统自动选择最右侧物体 (最远离分界线) 进行抓取
+   - 分拣完成后继续检测, 循环执行直到点击 `停止自动分拣`
+
+### 分拣规则
+
+| 物体 | 目标料框 |
+|------|----------|
+| 苹果 / 草莓 / 橙子 | 料框1 |
+| 柠檬 / 桃 / 梨 | 料框2 |
+
+### 关键参数
+
+| 参数 | 位置 | 默认值 | 说明 |
+|------|------|--------|------|
+| `x_offset_m` | YOLO 节点 | -0.025 | X 标定偏差补偿 (负=减) |
+| `y_offset_m` | YOLO 节点 | +0.005 | Y 标定偏差补偿 (正=加) |
+| `z_offset_m` | YOLO 节点 | +0.030 | Z 标定偏差补偿 (正=抬高) |
+| `MIN_GRASP_Z` | action 节点 | 0.045 | 夹持点 Z 安全下限 (防撞台面) |
+| `GRIPPER_PICK_Z_OFFSET` | action 节点 | 0.064 | link6 到夹持点 Z 距离 |
+| 分界线 u | GUI 节点 | 260 | 自动分拣物体越线检测位置 |
 
 ### 仿真gazebo
 > **建议：实机与仿真不要同时运行。切换模式前先关闭另一侧进程。**

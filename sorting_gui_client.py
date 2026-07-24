@@ -145,7 +145,11 @@ _ROS2_SRC = "source /opt/ros/humble/setup.bash"
 _VENV_SRC = "source /home/lxf/orange_dataset/.venv/bin/activate"
 _YOLO_SCRIPT = "/home/lxf/orange_dataset/realsense_yolo_node.py"
 # 相机启动: 显式指定 640x480@30 与另一台电脑 (pyrealsense2 直接配置) 保持一致
-_CAMERA_CMD = f"{_ROS2_SRC} && ros2 launch realsense2_camera rs_launch.py rgb_camera.color_profile:=640,480,30"
+# align_depth.enable:=true: 启用深度图与 RGB 对齐 (D455 双目深度 + PCA 短轴对齐必需)
+_CAMERA_CMD = (f"{_ROS2_SRC} && ros2 launch realsense2_camera rs_launch.py "
+               f"rgb_camera.color_profile:=640,480,30 "
+               f"depth_module.profile:=640,480,30 "
+               f"align_depth.enable:=true")
 _YOLO_CMD   = f"{_ROS2_SRC} && {_VENV_SRC} && python3 {_YOLO_SCRIPT} --ros-args -p show_gui_window:=false"
 
 # CH340 USB 继电器控制脚本（Modbus RTU）。继电器接在传送带电路的常闭(NC)接口上。
@@ -227,6 +231,9 @@ def main():
             self.latest_detection=None; self._last_frame_time=0.0
             self._canvas_img_id=None; self._canvas_text_id=None
             self._photos=[]; self._canvas_w=400; self._canvas_h=300
+            # ── 抓取模式: 单次检测直接抓取 / 两阶段精定位 (D455+PCA) / GraspNet 6DoF 主导 ──
+            # 缓存最近一次 /detection_info 的 header_stamp (浮点秒数), 保留备用
+            self.latest_detection_stamp=0.0
             self.default_grasp_roll=tk.DoubleVar(value=180.0)
             self.default_grasp_pitch=tk.DoubleVar(value=0.0)
             self.default_grasp_yaw=tk.DoubleVar(value=0.0)
@@ -247,7 +254,7 @@ def main():
             self._auto_sort_retry_count=0      # 重试计数 (0=首次, 1=重试)
             self._auto_error_seen=False        # SORTING 中是否看到 error
             self._auto_sort_stop_requested=False  # 停止请求标志
-            self._auto_sort_line_u=380         # 分界线 u 坐标 (向右偏移, 物体更早被分拣)
+            self._auto_sort_line_u=260         # 分界线 u 坐标 (向左偏移, 物体从左向右移动, 越线后进入抓取区)
             self._auto_sort_tick_id=None       # after 句柄
             self._conv_stop_retry=0            # 传送带停止重试计数
             self._conv_stopped_ts=0            # 传送带停止完成时间戳 (用于观察 1s 等物体静止)
@@ -344,9 +351,12 @@ def main():
                                     font=("Arial",12,"bold"),bg="#4CAF50",fg="white",state=tk.DISABLED)
             self.pick_btn.pack(fill=tk.X,pady=(0,2))
             self.pick_two_btn=tk.Button(df,text=" 两阶段精定位夹取 ->",command=self._pick_from_detection_two_stage,
-                                        font=("Arial",12,"bold"),bg="#2196F3",fg="white",state=tk.DISABLED)
+                                        font=("Arial",12,"bold"),bg="gray",fg="white",state=tk.DISABLED)
             self.pick_two_btn.pack(fill=tk.X,pady=(0,2))
-            tk.Label(df,text=" =单次检测直接抓取 |  =两阶段精定位: 近距离二次识别后抓取",font=("Arial",8),fg="gray").pack()
+            self.pick_graspnet_btn=tk.Button(df,text=" GraspNet抓取 ->",command=self._pick_from_detection_graspnet,
+                                             font=("Arial",12,"bold"),bg="#FF9800",fg="white",state=tk.DISABLED)
+            self.pick_graspnet_btn.pack(fill=tk.X,pady=(0,2))
+            tk.Label(df,text=" =单次检测 | =两阶段精定位(已禁用) | =GraspNet 6DoF主导",font=("Arial",8),fg="gray").pack()
 
         def _ui_queue(self):
             tk.Label(self.mid_frame,text="任务排队队列",font=("Arial",14,"bold")).pack(pady=(0,10))
@@ -409,11 +419,11 @@ def main():
             self.auto_sort_stop_btn=tk.Button(bf2,text=" 停止自动分拣 ",command=self.stop_auto_sort,
                                              font=("Arial",12,"bold"),bg="#FF5722",fg="white",state=tk.DISABLED)
             self.auto_sort_stop_btn.pack(side=tk.LEFT,expand=True,fill="x",padx=(4,0))
-            tk.Label(fas,text=" 分界线 u=380 | 苹果/草莓/橙→框1 | 柠檬/桃/梨→框2 | 失败重试1次",
+            tk.Label(fas,text=" 分界线 u=260 (物体左→右) | 苹果/草莓/橙→框1 | 柠檬/桃/梨→框2 | 失败重试1次",
                      font=("Arial",8),fg="gray").pack(pady=(6,0))
             fa=tk.Frame(self.right_frame); fa.pack(pady=10)
-            tk.Button(fa,text="回到观察位",command=self.send_observe,font=("Arial",12,"bold"),bg="#2196F3",fg="white",width=40).pack(pady=5)
-            tk.Button(fa,text="一键回到观察位并关闭夹爪",command=self.send_reset,font=("Arial",12,"bold"),bg="orange",width=40).pack(pady=5)
+            tk.Button(fa,text="回到待机位",command=self.send_observe,font=("Arial",12,"bold"),bg="#2196F3",fg="white",width=40).pack(pady=5)
+            tk.Button(fa,text="一键回到待机位并关闭夹爪",command=self.send_reset,font=("Arial",12,"bold"),bg="orange",width=40).pack(pady=5)
             tk.Button(fa,text="退出服务端系统",command=self.send_quit,font=("Arial",12,"bold"),bg="tomato",fg="white",width=40).pack(pady=5)
 
         def update_comboboxes(self):
@@ -469,6 +479,13 @@ def main():
                     except: break
                 if raw:
                     d=json.loads(raw); self.latest_detection=d
+                    # 缓存 header_stamp (浮点秒数), 保留备用 (随动抓取预留)
+                    try:
+                        hs = d.get('header_stamp')
+                        if hs is not None:
+                            self.latest_detection_stamp = float(hs)
+                    except (TypeError, ValueError):
+                        pass
                     objects = d.get('objects', []) or []
                     # 默认主物体显示 (顶层字段, 保持向后兼容)
                     if d.get('detected'):
@@ -476,7 +493,8 @@ def main():
                         # 自动分拣运行时保持手动按钮禁用
                         if not self.auto_sort_running:
                             self.pick_btn.config(state=tk.NORMAL,bg="#4CAF50")
-                            self.pick_two_btn.config(state=tk.NORMAL,bg="#2196F3")
+                            # 两阶段精定位在 eye-to-hand 下无效 (相机固定, 移动机械臂不改变视角), 永久禁用
+                            self.pick_graspnet_btn.config(state=tk.NORMAL,bg="#FF9800")
                         self.det_obj.set(f"物体: {d.get('object_name','--')}")
                         self.det_conf.set(f"置信度: {d.get('confidence',0)*100:.2f}%")
                         self.det_meth.set(f"方法: {d.get('method','--')}")
@@ -485,8 +503,10 @@ def main():
                             self.det_x.set(f"  X: {bp['x']:.3f} m"); self.det_y.set(f"  Y: {bp['y']:.3f} m")
                             self.det_z.set(f"  Z: {bp['z']:.3f} m")
                         else: self.det_x.set("  X: --"); self.det_y.set("  Y: --"); self.det_z.set("  Z: --")
-                        sm=d.get('size_m',{}); dia=sm.get('diameter')
-                        self.det_dia.set(f"直径: {dia:.3f} m" if dia else "直径: --")
+                        # 优先用 D455 估计直径, fallback 预设尺寸
+                        dia = d.get('estimated_diameter_m') or d.get('size_m',{}).get('diameter')
+                        _dia_src = '估计' if d.get('estimated_diameter_m') else '预设'
+                        self.det_dia.set(f"直径: {dia:.3f} m ({_dia_src})" if dia else "直径: --")
                         dist=d.get('distance_to_robot_m')
                         self.det_dist.set(f"距离: {dist:.3f} m" if dist else "距离: --")
                     else:
@@ -495,6 +515,7 @@ def main():
                             v.set(v.get().split(":")[0]+": --")
                         self.pick_btn.config(state=tk.DISABLED,bg="gray")
                         self.pick_two_btn.config(state=tk.DISABLED,bg="gray")
+                        self.pick_graspnet_btn.config(state=tk.DISABLED,bg="gray")
                     # ── 更新所有物体列表 (realsense_yolo_node.py 发布的 objects 数组) ──
                     prev_sel = self.det_listbox.curselection()
                     prev_idx = prev_sel[0] if prev_sel else -1
@@ -530,7 +551,12 @@ def main():
             self.latest_detection['end_effector_position_m'] = obj.get('end_effector_position_m',{})
             self.latest_detection['monocular_depth_m'] = obj.get('monocular_depth_m',0)
             self.latest_detection['size_m'] = obj.get('size_m',{})
+            # 同步 D455 估计直径 (供 _pick_from_detection / two-stage 优先使用)
+            self.latest_detection['estimated_diameter_m'] = obj.get('estimated_diameter_m')
             self.latest_detection['volume_m3'] = obj.get('volume_m3',0)
+            # 同步 header_stamp (顶层主物体的 stamp 与 objects 数组中选中物体的 stamp 一致)
+            if 'header_stamp' in obj:
+                self.latest_detection['header_stamp'] = obj['header_stamp']
             if 'base_position_m' in obj:
                 self.latest_detection['base_position_m'] = obj['base_position_m']
             if 'distance_to_robot_m' in obj:
@@ -542,8 +568,9 @@ def main():
             if bp and all(k in bp for k in ('x','y','z')):
                 self.det_x.set(f"  X: {bp['x']:.3f} m"); self.det_y.set(f"  Y: {bp['y']:.3f} m")
                 self.det_z.set(f"  Z: {bp['z']:.3f} m")
-            sm = obj.get('size_m',{}); dia = sm.get('diameter')
-            self.det_dia.set(f"直径: {dia:.3f} m" if dia else "直径: --")
+            dia = obj.get('estimated_diameter_m') or obj.get('size_m',{}).get('diameter')
+            _dia_src = '估计' if obj.get('estimated_diameter_m') else '预设'
+            self.det_dia.set(f"直径: {dia:.3f} m ({_dia_src})" if dia else "直径: --")
             dist = obj.get('distance_to_robot_m')
             self.det_dist.set(f"距离: {dist:.3f} m" if dist else "距离: --")
 
@@ -567,7 +594,8 @@ def main():
             qx,qy,qz,qw=euler_to_quaternion(r,p,y)
             pp={'x':round(float(bp['x']),3),'y':round(float(bp['y']),3),'z':round(float(bp['z']),3),
                 'qx':round(qx,6),'qy':round(qy,6),'qz':round(qz,6),'qw':round(qw,6)}
-            dia=d.get('size_m',{}).get('diameter')
+            # 优先用 D455 估计直径, fallback 预设尺寸
+            dia=d.get('estimated_diameter_m') or d.get('size_m',{}).get('diameter')
             if dia: dia=round(float(dia),3)
             dia_str=f"物体直径: {dia} m\n\n" if dia else ""
             txt=(f"检测坐标夹取确认\n\nPick: {d.get('object_name','物体')} (detected)\n"
@@ -583,7 +611,7 @@ def main():
                     messagebox.showinfo("已加入","任务已加入排队队列。")
             else: self.last_dispatch_time=time.time(); self.cmd_queue.put(cmd); messagebox.showinfo("已发送",f"夹取指令已发送！\n检测物体 -> 【料框{bin_num}】")
 
-        # ── 两阶段精定位夹取 ──
+        # ── 两阶段精定位夹取 (D455 深度 + PCA 短轴对齐) ──
         def _pick_from_detection_two_stage(self):
             d=self.latest_detection
             if not d: return messagebox.showwarning("无数据","尚未收到检测信息。")
@@ -596,21 +624,55 @@ def main():
             qx,qy,qz,qw=euler_to_quaternion(r,p,y)
             pp={'x':round(float(bp['x']),3),'y':round(float(bp['y']),3),'z':round(float(bp['z']),3),
                 'qx':round(qx,6),'qy':round(qy,6),'qz':round(qz,6),'qw':round(qw,6)}
-            dia=d.get('size_m',{}).get('diameter')
+            # 优先用 D455 估计直径, fallback 预设尺寸
+            dia=d.get('estimated_diameter_m') or d.get('size_m',{}).get('diameter')
             if dia: dia=round(float(dia),3)
             dia_str=f"物体直径: {dia} m\n" if dia else ""
-            txt=(f" 两阶段精定位夹取确认\n\n观察位检测坐标:\n  ({pp['x']:.3f}, {pp['y']:.3f}, {pp['z']:.3f})\n\n"
-                 f"-> 机械臂移动到物体正上方\n-> YOLO 近距离二次检测\n-> 以二次结果为准直接抓取\n\n"
+            txt=(f" 两阶段精定位夹取确认\n\n待机位检测坐标:\n  ({pp['x']:.3f}, {pp['y']:.3f}, {pp['z']:.3f})\n\n"
+                 f"-> 机械臂移动到物体正上方\n-> YOLO 近距离二次检测 (D455 深度)\n-> PCA 短轴对齐生成夹爪朝向\n-> 以二次结果为准直接抓取\n\n"
                  f"Place: 料框{bin_num} (关节空间预设点位)\n"
                  f"{dia_str}\n确定发送？")
             if not messagebox.askyesno("确认两阶段精定位夹取",txt): return
             cmd={"cmd":"sort_verify","pick":pp,"bin":bin_num,"pick_name":f"{d.get('object_name','物体')} (two-stage)","place_name":f"料框{bin_num}"}
             if dia: cmd["object_diameter_m"]=float(dia)
+            sent_msg=f"两阶段精定位指令已发送！\n检测物体 -> 【料框{bin_num}】"
+            queue_msg="两阶段精定位任务已加入排队队列。"
             if self.current_status=='busy':
                 if messagebox.askyesno("忙碌","加入排队队列？"):
                     self.task_queue.append(cmd); self.refresh_queue_listbox()
-                    messagebox.showinfo("已加入","两阶段精定位任务已加入排队队列。")
-            else: self.last_dispatch_time=time.time(); self.cmd_queue.put(cmd); messagebox.showinfo("已发送",f"两阶段精定位指令已发送！\n检测物体 -> 【料框{bin_num}】")
+                    messagebox.showinfo("已加入",queue_msg)
+            else: self.last_dispatch_time=time.time(); self.cmd_queue.put(cmd); messagebox.showinfo("已发送",sent_msg)
+
+        # ── GraspNet 6DoF 主导抓取 (待机位深度图 → GraspNet 位姿) ──
+        def _pick_from_detection_graspnet(self):
+            d=self.latest_detection
+            if not d: return messagebox.showwarning("无数据","尚未收到检测信息。")
+            if not d.get('detected'): return messagebox.showwarning("未检测到","当前未发现物体。")
+            bp=d.get('base_position_m',{})
+            if not bp or not all(k in bp for k in('x','y','z')): return messagebox.showerror("坐标缺失","缺少 base_position_m。")
+            bin_num=self.bin_var.get()
+            # pick 坐标仅作为 GraspNet 邻近过滤提示 (锁定目标物体), 最终位姿由 GraspNet 生成
+            pp={'x':round(float(bp['x']),3),'y':round(float(bp['y']),3),'z':round(float(bp['z']),3)}
+            # 直径优先用 D455 估计 (GraspNet 也会返回宽度, action 端以 GraspNet 宽度为准)
+            dia=d.get('estimated_diameter_m') or d.get('size_m',{}).get('diameter')
+            if dia: dia=round(float(dia),3)
+            dia_str=f"物体直径: {dia} m\n" if dia else ""
+            txt=(f" GraspNet 6DoF 抓取确认\n\n待机位检测坐标 (邻近提示):\n  ({pp['x']:.3f}, {pp['y']:.3f}, {pp['z']:.3f})\n\n"
+                 f"-> 机械臂回到待机位\n-> GraspNet 对 D455 深度图推理 (6DoF 位姿)\n"
+                 f"-> 短边对齐 + 中心抓取 + approach 朝下安全检查\n-> 直接下降抓取\n\n"
+                 f"Place: 料框{bin_num} (关节空间预设点位)\n"
+                 f"{dia_str}\n⚠️ 需已启动 graspnet_service_node.py\n\n确定发送？")
+            if not messagebox.askyesno("确认 GraspNet 抓取",txt): return
+            cmd={"cmd":"sort_graspnet","pick":pp,"bin":bin_num,
+                 "pick_name":f"{d.get('object_name','物体')} (graspnet)","place_name":f"料框{bin_num}"}
+            if dia: cmd["object_diameter_m"]=float(dia)
+            sent_msg=f"GraspNet 抓取指令已发送！\n检测物体 -> 【料框{bin_num}】"
+            queue_msg="GraspNet 抓取任务已加入排队队列。"
+            if self.current_status=='busy':
+                if messagebox.askyesno("忙碌","加入排队队列？"):
+                    self.task_queue.append(cmd); self.refresh_queue_listbox()
+                    messagebox.showinfo("已加入",queue_msg)
+            else: self.last_dispatch_time=time.time(); self.cmd_queue.put(cmd); messagebox.showinfo("已发送",sent_msg)
 
         # ── 原有功能 ──
         def fetch_current_pose(self):
@@ -638,8 +700,8 @@ def main():
 
         def send_observe(self):
             if self.current_status=='busy': return messagebox.showwarning("忙碌","机械臂正在执行动作。")
-            if messagebox.askyesno("确认","机械臂将以关节空间运动到观察位。确定？"):
-                self.cmd_queue.put({"cmd":"observe"}); messagebox.showinfo("已发送","观察位指令发送成功！")
+            if messagebox.askyesno("确认","机械臂将以关节空间运动到待机位。确定？"):
+                self.cmd_queue.put({"cmd":"observe"}); messagebox.showinfo("已发送","待机位指令发送成功！")
 
         # ── 曝光控制 (通过 cmd_queue → ROS 子进程 → /camera/exposure_ctrl 话题) ──
         def _exposure_toggle(self):
@@ -667,7 +729,7 @@ def main():
 
         def send_reset(self):
             if self.current_status=='busy': return messagebox.showwarning("忙碌","机械臂正在执行动作。")
-            if messagebox.askyesno("确认","机械臂将回到观察位并关闭夹爪。确定？"):
+            if messagebox.askyesno("确认","机械臂将回到待机位并关闭夹爪。确定？"):
                 self.cmd_queue.put({"cmd":"reset"}); self.clear_queue(); messagebox.showinfo("已发送","复位指令发送成功！")
 
         def add_to_queue(self):
@@ -707,7 +769,7 @@ def main():
             messagebox.showinfo("已发送",f"分拣指令已发送！\n【{pn}】->【料框{bin_num}】")
 
         def send_quit(self):
-            if messagebox.askyesno("确认","让服务端回到观察位、关闭夹爪并结束程序。确定？"):
+            if messagebox.askyesno("确认","让服务端回到待机位、关闭夹爪并结束程序。确定？"):
                 self.cmd_queue.put({"cmd":"quit"}); self.after(500,self.destroy)
 
         # ── 传送带控制 ──
@@ -830,8 +892,12 @@ def main():
                 if k in n: return 2
             return 1  # 未知默认料框1
 
-        def _pick_object_left_of_line(self):
-            """筛选 x1 ≤ 分界线 且有 base_position_m 的物体, 返回 center_u 最大的。"""
+        def _pick_object_right_of_line(self):
+            """筛选 x2 ≥ 分界线 且有 base_position_m 的物体, 返回 center_u 最大的 (最右侧, 最远离分界线)。
+
+            物体从左向右移动, 越过左侧分界线后进入抓取区 (分界线右侧).
+            选 center_u 最大的 = 最右侧 = 最远离分界线的物体 (先抓最远的, 避免机械臂遮挡后续物体).
+            """
             d = self.latest_detection
             if not d or not d.get('detected'): return None
             objects = d.get('objects', []) or []
@@ -842,15 +908,15 @@ def main():
                 bbox = obj.get('bbox_pixel', {})
                 x1 = bbox.get('x1'); x2 = bbox.get('x2')
                 if x1 is None or x2 is None: continue
-                if x1 <= self._auto_sort_line_u:
+                if x2 >= self._auto_sort_line_u:
                     center_u = (x1 + x2) / 2.0
                     candidates.append((center_u, obj))
             if not candidates: return None
-            candidates.sort(key=lambda t: t[0], reverse=True)  # center_u 降序
+            candidates.sort(key=lambda t: t[0], reverse=True)  # center_u 降序 (最大=最右侧, 最远离分界线)
             return candidates[0][1]
 
         def _dispatch_sort_cmd(self, obj, retry=False):
-            """构造 sort_verify 命令并发送 (两阶段精定位)。"""
+            """构造分拣命令并发送: 使用 sort (单次检测, eye-to-hand 下无需两阶段精定位)。"""
             bp = obj['base_position_m']
             try:
                 r = float(self.default_grasp_roll.get())
@@ -863,19 +929,22 @@ def main():
                     'qx': round(qx, 6), 'qy': round(qy, 6), 'qz': round(qz, 6), 'qw': round(qw, 6)}
             name = obj.get('object_name', '物体')
             bin_num = self._bin_for_object(name)
-            dia = obj.get('size_m', {}).get('diameter')
-            cmd = {"cmd": "sort_verify", "pick": pick, "bin": bin_num,
+            # 优先用 D455 估计直径, fallback 预设尺寸
+            dia = obj.get('estimated_diameter_m') or obj.get('size_m', {}).get('diameter')
+            cmd = {"cmd": "sort", "pick": pick, "bin": bin_num,
                    "pick_name": f"{name} (auto-sort{'-retry' if retry else ''})",
                    "place_name": f"料框{bin_num}"}
+            method_tag = "single"
             if dia: cmd["object_diameter_m"] = round(float(dia), 3)
             self.last_dispatch_time = time.time()
             self.cmd_queue.put(cmd)
-            self._auto_sort_log(f"分拣: {name}→料框{bin_num} {'[重试]' if retry else ''}")
+            self._auto_sort_log(f"分拣[{method_tag}]: {name}→料框{bin_num} {'[重试]' if retry else ''}")
 
         def _set_manual_buttons_state(self, state):
             """批量禁用/启用手动按钮。state: tk.NORMAL 或 tk.DISABLED。"""
             for btn in (getattr(self, 'conveyor_on_btn', None), getattr(self, 'conveyor_off_btn', None),
                         getattr(self, 'pick_btn', None), getattr(self, 'pick_two_btn', None),
+                        getattr(self, 'pick_graspnet_btn', None),
                         getattr(self, 'qrun', None)):
                 if btn is not None:
                     try: btn.config(state=state)
@@ -889,7 +958,7 @@ def main():
                 self._div_line_id = self.camera_canvas.create_line(
                     x_line, 0, x_line, self._canvas_h, fill='yellow', dash=(6, 4), width=2)
                 self._div_label_id = self.camera_canvas.create_text(
-                    x_line + 5, 12, text=f"分界线 u={self._auto_sort_line_u}", fill='yellow', anchor=tk.NE, font=("Arial", 9, "bold"))
+                    x_line + 5, 12, text=f"分界线 u={self._auto_sort_line_u}", fill='yellow', anchor=tk.NW, font=("Arial", 9, "bold"))
                 self.camera_canvas.itemconfig(self._div_line_id, state='hidden')
                 self.camera_canvas.itemconfig(self._div_label_id, state='hidden')
             except Exception as e:
@@ -913,7 +982,7 @@ def main():
                 self.camera_canvas.itemconfig(self._div_line_id, state='normal')
                 self.camera_canvas.itemconfig(self._div_label_id, state='normal')
             self._auto_sort_log("自动分拣启动")
-            self.auto_sort_state = 'CHECK_LEFT'
+            self.auto_sort_state = 'CHECK_RIGHT'
             self._auto_sort_tick()
 
         def stop_auto_sort(self):
@@ -955,7 +1024,7 @@ def main():
             if not self.auto_sort_running: return
             try:
                 st = self.auto_sort_state
-                if st == 'CHECK_LEFT':       self._tick_check_left()
+                if st == 'CHECK_RIGHT':       self._tick_check_right()
                 elif st == 'CONVEYOR_WAIT':  self._tick_conveyor_wait()
                 elif st == 'CONVEYOR_STOPPING': self._tick_conveyor_stopping()
                 elif st == 'SORTING':        self._tick_sorting()
@@ -964,11 +1033,11 @@ def main():
                 self._auto_sort_log(f"tick 异常: {e}")
             self._auto_sort_tick_id = self.after(300, self._auto_sort_tick)
 
-        def _tick_check_left(self):
-            """检查分界线左侧有无物体。"""
+        def _tick_check_right(self):
+            """检查分界线右侧有无物体。"""
             # 等服务端空闲
             if self.current_status == 'busy': return
-            obj = self._pick_object_left_of_line()
+            obj = self._pick_object_right_of_line()
             if obj is not None:
                 self._auto_sort_current_obj = obj
                 self._auto_sort_retry_count = 0
@@ -980,7 +1049,7 @@ def main():
                 if not self._conveyor_busy and self.conveyor_state != True:
                     self._conveyor_set(True)
                 self.auto_sort_state = 'CONVEYOR_WAIT'
-                self._auto_sort_log("左侧无物体, 开启传送带")
+                self._auto_sort_log("右侧无物体, 开启传送带")
 
         def _tick_conveyor_wait(self):
             """传送带运行中, 等待物体跨越分界线。"""
@@ -989,7 +1058,7 @@ def main():
                 # 传送带未运行 (可能切换失败), 重新开
                 self._conveyor_set(True)
                 return
-            obj = self._pick_object_left_of_line()
+            obj = self._pick_object_right_of_line()
             if obj is not None:
                 self._auto_sort_current_obj = obj
                 self._auto_sort_retry_count = 0
@@ -1020,10 +1089,10 @@ def main():
                     return
                 # 观察完成, 重新选物体 (位置可能在停止/惯性滑动后变化)
                 self._conv_stopped_ts = 0
-                obj = self._pick_object_left_of_line()
+                obj = self._pick_object_right_of_line()
                 if obj is None:
                     self._auto_sort_log("物体已离开视野, 回到检测")
-                    self.auto_sort_state = 'CHECK_LEFT'
+                    self.auto_sort_state = 'CHECK_RIGHT'
                     return
                 self._auto_sort_current_obj = obj
                 self._dispatch_sort_cmd(obj, retry=False)
@@ -1060,14 +1129,14 @@ def main():
                             self._auto_sort_log("无重试目标, 跳过")
                     else:
                         self._auto_sort_log("重试仍失败, 跳过该物体")
-                # 成功或跳过 → 回 CHECK_LEFT
+                # 成功或跳过 → 回 CHECK_RIGHT
                 self._auto_sort_current_obj = None
                 self._auto_sort_retry_count = 0
-                self.auto_sort_state = 'CHECK_LEFT'
+                self.auto_sort_state = 'CHECK_RIGHT'
                 self._auto_sort_log("分拣完成, 继续检测")
 
         def _tick_stopping(self):
-            """停止流程: 等当前任务完成, 回观察位, 结束。"""
+            """停止流程: 等当前任务完成, 回待机位, 结束。"""
             # 确保传送带已停
             if self.conveyor_state != False and not self._conveyor_busy:
                 self._conveyor_set(False)

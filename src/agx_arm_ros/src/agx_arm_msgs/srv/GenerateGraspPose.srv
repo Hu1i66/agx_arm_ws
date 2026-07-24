@@ -1,0 +1,12 @@
+# ===== Request =====
+std_msgs/Header header                    # YOLO 检测时间戳 (用于深度图时间同步)
+sensor_msgs/RegionOfInterest bbox         # YOLO 检测框 (像素坐标 x_offset, y_offset, width, height)
+string class_name                         # 物体类别 (日志/调试用)
+uint8 max_candidates                      # 最多返回候选数 (0=用服务端默认值 5)
+---
+# ===== Response =====
+bool success                              # 是否成功生成至少 1 个有效候选
+string error_msg                          # 失败原因 (depth_sync_timeout/empty_point_cloud/too_few_points/no_valid_grasp/...)
+agx_arm_msgs/GraspCandidate[] candidates  # 按 score 降序排列的候选列表
+float32 best_score                        # candidates[0].score (冗余, 便于快速判断)
+builtin_interfaces/Time depth_stamp       # 实际使用的深度图时间戳 (调试用)
