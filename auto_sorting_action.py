@@ -2083,17 +2083,16 @@ def main():
                             pass  # 已安全停机
                         success = False; break
 
-                    # 【第五步】 关节空间到料框上方 (途径点, 不停留)
-                    # ⚠️ 临时禁用传送带所有碰撞体：料框放置位机械臂与多个传送带碰撞体几何相交
+                    # 【第五步】 关节空间到料框上方 (需稳定后再下降)
+                    # ⚠️ continuous=False: BIN_ABOVE完成后等0.15s稳定, 否则BIN_PLACE起点偏差→-4
                     node._set_bin_collision_allowed(allowed=True)
-                    if not node.move_arm_joint(BIN_ABOVE_JOINTS, f"移动到{place_id}上方 (途径点)", continuous=True):
+                    if not node.move_arm_joint(BIN_ABOVE_JOINTS, f"移动到{place_id}上方 (途径点)", continuous=False):
                         success = False; break
                     if node._check_emergency("step5-料框上方"):
                         success = False; break
 
                     # 【第六步】 关节空间到料框放置位
-                    # ⚠️ BIN_ABOVE→BIN_PLACE 需 0.15s 稳定, 否则起点偏差 > 0.01 → -4
-                    if not node.move_arm_joint(BIN_PLACE_JOINTS, f"移动到{place_id}放置位 (关节空间)", continuous=False):
+                    if not node.move_arm_joint(BIN_PLACE_JOINTS, f"移动到{place_id}放置位 (关节空间)", continuous=True):
                         success = False; break
                     place_reached_ok = True
                     if node._check_emergency("step6-料框放置位"):
