@@ -2048,8 +2048,10 @@ def main():
                         if node._check_emergency(f"step4-抬起脱离,retry{retry+1}"):
                             success = False; break
 
-                        # 【第四步半】 抓取成功检测 — 抬起后执行
-                        grasp_ok, gw, gf, reason = node.check_grasp_success(timeout_s=1.0)
+                        # 【第四步半】 抓取成功检测 — 抬起后立即评估
+                        # 夹爪在 step3 已闭合, 经 GRIPPER_SETTLE(0.15s) + lift(~1.5s) 已稳定 >1.6s,
+                        # check_grasp_success 的 0.3s 超时在第一轮轮询即返回 (width 已稳定).
+                        grasp_ok, gw, gf, reason = node.check_grasp_success(timeout_s=0.3)
                         node.get_logger().info(
                             f"🔍 抓取检测 (retry {retry+1}/{MAX_GRASP_RETRIES}): "
                             f"success={grasp_ok} width={gw*1000:.1f}mm "
