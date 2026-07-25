@@ -1913,7 +1913,7 @@ def main():
                     if two_stage:
                         node.get_logger().info("⚡ 两阶段模式：已在物体正上方，直接下降抓取")
                     elif not node.move_arm_pose(POSE_PICK_UP, "抓取位上方过渡点",
-                                                  continuous=False, planning_mode='normal',
+                                                  continuous=True, planning_mode='normal',
                                                   preferred_orientation=active_ori):
                         success = False; break
                     if node.last_planning_strategy:
@@ -2024,17 +2024,18 @@ def main():
                         if node._check_emergency(f"step3-闭合夹爪,retry{retry+1}"):
                             success = False; break
 
-                        # 【第四步】 抬起脱离
+                        # 【第四步】 抬起脱离 + 直达料框上方 (途径点, 不停留)
+                        #   直接从 PICK → BIN_ABOVE, 跳过 PICK_UP 中间停留
+                        #   ⚠️ 抬起前禁用传送带碰撞体 (step3 闭合后夹爪手指会穿透 belt_deck)
+                        node._set_bin_collision_allowed(allowed=True)
                         _lift_ok = False
-                        if pick_up_joints:
-                            sorted_joints = [pick_up_joints[f'joint{i}'] for i in range(1, 7)]
-                            if node.move_arm_joint(sorted_joints, "抬起脱离 (直接原路逆向)", continuous=True):
-                                _lift_ok = True
-                            else:
-                                node.get_logger().warn("⚠️ 抬起(关节空间)失败(-2), 回退到笛卡尔规划")
+                        if node.move_arm_joint(BIN_ABOVE_JOINTS, "抬起直达料框上方 (途径点)", continuous=True):
+                            _lift_ok = True
+                        else:
+                            node.get_logger().warn("⚠️ 抬起直达料框上方失败, 回退到笛卡尔规划")
                         if not _lift_ok:
                             POSE_LIFT = POSE_PICK.copy()
-                            POSE_LIFT['z'] = POSE_PICK_UP['z']
+                            POSE_LIFT['z'] = BIN_ABOVE_JOINTS[2] if len(BIN_ABOVE_JOINTS) > 2 else POSE_PICK_UP['z']
                             _lift_pose_msg = node._create_pose(POSE_LIFT, active_ori)
                             if node.execute_cartesian_path([_lift_pose_msg], "抬起脱离 (直线插补)", fraction_threshold=0.50):
                                 _lift_ok = True
@@ -2045,11 +2046,11 @@ def main():
                             if node.last_planning_profile_name:
                                 cycle_profiles.append(node.last_planning_profile_name)
                         grasp_reached_ok = True
-                        if node._check_emergency(f"step4-抬起脱离,retry{retry+1}"):
+                        if node._check_emergency(f"step4-抬起→料框上方,retry{retry+1}"):
                             success = False; break
 
                         # 【第四步半】 抓取成功检测 — 抬起后立即评估
-                        # 夹爪在 step3 已闭合, 经 GRIPPER_SETTLE(0.15s) + lift(~1.5s) 已稳定 >1.6s,
+                        # 夹爪在 step3 已闭合, 经 GRIPPER_SETTLE(0.05s) + lift(~1.5s) 已稳定 >1.5s,
                         # check_grasp_success 的 0.3s 超时在第一轮轮询即返回 (width 已稳定).
                         grasp_ok, gw, gf, reason = node.check_grasp_success(timeout_s=0.3)
                         node.get_logger().info(
@@ -2083,40 +2084,30 @@ def main():
                             pass  # 已安全停机
                         success = False; break
 
-                    # 【第五步】 关节空间移动到料框上方 (用户标定点位)
-                    # ⚠️ 临时禁用传送带所有碰撞体：料框放置位机械臂与多个传送带碰撞体几何相交
-                    # (control_box↔link5, rail_ny↔gripper_link2, conveyor_control_box↔gripper_link1 等)，
-                    # 导致 RRTConnect 无法在目标状态采样 (错误码 99999)。通过 ACM diff 临时允许碰撞，第九步后恢复。
-                    node._set_bin_collision_allowed(allowed=True)
-                    if not node.move_arm_joint(BIN_ABOVE_JOINTS, f"移动到{place_id}上方 (关节空间)", continuous=False):
-                        success = False; break
-                    if node._check_emergency("step5-料框上方"):
-                        success = False; break
-
-                    # 【第六步】 关节空间移动到料框放置位 (用户标定点位)
-                    # ⚠️ continuous=False: 上一步执行后需 0.15s 稳定时间，否则起点偏差 > 0.01 触发 -4 错误
-                    if not node.move_arm_joint(BIN_PLACE_JOINTS, f"移动到{place_id}放置位 (关节空间)", continuous=False):
+                    # 【第五步】 关节空间到料框放置位 (step4 已到 BIN_ABOVE, 直接下降)
+                    # ⚠️ 临时禁用传送带所有碰撞体已在 step4 抬起前设置
+                    if not node.move_arm_joint(BIN_PLACE_JOINTS, f"移动到{place_id}放置位 (关节空间)", continuous=True):
                         success = False; break
                     place_reached_ok = True
-                    if node._check_emergency("step6-料框放置位"):
+                    if node._check_emergency("step5-料框放置位"):
                         success = False; break
 
-                    # 【第七步】 松开夹爪释放物品
+                    # 【第六步】 松开夹爪释放物品
                     node.operate_gripper(dynamic_open, f"松开夹爪(在{place_id}放置位释放)")
                     time.sleep(GRIPPER_SETTLE_SEC)
-                    if node._check_emergency("step7-松开夹爪"):
+                    if node._check_emergency("step6-松开夹爪"):
                         success = False; break
 
-                    # 【第八步】 关节空间回到料框上方 (抬起脱离放置位)
-                    if not node.move_arm_joint(BIN_ABOVE_JOINTS, f"从{place_id}放置位抬起 (关节空间)", continuous=False):
+                    # 【第七步】 关节空间回到料框上方 (抬起脱离放置位)
+                    if not node.move_arm_joint(BIN_ABOVE_JOINTS, f"从{place_id}放置位抬起 (关节空间)", continuous=True):
                         success = False; break
-                    if node._check_emergency("step8-料框抬起"):
+                    if node._check_emergency("step7-料框抬起"):
                         success = False; break
 
-                    # 【第九步】 关节空间回到待机位 (等待下一次抓取)
-                    if not node.move_arm_joint(JOINT_STANDBY, f"回到待机位 (关节空间)", continuous=False):
+                    # 【第八步】 关节空间回到待机位 (等待下一次抓取)
+                    if not node.move_arm_joint(JOINT_STANDBY, f"回到待机位 (关节空间)", continuous=True):
                         success = False; break
-                    if node._check_emergency("step9-回待机位"):
+                    if node._check_emergency("step8-回待机位"):
                         success = False; break
 
                 # ⚠️ 碰撞检测恢复已下移至"回待机位之后"。
