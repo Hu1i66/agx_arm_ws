@@ -1615,7 +1615,7 @@ def main():
     GRIPPER_OPEN = 0.090
     GRIPPER_CLOSE = 0.060
     GRIPPER_GRAB = 0.000
-    GRIPPER_SETTLE_SEC = 0.15
+    GRIPPER_SETTLE_SEC = 0.05
     MAX_GRASP_RETRIES = 3       # 抓取失败最大重试次数
 
     # ── 抓取点 z 补偿: link6 原点到夹爪夹持点的 z 距离 ──
@@ -2020,7 +2020,7 @@ def main():
                         )
                         node.operate_gripper(GRIPPER_GRAB, "闭合夹爪(拿取,完全闭合)")
                         time.sleep(GRIPPER_SETTLE_SEC)
-                        time.sleep(0.15)  # planning_scene 更新
+                        time.sleep(0.05)  # planning_scene 更新
                         if node._check_emergency(f"step3-闭合夹爪,retry{retry+1}"):
                             success = False; break
 
