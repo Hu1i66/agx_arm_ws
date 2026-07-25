@@ -2092,7 +2092,8 @@ def main():
                         success = False; break
 
                     # 【第六步】 关节空间到料框放置位
-                    if not node.move_arm_joint(BIN_PLACE_JOINTS, f"移动到{place_id}放置位 (关节空间)", continuous=True):
+                    # ⚠️ BIN_ABOVE→BIN_PLACE 需 0.15s 稳定, 否则起点偏差 > 0.01 → -4
+                    if not node.move_arm_joint(BIN_PLACE_JOINTS, f"移动到{place_id}放置位 (关节空间)", continuous=False):
                         success = False; break
                     place_reached_ok = True
                     if node._check_emergency("step6-料框放置位"):
