@@ -196,19 +196,16 @@ _BLUE_BLOCK_SCRIPT = "/home/lxf/orange_dataset/blue_block_detector.py"
 _BLUE_BLOCK_VENV_PY = "/home/lxf/orange_dataset/.venv/bin/python3"
 # 相机启动: 显式指定 640x480@30 与另一台电脑 (pyrealsense2 直接配置) 保持一致
 # align_depth.enable:=true: 启用深度图与 RGB 对齐 (D455 双目深度 + PCA 短轴对齐必需)
-# 深度后处理滤波链 (Phase 0 优化): spatial 降噪保边 + temporal 帧间平滑 + hole_filling 填补空洞
-#   - spatial filter: filter_magnitude=2 (平滑强度), filter_smooth_alpha=0.5 (边缘保留), filter_smooth_delta=20
-#   - temporal filter: filter_smooth_alpha=0.4 (时间平滑强度), filter_smooth_delta=20 (边缘突变容忍)
-#   - hole filling fill mode=2 (深度空洞用左右插值填充)
+# 深度后处理滤波链 (Phase 0 优化): rs_launch.py 仅支持 *.enable 参数
+#   子参数 (filter_magnitude/filter_smooth_alpha/fill_mode 等) 未在 launch 声明, 用节点默认值
+#   如需调子参数, 启动后用 ros2 param set /camera/camera <param> <value> 动态调整
 _CAMERA_CMD = (f"{_ROS2_SRC} && ros2 launch realsense2_camera rs_launch.py "
                f"rgb_camera.color_profile:=640,480,30 "
                f"depth_module.profile:=640,480,30 "
                f"align_depth.enable:=true "
-               f"spatial_filter.enable:=true spatial_filter.filter_magnitude:=2 "
-               f"spatial_filter.filter_smooth_alpha:=0.5 spatial_filter.filter_smooth_delta:=20 "
-               f"temporal_filter.enable:=true temporal_filter.filter_smooth_alpha:=0.4 "
-               f"temporal_filter.filter_smooth_delta:=20 "
-               f"hole_filling_filter.enable:=true hole_filling_filter.fill_mode:=2")
+               f"spatial_filter.enable:=true "
+               f"temporal_filter.enable:=true "
+               f"hole_filling_filter.enable:=true")
 _YOLO_CMD   = f"{_ROS2_SRC} && {_VENV_SRC} && python3 {_YOLO_SCRIPT} --ros-args -p show_gui_window:=false"
 # 蓝方块检测节点启动命令 (venv python 直接调用, 不通过 activate)
 _BLUE_BLOCK_CMD = f"{_ROS2_SRC} && {_BLUE_BLOCK_VENV_PY} {_BLUE_BLOCK_SCRIPT}"
