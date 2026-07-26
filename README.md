@@ -310,8 +310,8 @@ python3 realsense_yolo_node.py \
 
 **在线调参** (标定偏差补偿, 无需重启):
 ```bash
-ros2 param set /object_detector x_offset_m -0.025   # X 补偿 (负=减)
-ros2 param set /object_detector y_offset_m 0.005     # Y 补偿 (正=加)
+ros2 param set /object_detector x_offset_m -0.045   # X 补偿 (负=减)
+ros2 param set /object_detector y_offset_m -0.010    # Y 补偿 (负=减)
 ros2 param set /object_detector z_offset_m 0.030     # Z 补偿 (正=抬高, 防撞台面)
 ros2 param set /object_detector depth_offset_m 0.0   # 深度补偿 (默认0)
 ```
@@ -372,8 +372,8 @@ python3 sorting_gui_client.py
 
 | 参数 | 位置 | 默认值 | 说明 |
 |------|------|--------|------|
-| `x_offset_m` | YOLO 节点 | -0.025 | X 标定偏差补偿 (负=减) |
-| `y_offset_m` | YOLO 节点 | +0.005 | Y 标定偏差补偿 (正=加) |
+| `x_offset_m` | YOLO 节点 | -0.045 | X 标定偏差补偿 (负=减) |
+| `y_offset_m` | YOLO 节点 | -0.010 | Y 标定偏差补偿 (负=减) |
 | `z_offset_m` | YOLO 节点 | +0.030 | Z 标定偏差补偿 (正=抬高) |
 | `MIN_GRASP_Z` | action 节点 | 0.045 | 夹持点 Z 安全下限 (防撞台面) |
 | `GRIPPER_PICK_Z_OFFSET` | action 节点 | 0.064 | link6 到夹持点 Z 距离 |
