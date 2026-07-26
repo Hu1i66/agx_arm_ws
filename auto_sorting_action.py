@@ -1610,8 +1610,10 @@ class MoveItActionClient(Node):
         POSE_PICK_UP = POSE_PICK.copy()
         POSE_PICK_UP['z'] += 0.12
 
-        # 夹爪闭合目标: block_width_m - 0.002m (比物块短边小 2mm, 确保夹紧)
-        gripper_close_width = max(0.0, float(block_width_m) - 0.002)
+        # 夹爪闭合目标: 完全闭合 (0.0m)
+        # 检测宽度偏大 (HSV 掩膜扩张), 用 block_width-2mm 会导致夹爪未夹紧
+        # 完全闭合时夹爪碰到物块会自然停住 (机械限位), 确保夹紧
+        gripper_close_width = 0.0
 
         self.get_logger().info(
             f"📐 蓝方块抓取位姿: surface_z={surface_z_m:.3f}m "
