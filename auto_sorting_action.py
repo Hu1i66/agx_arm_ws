@@ -245,6 +245,33 @@ class PinocchioIKSolver:
             t1 = time.time()
             return False, np.zeros(self.ndof), 999.0, (t1 - t0)
 
+    def get_frame_position(self, q_joints, frame_name):
+        """用 FK 计算指定 frame 在 base 坐标系中的位置。
+
+        Args:
+            q_joints: 6 维关节角 (joint1-6, 弧度)
+            frame_name: frame 名称 (如 'gripper_link1', 'gripper_link2', 'link6')
+
+        Returns:
+            np.array([x, y, z]) 或 None (frame 不存在)
+        """
+        if not _PINOCCHIO_AVAILABLE:
+            return None
+        try:
+            frame_id = self.model.getFrameId(frame_name)
+            if frame_id >= len(self.model.frames):
+                return None
+            q = _pin.neutral(self.model)
+            for i, idx in enumerate(self.joint_q_indices):
+                if i < len(q_joints):
+                    q[idx] = q_joints[i]
+            _pin.forwardKinematics(self.model, self.data, q)
+            _pin.updateFramePlacements(self.model, self.data)
+            return self.data.oMf[frame_id].translation.copy()
+        except Exception as e:
+            print(f"❌ FK error for {frame_name}: {e}")
+            return None
+
 
 
 class MoveItActionClient(Node):
@@ -1981,6 +2008,15 @@ class MoveItActionClient(Node):
                         cycle_strategies.append('ik_joint_space')
                         cycle_profiles.append('ik_solution')
                         self.get_logger().info("✅ 蓝方块 IK 关节空间下降完成 (joint6 稳定)")
+                        # FK 诊断: 计算 gripper_link1/2 实际位置, 确认手指 z 坐标
+                        if ik_joints is not None and self.ik_solver is not None:
+                            for fname in ['link6', 'gripper_link1', 'gripper_link2']:
+                                pos = self.ik_solver.get_frame_position(ik_joints, fname)
+                                if pos is not None:
+                                    self.get_logger().info(
+                                        f"📍 FK 诊断: {fname} 位置 = "
+                                        f"({pos[0]:.4f}, {pos[1]:.4f}, {pos[2]:.4f})  "
+                                        f"目标 surface_z={surface_z_m:.4f} 台面≈{surface_z_m - block_height_m:.4f}")
 
                 if not descent_success:
                     self.get_logger().info("🟡 蓝方块-IK失败, 回退到笛卡尔直线 (jump_threshold=0.8)...")
