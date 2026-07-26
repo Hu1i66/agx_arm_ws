@@ -950,12 +950,12 @@ class MoveItActionClient(Node):
             p.orientation = orientation
         return p
         
-    def execute_cartesian_path(self, waypoints, desc, fraction_threshold=0.85):
+    def execute_cartesian_path(self, waypoints, desc, fraction_threshold=0.85, jump_threshold=1.6):
         self.get_logger().info(f"🚀 正在快速计算(笛卡尔直线连线) -> {desc}")
         if not self._cartesian_client.wait_for_service(timeout_sec=1.5):
             self.get_logger().error("⚠️ GetCartesianPath 服务不可用")
             return False
-            
+
         req = GetCartesianPath.Request()
         req.header.frame_id = 'base_link'
         req.header.stamp = self.get_clock().now().to_msg()
@@ -975,7 +975,7 @@ class MoveItActionClient(Node):
             req.start_state.joint_state.position = positions
         req.waypoints = waypoints
         req.max_step = 0.005      # 极高细分度: 5mm 一步，提升控制轨迹顺滑度
-        req.jump_threshold = 1.6 # 忽视轻微的冗余突变
+        req.jump_threshold = jump_threshold  # j6 突变检测阈值 (默认 1.6, 下降时可降到 0.8)
         req.avoid_collisions = False # 端点在物品附近时关闭防碰撞，防止被误挡
         
         future = self._cartesian_client.call_async(req)
@@ -1900,31 +1900,34 @@ class MoveItActionClient(Node):
                     if self._check_emergency(f"blue_block-retry{retry+1}-上方过渡点"):
                         success = False; break
 
-                # 【第二步】 笛卡尔直线下降到 POSE_PICK (禁用传送带碰撞)
-                # 蓝方块专用: 笛卡尔直线优先 (垂直下降, 避免关节空间"扫"向目标戳台面)
+                # 【第二步】 IK 关节空间下降到 POSE_PICK (禁用传送带碰撞)
+                # 蓝方块专用: IK 关节空间优先 (固定 joint6, 避免笛卡尔下降时 j6 大幅旋转)
+                # 第一层姿态已用 initial_guess 求解, IK 解接近当前关节角, j6 不会大幅旋转
                 descent_success = False
-                pose_pick_msg = self._create_pose(POSE_PICK, active_ori)
-                if self.execute_cartesian_path(
-                        [pose_pick_msg],
-                        f"蓝方块-下降抓取 (笛卡尔直线,retry{retry+1})",
-                        fraction_threshold=0.50):
-                    descent_success = True
-                    cycle_strategies.append('cartesian_line')
-                    cycle_profiles.append('cartesian')
-                    self.get_logger().info("✅ 蓝方块笛卡尔直线下降完成")
+                if self.enable_ik and self.ik_solver is not None:
+                    pick_orientations = [active_ori] + self._build_pick_orientations_multi(POSE_PICK)
+                    ik_ok, ik_joints = self.move_arm_via_ik(
+                        POSE_PICK, pick_orientations,
+                        "蓝方块-下降抓取 (IK关节空间)", continuous=True)
+                    if ik_ok:
+                        descent_success = True
+                        cycle_strategies.append('ik_joint_space')
+                        cycle_profiles.append('ik_solution')
+                        self.get_logger().info("✅ 蓝方块 IK 关节空间下降完成 (joint6 稳定)")
 
                 if not descent_success:
-                    self.get_logger().info("🟡 蓝方块-笛卡尔受限, 回退到 IK 关节空间...")
-                    if self.enable_ik and self.ik_solver is not None:
-                        pick_orientations = [active_ori] + self._build_pick_orientations_multi(POSE_PICK)
-                        ik_ok, ik_joints = self.move_arm_via_ik(
-                            POSE_PICK, pick_orientations,
-                            "蓝方块-下降抓取 (IK关节空间兜底)", continuous=True)
-                        if ik_ok:
-                            descent_success = True
-                            cycle_strategies.append('ik_joint_space')
-                            cycle_profiles.append('ik_solution')
-                            self.get_logger().info("✅ 蓝方块 IK 关节空间下降完成 (兜底)")
+                    self.get_logger().info("🟡 蓝方块-IK失败, 回退到笛卡尔直线 (jump_threshold=0.8)...")
+                    pose_pick_msg = self._create_pose(POSE_PICK, active_ori)
+                    # 笛卡尔兜底: 降低 jump_threshold 到 0.8, 检测 j6 突变 (>45°)
+                    if self.execute_cartesian_path(
+                            [pose_pick_msg],
+                            f"蓝方块-下降抓取 (笛卡尔直线兜底,retry{retry+1})",
+                            fraction_threshold=0.50,
+                            jump_threshold=0.8):
+                        descent_success = True
+                        cycle_strategies.append('cartesian_line')
+                        cycle_profiles.append('cartesian')
+                        self.get_logger().info("✅ 蓝方块笛卡尔直线下降完成 (兜底)")
 
                 if not descent_success:
                     self.get_logger().info("🟡 蓝方块-直线插补受限, 启动多路并发退避规划...")
