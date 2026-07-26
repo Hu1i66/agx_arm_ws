@@ -40,6 +40,40 @@ def ros_process_worker(cmd_q, st_q, pose_q, img_q, det_q, conv_q, mp_status_q):
         except: pass
     threading.Thread(target=auto_start_pipeline, args=(_mp_set_status,), daemon=True).start()
 
+    # ═════════ 模式切换 (水果 YOLO ↔ 蓝方块检测) ═════════
+    # 在 ROS worker 子进程中执行 kill/launch (fork 安全), 通过 mp_status_q 回报状态。
+    # 主进程 (Tkinter) 禁止 fork, 所有 subprocess 调用均委托至此。
+    def _do_switch_mode(mode):
+        """切换检测节点 (在独立线程中执行, 不阻塞 ROS spinner)。
+        mode='blue_block': 停止 realsense_yolo_node.py, 启动 blue_block_detector.py
+        mode='fruit':      停止 blue_block_detector.py, 启动 realsense_yolo_node.py
+        """
+        if mode == 'blue_block':
+            _mp_set_status("正在切换到蓝方块模式: 停止水果 YOLO 节点...")
+            _kill_by_pattern("realsense_yolo_node.py")
+            time.sleep(1.5)  # 等待 ROS 节点清理 (订阅/发布注销)
+            _mp_set_status("正在切换到蓝方块模式: 启动 blue_block_detector...")
+            _launch("BLUE_BLOCK", _BLUE_BLOCK_CMD)
+            # 等待 blue_block_detector 上线 (检测 /detection_info 话题有新发布者)
+            for i in range(15):
+                time.sleep(2); _mp_set_status(f"等待蓝方块节点上线... ({(i+1)*2}s)")
+                if _topic_ok('/detection_info'):
+                    _mp_set_status("已切换到蓝方块模式 (blue_block_detector 已上线)")
+                    return
+            _mp_set_status("蓝方块节点启动超时, 请检查 /tmp/sorting_gui_startup.log")
+        elif mode == 'fruit':
+            _mp_set_status("正在切换到水果模式: 停止 blue_block_detector...")
+            _kill_by_pattern("blue_block_detector.py")
+            time.sleep(1.5)
+            _mp_set_status("正在切换到水果模式: 启动 realsense_yolo_node...")
+            _launch("YOLO", _YOLO_CMD)
+            for i in range(20):
+                time.sleep(3); _mp_set_status(f"等待 YOLO 加载... ({(i+1)*3}s)")
+                if _topic_ok('/detection_info'):
+                    _mp_set_status("已切换到水果模式 (realsense_yolo_node 已上线)")
+                    return
+            _mp_set_status("YOLO 节点启动超时, 请检查 /tmp/sorting_gui_startup.log")
+
     import rclpy
     from rclpy.node import Node
     from rclpy.logging import LoggingSeverity, set_logger_level
@@ -119,6 +153,12 @@ def ros_process_worker(cmd_q, st_q, pose_q, img_q, det_q, conv_q, mp_status_q):
                         _putq(conv_q, {'ok': ok, 'err': err})
                     except: pass
                     continue
+                # 模式切换 (水果 YOLO ↔ 蓝方块检测): 在 ROS worker 子进程中执行 kill/launch
+                # 主进程有 Tcl, fork 会导致崩溃, 所有 subprocess 调用委托至此子进程
+                if cmd.get("cmd") == "switch_mode":
+                    mode = cmd.get("mode")  # "blue_block" 或 "fruit"
+                    threading.Thread(target=_do_switch_mode, args=(mode,), daemon=True).start()
+                    continue
                 m = String(); m.data = json.dumps(cmd)
                 # 曝光控制命令发到 /camera/exposure_ctrl, 其他命令发到 /sorting_cmds
                 if cmd.get("cmd") == "exposure":
@@ -150,6 +190,10 @@ def _putq(q, item):
 _ROS2_SRC = "source /opt/ros/humble/setup.bash"
 _VENV_SRC = "source /home/lxf/orange_dataset/.venv/bin/activate"
 _YOLO_SCRIPT = "/home/lxf/orange_dataset/realsense_yolo_node.py"
+# 蓝方块检测节点 (Task 1.1-1.4): HSV 颜色分割 + minAreaRect + RANSAC 深度
+_BLUE_BLOCK_SCRIPT = "/home/lxf/orange_dataset/blue_block_detector.py"
+# 蓝方块节点 Python 环境: 直接用 venv python (与 shebang 一致, 避免 activate 开销)
+_BLUE_BLOCK_VENV_PY = "/home/lxf/orange_dataset/.venv/bin/python3"
 # 相机启动: 显式指定 640x480@30 与另一台电脑 (pyrealsense2 直接配置) 保持一致
 # align_depth.enable:=true: 启用深度图与 RGB 对齐 (D455 双目深度 + PCA 短轴对齐必需)
 _CAMERA_CMD = (f"{_ROS2_SRC} && ros2 launch realsense2_camera rs_launch.py "
@@ -157,6 +201,8 @@ _CAMERA_CMD = (f"{_ROS2_SRC} && ros2 launch realsense2_camera rs_launch.py "
                f"depth_module.profile:=640,480,30 "
                f"align_depth.enable:=true")
 _YOLO_CMD   = f"{_ROS2_SRC} && {_VENV_SRC} && python3 {_YOLO_SCRIPT} --ros-args -p show_gui_window:=false"
+# 蓝方块检测节点启动命令 (venv python 直接调用, 不通过 activate)
+_BLUE_BLOCK_CMD = f"{_ROS2_SRC} && {_BLUE_BLOCK_VENV_PY} {_BLUE_BLOCK_SCRIPT}"
 
 # CH340 USB 继电器控制脚本（Modbus RTU）。继电器接在传送带电路的常闭(NC)接口上。
 _RELAY_SCRIPT = "/home/lxf/agx_arm_ws/ch340-relay/relay_control.py"
@@ -174,6 +220,18 @@ def _launch(label, cmd):
     return subprocess.Popen(f"bash -c '{cmd}'", shell=True,
                             stdout=open(_LOG,"a"), stderr=open(_LOG,"a"),
                             preexec_fn=os.setsid)
+
+def _kill_by_pattern(pattern):
+    """通过 pkill -f 杀死匹配 pattern 的进程 (在 ROS worker 子进程中调用, fork 安全).
+    用于模式切换时停止旧视觉节点 (realsense_yolo_node.py / blue_block_detector.py).
+    Returns: True 如果命令执行成功 (即使没匹配到进程也算成功)."""
+    try:
+        subprocess.run(['pkill', '-f', pattern], capture_output=True, timeout=5)
+        _log(f"KILL pattern='{pattern}' done")
+        return True
+    except Exception as e:
+        _log(f"KILL pattern='{pattern}' 失败: {e}")
+        return False
 
 def auto_start_pipeline(set_status):
     _log("AUTO_START begin")
@@ -253,6 +311,11 @@ def main():
             # 曝光控制状态 (与 realsense_yolo_node.py 的 self.auto_exposure/current_exposure 对应)
             self._exposure_auto=True        # True=自动曝光, False=手动
             self._exposure_value=100        # 手动曝光值 (微秒, 范围 1-10000)
+            # ── 检测模式: 'fruit' (水果 YOLO) 或 'blue_block' (蓝方块 HSV+RANSAC) ──
+            # 模式切换通过 ROS worker 子进程 kill/launch 对应视觉节点 (互斥运行, 避免 D455 USB 带宽竞争)
+            self.detection_mode='fruit'
+            self._mode_switching=False      # True=正在切换中 (禁用按钮防重复点击)
+            self._mode_switch_deadline=0    # 切换超时时间戳 (用于检测切换是否卡住)
             # ── 自动分拣状态机 ──
             self.auto_sort_running=False       # 是否运行中
             self.auto_sort_state='IDLE'        # 当前状态
@@ -384,7 +447,12 @@ def main():
             self.pick_graspnet_btn=tk.Button(df,text=" GraspNet抓取 ->",command=self._pick_from_detection_graspnet,
                                              font=("Arial",12,"bold"),bg="#FF9800",fg="white",state=tk.DISABLED)
             self.pick_graspnet_btn.pack(fill=tk.X,pady=(0,2))
-            tk.Label(df,text=" =单次检测 | =两阶段精定位(已禁用) | =GraspNet 6DoF主导",font=("Arial",8),fg="gray").pack()
+            # ── 蓝方块抓取按钮 (仅蓝方块模式可用, 蓝色 #33CAE8 与按钮模式色一致) ──
+            self.pick_blue_block_btn=tk.Button(df,text=" 抓取蓝方块 ->",command=self._pick_blue_block,
+                                               font=("Arial",12,"bold"),bg="#33CAE8",fg="white",state=tk.DISABLED)
+            self.pick_blue_block_btn.pack(fill=tk.X,pady=(0,2))
+            tk.Label(df,text=" =单次检测 | =两阶段精定位(已禁用) | =GraspNet 6DoF主导 | =蓝方块(蓝方块模式专用)",
+                     font=("Arial",8),fg="gray").pack()
 
         def _ui_queue(self):
             tk.Label(self.mid_frame,text="任务排队队列",font=("Arial",14,"bold")).pack(pady=(0,10))
@@ -402,6 +470,24 @@ def main():
             self.status_var=tk.StringVar(value="当前状态: 未知")
             self.status_label=tk.Label(self.right_frame,textvariable=self.status_var,font=("Arial",16,"bold"),fg="blue")
             self.status_label.pack(pady=(0,10))
+            # ── 检测模式切换 (水果 YOLO ↔ 蓝方块 HSV+RANSAC) ──
+            # 两种视觉节点互斥运行 (避免 D455 USB 带宽竞争), 切换通过 ROS worker 子进程 kill/launch
+            fms=tk.LabelFrame(self.right_frame,text=" 检测模式切换",padx=10,pady=10); fms.pack(fill="x",pady=5)
+            mbf=tk.Frame(fms); mbf.pack(fill="x")
+            self.fruit_mode_btn=tk.Button(mbf,text=" 水果分拣模式 ",
+                                          command=self._switch_to_fruit_mode,
+                                          font=("Arial",12,"bold"),bg="#4CAF50",fg="white",
+                                          relief=tk.SUNKEN)  # 默认水果模式高亮
+            self.fruit_mode_btn.pack(side=tk.LEFT,expand=True,fill="x",padx=(0,4))
+            self.blue_block_mode_btn=tk.Button(mbf,text=" 蓝方块分拣模式 ",
+                                              command=self._switch_to_blue_block_mode,
+                                              font=("Arial",12,"bold"),bg="#33CAE8",fg="white",
+                                              relief=tk.RAISED)
+            self.blue_block_mode_btn.pack(side=tk.LEFT,expand=True,fill="x",padx=(4,0))
+            self.mode_status_var=tk.StringVar(value="当前模式: 水果分拣 (realsense_yolo_node)")
+            tk.Label(fms,textvariable=self.mode_status_var,font=("Arial",10),fg="gray").pack(pady=(5,0))
+            tk.Label(fms,text=" 切换会停止当前视觉节点并启动新节点 (约 5-30s), 互斥运行避免 D455 USB 带宽竞争",
+                     font=("Arial",8),fg="gray").pack()
             fn=tk.LabelFrame(self.right_frame,text="新建与保存坐标",padx=10,pady=10); fn.pack(fill="x",pady=5)
             tk.Label(fn,text="坐标名称:").grid(row=0,column=0,padx=5)
             self.name_entry=tk.Entry(fn,width=15); self.name_entry.grid(row=0,column=1,padx=5)
@@ -521,6 +607,19 @@ def main():
                             self.latest_detection_stamp = float(hs)
                     except (TypeError, ValueError):
                         pass
+                    # ═════════ 蓝方块模式: 解析 detections 数组, 显示蓝方块专用字段 ═════════
+                    if self.detection_mode == 'blue_block':
+                        detections = d.get('detections', []) or []
+                        if detections:
+                            self._update_blue_block_detection_panel(detections[0])
+                        else:
+                            self._update_blue_block_detection_panel(None)
+                        # 蓝方块模式不使用物体列表 (单目标), 清空避免残留
+                        self.det_listbox.delete(0, tk.END)
+                        self._det_objects = []
+                        self.after(200, self._update_detection_loop)
+                        return
+                    # ═════════ 水果模式: 解析 objects 数组 (原有逻辑) ═════════
                     objects = d.get('objects', []) or []
                     # 默认主物体显示 (顶层字段, 保持向后兼容)
                     if d.get('detected'):
@@ -551,6 +650,8 @@ def main():
                         self.pick_btn.config(state=tk.DISABLED,bg="gray")
                         self.pick_two_btn.config(state=tk.DISABLED,bg="gray")
                         self.pick_graspnet_btn.config(state=tk.DISABLED,bg="gray")
+                        # 水果模式下蓝方块抓取按钮始终禁用
+                        self.pick_blue_block_btn.config(state=tk.DISABLED,bg="gray")
                     # ── 更新所有物体列表 (realsense_yolo_node.py 发布的 objects 数组) ──
                     prev_sel = self.det_listbox.curselection()
                     prev_idx = prev_sel[0] if prev_sel else -1
@@ -708,6 +809,271 @@ def main():
                     self.task_queue.append(cmd); self.refresh_queue_listbox()
                     messagebox.showinfo("已加入",queue_msg)
             else: self.last_dispatch_time=time.time(); self.cmd_queue.put(cmd); messagebox.showinfo("已发送",sent_msg)
+
+        # ═══════════════════════ 蓝方块模式 (Task 2.2) ═══════════════════════
+
+        def _switch_to_blue_block_mode(self):
+            """切换到蓝方块分拣模式: 停止水果 YOLO 节点, 启动 blue_block_detector.py。
+            通过 ROS worker 子进程执行 kill/launch (主进程禁止 fork)。
+            """
+            if self.detection_mode == 'blue_block' or self._mode_switching:
+                return
+            if self.auto_sort_running:
+                return messagebox.showwarning("自动分拣运行中", "请先停止自动分拣再切换模式。")
+            if not messagebox.askyesno("确认切换模式",
+                "切换到蓝方块分拣模式？\n\n"
+                "将停止水果 YOLO 节点 (realsense_yolo_node.py),\n"
+                "启动蓝方块检测节点 (blue_block_detector.py)。\n"
+                "切换约需 5-30s, 期间检测信息会暂时清空。"):
+                return
+            self._mode_switching = True
+            self._mode_switch_deadline = time.time() + 35.0  # 超时上限 35s
+            self.detection_mode = 'blue_block'
+            # 禁用两个模式按钮防重复点击
+            self.fruit_mode_btn.config(state=tk.DISABLED, relief=tk.RAISED)
+            self.blue_block_mode_btn.config(state=tk.DISABLED, relief=tk.RAISED)
+            self.mode_status_var.set("当前模式: 切换中 (停止 YOLO → 启动蓝方块)...")
+            # 禁用所有水果模式抓取按钮, 蓝方块抓取按钮保持禁用直到检测到物块
+            self.pick_btn.config(state=tk.DISABLED, bg="gray")
+            self.pick_two_btn.config(state=tk.DISABLED, bg="gray")
+            self.pick_graspnet_btn.config(state=tk.DISABLED, bg="gray")
+            self.pick_blue_block_btn.config(state=tk.DISABLED, bg="gray")
+            # 清空检测信息缓存 (旧格式数据不属于蓝方块模式)
+            self.latest_detection = None
+            self._det_objects = []
+            self.det_listbox.delete(0, tk.END)
+            # 重置检测面板为等待状态
+            self.det_status_var.set(" 等待蓝方块检测节点上线...")
+            for v in (self.det_obj, self.det_conf, self.det_meth, self.det_x, self.det_y, self.det_z, self.det_dia, self.det_dist):
+                v.set(v.get().split(":")[0] + ": --")
+            # 发送切换命令到 ROS worker 子进程 (在其中执行 kill/launch, fork 安全)
+            self.cmd_queue.put({"cmd": "switch_mode", "mode": "blue_block"})
+            self.after(500, self._poll_mode_switch_done)
+
+        def _switch_to_fruit_mode(self):
+            """切换回水果分拣模式: 停止 blue_block_detector.py, 启动 realsense_yolo_node.py。
+            通过 ROS worker 子进程执行 kill/launch (主进程禁止 fork)。
+            """
+            if self.detection_mode == 'fruit' or self._mode_switching:
+                return
+            if self.auto_sort_running:
+                return messagebox.showwarning("自动分拣运行中", "请先停止自动分拣再切换模式。")
+            if not messagebox.askyesno("确认切换模式",
+                "切换回水果分拣模式？\n\n"
+                "将停止蓝方块检测节点 (blue_block_detector.py),\n"
+                "启动水果 YOLO 节点 (realsense_yolo_node.py)。\n"
+                "切换约需 5-30s, 期间检测信息会暂时清空。"):
+                return
+            self._mode_switching = True
+            self._mode_switch_deadline = time.time() + 65.0  # YOLO 加载较慢, 超时 65s
+            self.detection_mode = 'fruit'
+            self.fruit_mode_btn.config(state=tk.DISABLED, relief=tk.RAISED)
+            self.blue_block_mode_btn.config(state=tk.DISABLED, relief=tk.RAISED)
+            self.mode_status_var.set("当前模式: 切换中 (停止蓝方块 → 启动 YOLO)...")
+            # 禁用所有抓取按钮
+            self.pick_btn.config(state=tk.DISABLED, bg="gray")
+            self.pick_two_btn.config(state=tk.DISABLED, bg="gray")
+            self.pick_graspnet_btn.config(state=tk.DISABLED, bg="gray")
+            self.pick_blue_block_btn.config(state=tk.DISABLED, bg="gray")
+            # 清空检测信息缓存
+            self.latest_detection = None
+            self._det_objects = []
+            self.det_listbox.delete(0, tk.END)
+            self.det_status_var.set(" 等待水果 YOLO 节点上线...")
+            for v in (self.det_obj, self.det_conf, self.det_meth, self.det_x, self.det_y, self.det_z, self.det_dia, self.det_dist):
+                v.set(v.get().split(":")[0] + ": --")
+            # 发送切换命令到 ROS worker 子进程
+            self.cmd_queue.put({"cmd": "switch_mode", "mode": "fruit"})
+            self.after(500, self._poll_mode_switch_done)
+
+        def _poll_mode_switch_done(self):
+            """轮询模式切换是否完成 (通过检测 /detection_info 是否有新数据)。
+            切换完成 = 收到新模式的 /detection_info 消息; 超时 = 强制恢复按钮。
+            """
+            if not self._mode_switching:
+                return
+            # 检测是否有新数据到达 (latest_detection 被清空后重新填充 = 新节点上线)
+            if self.latest_detection is not None:
+                self._finish_mode_switch()
+                return
+            # 超时检查
+            if time.time() > self._mode_switch_deadline:
+                _log(f"模式切换超时 (mode={self.detection_mode}), 强制恢复按钮")
+                self._finish_mode_switch()
+                return
+            self.after(500, self._poll_mode_switch_done)
+
+        def _finish_mode_switch(self):
+            """模式切换完成 (或超时), 恢复按钮高亮状态。"""
+            self._mode_switching = False
+            self._mode_switch_deadline = 0
+            if self.detection_mode == 'blue_block':
+                # 蓝方块模式: 蓝方块按钮高亮, 水果按钮灰显
+                self.fruit_mode_btn.config(state=tk.NORMAL, relief=tk.RAISED)
+                self.blue_block_mode_btn.config(state=tk.NORMAL, relief=tk.SUNKEN)
+                self.mode_status_var.set("当前模式: 蓝方块分拣 (blue_block_detector)")
+                # 水果模式抓取按钮保持禁用 (不在水果模式)
+                self.pick_btn.config(state=tk.DISABLED, bg="gray")
+                self.pick_two_btn.config(state=tk.DISABLED, bg="gray")
+                self.pick_graspnet_btn.config(state=tk.DISABLED, bg="gray")
+                # 蓝方块抓取按钮保持禁用, 等检测到物块后由 _update_detection_loop 启用
+                self.pick_blue_block_btn.config(state=tk.DISABLED, bg="#33CAE8")
+            else:
+                # 水果模式: 水果按钮高亮, 蓝方块按钮灰显
+                self.fruit_mode_btn.config(state=tk.NORMAL, relief=tk.SUNKEN)
+                self.blue_block_mode_btn.config(state=tk.NORMAL, relief=tk.RAISED)
+                self.mode_status_var.set("当前模式: 水果分拣 (realsense_yolo_node)")
+                # 蓝方块抓取按钮禁用
+                self.pick_blue_block_btn.config(state=tk.DISABLED, bg="gray")
+                # 水果模式抓取按钮保持禁用, 等检测到物体后由 _update_detection_loop 启用
+                self.pick_btn.config(state=tk.DISABLED, bg="#4CAF50")
+                self.pick_two_btn.config(state=tk.DISABLED, bg="gray")
+                self.pick_graspnet_btn.config(state=tk.DISABLED, bg="#FF9800")
+
+        def _pick_blue_block(self):
+            """蓝方块抓取按钮回调: 从 latest_detection 提取蓝方块字段, 发送 sort_blue_block 命令。"""
+            d = self.latest_detection
+            if not d:
+                return messagebox.showwarning("无数据", "尚未收到蓝方块检测信息。")
+            # 蓝方块检测节点发布格式: {"detections": [{...}]}
+            detections = d.get('detections', [])
+            if not detections:
+                return messagebox.showwarning("未检测到", "当前未发现蓝方块。")
+            det = detections[0]
+            bc = det.get('base_coords', {})
+            if not bc or not all(k in bc for k in ('x', 'y', 'z')):
+                return messagebox.showerror("坐标缺失", "缺少 base_coords 字段, 无法发送抓取命令。")
+            bin_num = self.bin_var.get()
+            pp = {'x': round(float(bc['x']), 3),
+                  'y': round(float(bc['y']), 3),
+                  'z': round(float(bc['z']), 3)}
+            # 蓝方块专用字段 (从 /detection_info 缓存提取)
+            surface_z = det.get('surface_z_m')
+            block_w = det.get('block_width_m')
+            block_l = det.get('block_length_m')
+            block_h = det.get('block_height_m')
+            rot = det.get('block_rotation_deg')
+            depth_method = det.get('depth_method', '?')
+            # 确认对话框
+            size_str = ""
+            if all(v is not None for v in (block_l, block_w, block_h)):
+                size_str = (f"  尺寸(长×宽×高): {block_l*1000:.0f}×{block_w*1000:.0f}×{block_h*1000:.0f} mm\n")
+            surf_str = f"  顶面高度: {surface_z:.3f} m [{depth_method}]\n" if surface_z is not None else ""
+            rot_str = f"  旋转角: {rot:.1f}°\n" if rot is not None else ""
+            txt = (f"蓝方块抓取确认\n\nPick: blue_block (detected)\n"
+                   f"  坐标: ({pp['x']:.3f}, {pp['y']:.3f}, {pp['z']:.3f})\n"
+                   f"{surf_str}{size_str}{rot_str}\n"
+                   f"Place: 料框{bin_num} (关节空间预设点位)\n\n确定发送？")
+            if not messagebox.askyesno("确认蓝方块抓取", txt):
+                return
+            cmd = {
+                "cmd": "sort_blue_block",
+                "pick": pp,
+                "surface_z_m": surface_z,
+                "block_width_m": block_w,
+                "block_length_m": block_l,
+                "block_height_m": block_h,
+                "block_rotation_deg": rot,
+                "bin": bin_num,
+                "pick_name": "blue_block (detected)",
+                "place_name": f"料框{bin_num}",
+            }
+            sent_msg = f"蓝方块抓取指令已发送！\nblue_block -> 【料框{bin_num}】"
+            queue_msg = "蓝方块抓取任务已加入排队队列。"
+            if self.current_status == 'busy':
+                if messagebox.askyesno("忙碌", "加入排队队列？"):
+                    self.task_queue.append(cmd); self.refresh_queue_listbox()
+                    messagebox.showinfo("已加入", queue_msg)
+            else:
+                self.last_dispatch_time = time.time()
+                self.cmd_queue.put(cmd)
+                messagebox.showinfo("已发送", sent_msg)
+
+        def _dispatch_blue_block_sort_cmd(self, det, retry=False):
+            """构造蓝方块分拣命令并发送 (供自动分拣/外部调用使用)。
+            det: /detection_info 中 detections[0] 的 dict。
+            """
+            bc = det.get('base_coords', {})
+            if not bc or not all(k in bc for k in ('x', 'y', 'z')):
+                self._auto_sort_log("蓝方块 base_coords 缺失, 跳过")
+                return
+            bin_num = self.bin_var.get()
+            pp = {'x': round(float(bc['x']), 3),
+                  'y': round(float(bc['y']), 3),
+                  'z': round(float(bc['z']), 3)}
+            cmd = {
+                "cmd": "sort_blue_block",
+                "pick": pp,
+                "surface_z_m": det.get('surface_z_m'),
+                "block_width_m": det.get('block_width_m'),
+                "block_length_m": det.get('block_length_m'),
+                "block_height_m": det.get('block_height_m'),
+                "block_rotation_deg": det.get('block_rotation_deg'),
+                "bin": bin_num,
+                "pick_name": f"blue_block (auto-sort{'-retry' if retry else ''})",
+                "place_name": f"料框{bin_num}",
+            }
+            self.last_dispatch_time = time.time()
+            self.cmd_queue.put(cmd)
+            self._auto_sort_log(f"蓝方块分拣: →料框{bin_num} {'[重试]' if retry else ''}")
+
+        def _update_blue_block_detection_panel(self, det):
+            """更新蓝方块检测信息面板 (蓝方块模式专用字段)。
+            det: /detection_info 中 detections[0] 的 dict, 或 None (无检测)。
+            显示字段: 物块中心 XYZ (base) / 顶面高度 (标注 RANSAC/分位数) /
+                     尺寸 (长×宽×高) / 旋转角。
+            """
+            if det is None:
+                self.det_status_var.set(" 未检测到蓝方块")
+                for v in (self.det_obj, self.det_conf, self.det_meth,
+                          self.det_x, self.det_y, self.det_z,
+                          self.det_dia, self.det_dist):
+                    v.set(v.get().split(":")[0] + ": --")
+                # 禁用蓝方块抓取按钮
+                if not self._mode_switching and self.detection_mode == 'blue_block':
+                    self.pick_blue_block_btn.config(state=tk.DISABLED, bg="gray")
+                return
+            bc = det.get('base_coords', {})
+            surface_z = det.get('surface_z_m')
+            depth_method = det.get('depth_method', '?')
+            block_w = det.get('block_width_m')
+            block_l = det.get('block_length_m')
+            block_h = det.get('block_height_m')
+            rot = det.get('block_rotation_deg')
+            self.det_status_var.set(" 已检测到蓝方块")
+            self.det_obj.set(f"物体: {det.get('name', 'blue_block')}")
+            self.det_conf.set(f"置信度: {det.get('confidence', 0)*100:.2f}%")
+            # 方法字段: 标注 RANSAC / 分位数方法
+            if depth_method == 'ransac':
+                self.det_meth.set("方法: RANSAC 平面拟合")
+            elif depth_method == 'percentile_25':
+                self.det_meth.set("方法: 25% 分位数 (RANSAC 失败回退)")
+            else:
+                self.det_meth.set(f"方法: {depth_method}")
+            # 物块中心 XYZ (base 坐标系)
+            if bc and all(k in bc for k in ('x', 'y', 'z')):
+                self.det_x.set(f"  X: {bc['x']:.3f} m")
+                self.det_y.set(f"  Y: {bc['y']:.3f} m")
+                self.det_z.set(f"  Z: {bc['z']:.3f} m")
+            else:
+                self.det_x.set("  X: --"); self.det_y.set("  Y: --"); self.det_z.set("  Z: --")
+            # 直径行 → 改为显示顶面高度 (标注 RANSAC/分位数方法)
+            if surface_z is not None:
+                self.det_dia.set(f"顶面高度 (surface_z): {surface_z:.3f} m [{depth_method}]")
+            else:
+                self.det_dia.set("顶面高度: --")
+            # 距离行 → 改为显示尺寸 (长×宽×高) + 旋转角
+            if all(v is not None for v in (block_l, block_w, block_h)):
+                rot_str = f"  旋转: {rot:.1f}°" if rot is not None else ""
+                self.det_dist.set(f"尺寸(长×宽×高): {block_l*1000:.0f}×{block_w*1000:.0f}×{block_h*1000:.0f} mm{rot_str}")
+            elif rot is not None:
+                self.det_dist.set(f"旋转角: {rot:.1f}°")
+            else:
+                self.det_dist.set("尺寸: --")
+            # 启用蓝方块抓取按钮 (仅在非切换状态且 base_coords 有效时)
+            if not self._mode_switching and bc and all(k in bc for k in ('x', 'y', 'z')):
+                if not self.auto_sort_running:
+                    self.pick_blue_block_btn.config(state=tk.NORMAL, bg="#33CAE8")
 
         # ── 原有功能 ──
         def fetch_current_pose(self):
@@ -1023,6 +1389,7 @@ def main():
             for btn in (getattr(self, 'conveyor_on_btn', None), getattr(self, 'conveyor_off_btn', None),
                         getattr(self, 'pick_btn', None), getattr(self, 'pick_two_btn', None),
                         getattr(self, 'pick_graspnet_btn', None),
+                        getattr(self, 'pick_blue_block_btn', None),
                         getattr(self, 'qrun', None)):
                 if btn is not None:
                     try: btn.config(state=state)

@@ -115,8 +115,8 @@ D455 相机启动参数 SHALL 启用 spatial filter、temporal filter 和 hole-f
 
 #### Scenario: 桌面高度估算
 - **WHEN** 需要计算物块高度
-- **THEN** 在物块 bbox 外扩 20px 环形区域内取深度中位数作为桌面高度 `table_z`
-- **AND** 物块高度 `block_height = surface_z_m - table_z`
+- **THEN** 在物块 bbox 外扩 20px 环形区域内取深度中位数作为桌面高度 `table_z`（相机坐标系下，桌面距离相机较远，Z 值较大）
+- **AND** 物块高度 `block_height = table_z - surface_z_m`（相机系：桌面 Z 大、顶面 Z 小，相减为正高度）
 - **AND** 校验 `block_height` 在 0.008m~0.055m 范围内（1cm-5cm 容差）
 
 ### Requirement: 三维坐标计算与发布
@@ -150,6 +150,7 @@ D455 相机启动参数 SHALL 启用 spatial filter、temporal filter 和 hole-f
   }]
 }
 ```
+- **AND** `surface_z_m` 和 `centroid_base_z` 均为**基座坐标系**下的物块顶面高度（≈0.03m），内部相机系深度（≈0.57m）仅用于反投影计算，不对外发布
 
 ### Requirement: 蓝方块抓取流程
 auto_sorting_action.py SHALL 支持新命令 `sort_blue_block`，执行顶面中位抓取。
@@ -176,9 +177,9 @@ auto_sorting_action.py SHALL 支持新命令 `sort_blue_block`，执行顶面中
   - 失败时重试最多 2 次
 
 #### Scenario: 抓取成功判定
-- **WHEN** 夹爪闭合后读取 GripperStatus 反馈
-- **THEN** 如果夹爪实际闭合宽度 < `block_width_m * 0.7` → 抓取成功
-- **AND** 否则 → 抓取失败，释放夹爪，重试（最多 2 次）
+- **WHEN** 夹爪闭合后读取 GripperStatus 反馈（夹爪目标闭合宽度 = `block_width_m - 0.002m`）
+- **THEN** 如果夹爪实际闭合宽度 > `block_width_m * 0.7` → 物块在两指之间 → 抓取成功
+- **AND** 否则（夹爪空闭，宽度接近 0）→ 抓取失败，释放夹爪，重试（最多 2 次）
 
 ### Requirement: 分层姿态约束
 IK 求解 SHALL 使用分层回退策略，平衡求解率和姿态精度。

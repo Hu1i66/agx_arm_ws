@@ -1563,6 +1563,583 @@ class MoveItActionClient(Node):
         })
         self.status_pub.publish(msg)
 
+    # ====================================================================
+    # Task 2.1: 蓝方块分拣 (sort_blue_block)
+    # 顶面中位抓取 + 分层姿态约束 + 物块尺寸感知夹爪控制
+    # ====================================================================
+
+    def _compute_blue_block_pick_pose(self, pick, surface_z_m, block_height_m,
+                                       block_width_m, min_grasp_z, gripper_pick_z_offset):
+        """📐 计算蓝方块顶面中位抓取位姿 (Task 2.1)。
+
+        下降深度策略: 夹爪夹物块中部 (surface_z - height/2), 安全下限 MIN_GRASP_Z。
+        POSE_PICK.z = clamping_z + GRIPPER_PICK_Z_OFFSET (link6 原点到夹爪夹持点的 z 距离)。
+
+        Args:
+            pick: {'x','y','z'} 命令中的 pick 坐标 (base 系)
+            surface_z_m: 物块顶面高度 (base 系, 米)
+            block_height_m: 物块高度 (米)
+            block_width_m: 物块短边宽度 (米, 用于夹爪闭合目标)
+            min_grasp_z: 夹持点 z 安全下限 (米, 复用 MIN_GRASP_Z)
+            gripper_pick_z_offset: link6 原点到夹爪夹持点的 z 距离 (米, 复用 GRIPPER_PICK_Z_OFFSET)
+
+        Returns:
+            dict: {
+                'POSE_PICK': {'x','y','z'},         # link6 目标位姿 (base 系)
+                'POSE_PICK_UP': {'x','y','z'},      # 抬起 12cm
+                'clamping_z': float,                # 夹持点 z (米)
+                'gripper_close_width': float,       # 闭合目标宽度 (米) = block_width_m - 0.002
+            }
+        """
+        # 顶面中位抓取: clamping_z = surface_z - height/2 (物块中位高度, 基座坐标系)
+        clamping_z = float(surface_z_m) - float(block_height_m) / 2.0
+        # 安全下限 (复用 MIN_GRASP_Z)
+        if clamping_z < min_grasp_z:
+            self.get_logger().info(
+                f"⚠️ 蓝方块 clamping_z={clamping_z:.3f}m 低于安全下限 "
+                f"{min_grasp_z}m, 钳位至 {min_grasp_z}m (防碰台面)")
+            clamping_z = min_grasp_z
+
+        # POSE_PICK: link6 目标位姿 (夹持点 z + link6 偏置)
+        POSE_PICK = {
+            'x': float(pick['x']),
+            'y': float(pick['y']),
+            'z': clamping_z + gripper_pick_z_offset,
+        }
+        # POSE_PICK_UP: 抬起 12cm (脱离物块)
+        POSE_PICK_UP = POSE_PICK.copy()
+        POSE_PICK_UP['z'] += 0.12
+
+        # 夹爪闭合目标: block_width_m - 0.002m (比物块短边小 2mm, 确保夹紧)
+        gripper_close_width = max(0.0, float(block_width_m) - 0.002)
+
+        self.get_logger().info(
+            f"📐 蓝方块抓取位姿: surface_z={surface_z_m:.3f}m "
+            f"height={block_height_m:.3f}m → clamping_z={clamping_z:.3f}m "
+            f"link6_z={POSE_PICK['z']:.3f}m pick=({POSE_PICK['x']:.3f},{POSE_PICK['y']:.3f}) "
+            f"gripper_close={gripper_close_width*1000:.1f}mm")
+
+        return {
+            'POSE_PICK': POSE_PICK,
+            'POSE_PICK_UP': POSE_PICK_UP,
+            'clamping_z': clamping_z,
+            'gripper_close_width': gripper_close_width,
+        }
+
+    def _plan_blue_block_orientation(self, pose_pick, block_rotation_deg):
+        """📐 分层姿态约束预规划 (Task 2.1)。
+
+        分层回退策略, 平衡求解率和姿态精度:
+          第一层 (宽松垂直约束): RadialDownwardOri (复用 _build_pick_orientations_multi),
+                                IK 候选池复用现有 get_ik_solution (内部 500 采样 + 6000 游走,
+                                覆盖任务要求的 200 采样 + 50 游走),
+                                final_ze < 0.52 (Z轴偏离地心 <30°), 位置误差 <0.015m
+          第二层 (严格短轴对齐, 第一层失败时回退):
+                                从 block_rotation_deg 构建目标四元数 (夹爪 Y 轴/闭合方向对齐物块短边),
+                                IK 候选数量减少 (任务要求 50, 复用现有 solver),
+                                首位插入 PCA 短轴对齐朝向 + yaw 约束引导 (±10°/±20°),
+                                仍要求 final_ze < 0.52 和位置误差 <0.015m
+
+        Args:
+            pose_pick: {'x','y','z'} 目标位置 (base 系)
+            block_rotation_deg: 物块旋转角 (度, [0,180), 长边方向绕 Z 轴)
+
+        Returns:
+            active_ori (list [qx,qy,qz,qw]) 或 None (两层均失败)
+        """
+        # IK 不可用时回退到径向朝下姿态 (无验证)
+        if not self.enable_ik or self.ik_solver is None:
+            ori = self._build_pick_orientation(pose_pick)[0]
+            return [ori.x, ori.y, ori.z, ori.w]
+
+        target_pos = np.array([float(pose_pick['x']), float(pose_pick['y']), float(pose_pick['z'])])
+        initial_guess = None
+        if self.current_joints:
+            initial_guess = np.array([
+                self.current_joints.get(f'joint{i}', 0.0) for i in range(1, 7)
+            ])
+
+        # ═══════ 第一层: 宽松垂直约束 (RadialDownwardOri) ═══════
+        # 生成多个 yaw 候选姿态 (径向朝下 + 均匀 yaw 采样), 复用现有 IK 求解逻辑
+        self.get_logger().info("📐 蓝方块姿态预规划 - 第一层 (宽松垂直约束, RadialDownwardOri)")
+        layer1_quats = self._build_pick_orientations_multi(pose_pick, num_yaw_samples=8)
+        # _build_pick_orientations_multi 返回 [Quaternion], 转为 [x,y,z,w] list
+        layer1_ori_lists = []
+        for ori in layer1_quats:
+            if isinstance(ori, Quaternion):
+                layer1_ori_lists.append([ori.x, ori.y, ori.z, ori.w])
+            else:
+                layer1_ori_lists.append(list(ori))
+
+        for ori_list in layer1_ori_lists:
+            target_quat = np.array(ori_list)
+            ok, q_sol, err, comp_t = self.ik_solver.get_ik_solution(
+                target_pos, target_quat, initial_guess=initial_guess)
+            # 复用现有安全约束: final_pe < 0.015 且 final_ze < 0.52 (IK solver 内部已检查)
+            if ok and err < 0.015:
+                self.get_logger().info(
+                    f"✅ 第一层姿态求解成功: err={err:.4f} time={comp_t*1000:.1f}ms "
+                    f"(RadialDownwardOri, final_ze<0.52)")
+                return ori_list
+
+        self.get_logger().warn("⚠️ 第一层 (宽松垂直) 无有效解, 回退到第二层 (严格短轴对齐)")
+
+        # ═══════ 第二层: 严格短轴对齐 (从 block_rotation_deg 构建) ═══════
+        # 夹爪 Y 轴 (闭合方向) 对齐物块短边
+        # 物块长边方向 = block_rotation_deg (绕 Z 轴), 短边方向 = 长边 + 90°
+        self.get_logger().info(
+            f"📐 蓝方块姿态预规划 - 第二层 (严格短轴对齐, rotation={block_rotation_deg:.1f}°)")
+
+        z_axis = [0.0, 0.0, -1.0]
+        yaw_rad = math.radians(float(block_rotation_deg))
+        # 短边方向 = 长边 + 90°
+        short_axis_yaw = yaw_rad + math.pi / 2.0
+        y_axis = [math.cos(short_axis_yaw), math.sin(short_axis_yaw), 0.0]
+        # x = y × z (右手系: y × z = x)
+        x_axis = self._cross(y_axis, z_axis)
+        x_axis = self._normalize(x_axis)
+        y_axis = self._normalize(y_axis)
+        strict_quat = self._matrix_to_quaternion(x_axis, y_axis, z_axis)
+        strict_ori = [strict_quat.x, strict_quat.y, strict_quat.z, strict_quat.w]
+
+        # 首位插入 PCA 短轴对齐朝向 (从 _latest_detection 读取, 若有效)
+        # 视觉节点 blue_block_detector.py 发布格式: {"detections": [{"grasp_orientation": {"qx":..,"qy":..,"qz":..,"qw":..}}]}
+        layer2_ori_lists = []
+        latest_det = getattr(self, '_latest_detection', None)
+        if latest_det:
+            pca_ori = None
+            detections = latest_det.get('detections', [])
+            if detections and isinstance(detections, list):
+                pca_ori = detections[0].get('grasp_orientation')
+            else:
+                pca_ori = latest_det.get('grasp_orientation')
+            # 视觉节点发布 dict {qx,qy,qz,qw}, 转为 list
+            if isinstance(pca_ori, dict) and all(k in pca_ori for k in ('qx', 'qy', 'qz', 'qw')):
+                pca_list = [float(pca_ori['qx']), float(pca_ori['qy']),
+                            float(pca_ori['qz']), float(pca_ori['qw'])]
+                # 排除单位四元数 (视觉节点默认值 qx=qy=qz=0, qw=1, 非真实 PCA)
+                if abs(pca_list[0]) + abs(pca_list[1]) + abs(pca_list[2]) > 1e-6:
+                    layer2_ori_lists.append(pca_list)
+                    self.get_logger().info("📐 第二层: 首位插入 PCA 短轴对齐朝向 (来自视觉节点)")
+
+        # 严格短轴对齐朝向
+        layer2_ori_lists.append(strict_ori)
+        # yaw 约束引导: ±10°, ±20° 偏移 (松弛约束, 提高求解率)
+        for delta_deg in (10.0, -10.0, 20.0, -20.0):
+            delta_yaw = short_axis_yaw + math.radians(delta_deg)
+            y2 = [math.cos(delta_yaw), math.sin(delta_yaw), 0.0]
+            x2 = self._cross(y2, z_axis)
+            x2 = self._normalize(x2)
+            y2 = self._normalize(y2)
+            q2 = self._matrix_to_quaternion(x2, y2, z_axis)
+            layer2_ori_lists.append([q2.x, q2.y, q2.z, q2.w])
+
+        # 第二层 IK 候选数量减少 (任务要求 50, 复用现有 solver)
+        for ori_list in layer2_ori_lists:
+            target_quat = np.array(ori_list)
+            ok, q_sol, err, comp_t = self.ik_solver.get_ik_solution(
+                target_pos, target_quat, initial_guess=initial_guess)
+            if ok and err < 0.015:
+                self.get_logger().info(
+                    f"✅ 第二层姿态求解成功: err={err:.4f} time={comp_t*1000:.1f}ms "
+                    f"(严格短轴对齐, final_ze<0.52)")
+                return ori_list
+
+        self.get_logger().error("❌ 蓝方块姿态预规划: 两层均无有效解")
+        return None
+
+    def _execute_blue_block_sort(self, data, config):
+        """🟦 执行蓝方块分拣序列 (Task 2.1, step0-step9)。
+
+        完全复用现有 sort 序列结构和参数, 差异调整:
+          - step0:   开夹爪
+          - step0.5: 分层姿态预规划 (调用 _plan_blue_block_orientation)
+          - step1:   关节空间移动到 POSE_PICK_UP, continuous=True
+          - step2:   笛卡尔直线下降到 POSE_PICK, 禁用传送带碰撞 (复用 _set_bin_collision_allowed)
+          - step3:   闭合夹爪, 目标宽度 = block_width_m - 0.002m (不是 GRIPPER_GRAB=0)
+          - step4:   上提至 POSE_PICK_UP, continuous=True
+          - step4.5: 抓取成功判定 = 闭合宽度 < block_width_m * 0.7 (不是固定 5mm)
+          - step5-9: 关节空间移动到料框放置位置 + 释放 + 回待机位
+          - 碰撞检测恢复 (成功和错误路径均, 复用现有逻辑)
+          - 失败时重试最多 2 次 (复用现有重试逻辑)
+
+        Args:
+            data: 命令 JSON dict, 含 pick/surface_z_m/block_width_m/block_height_m/block_rotation_deg
+            config: 常量 dict {
+                'JOINT_STANDBY', 'JOINT_OBSERVE', 'BIN_JOINTS',
+                'GRIPPER_OPEN', 'GRIPPER_SETTLE_SEC',
+                'GRIPPER_PICK_Z_OFFSET', 'MIN_GRASP_Z', 'loop_count'
+            }
+
+        Returns:
+            dict: {'success': bool, 'cycle_id': str}
+        """
+        JOINT_STANDBY = config['JOINT_STANDBY']
+        JOINT_OBSERVE = config['JOINT_OBSERVE']
+        BIN_JOINTS = config['BIN_JOINTS']
+        GRIPPER_OPEN = config['GRIPPER_OPEN']
+        GRIPPER_SETTLE_SEC = config['GRIPPER_SETTLE_SEC']
+        GRIPPER_PICK_Z_OFFSET = config['GRIPPER_PICK_Z_OFFSET']
+        MIN_GRASP_Z = config['MIN_GRASP_Z']
+        loop_count = config.get('loop_count', 0)
+        MAX_BLUE_BLOCK_RETRIES = 2  # 蓝方块重试上限 (任务要求 2 次)
+
+        # ── 解析命令参数 ──
+        pick = data["pick"]
+        surface_z_m = float(data.get("surface_z_m", pick.get('z', 0.05)))
+        block_width_m = float(data.get("block_width_m", 0.03))
+        block_height_m = float(data.get("block_height_m", 0.02))
+        block_rotation_deg = float(data.get("block_rotation_deg", 0.0))
+        pick_id = data.get("pick_name", "blue_block (detected)")
+        cycle_id = str(data.get("cycle_id", ""))
+        try:
+            bin_num = int(data.get("bin", 1))
+        except (TypeError, ValueError):
+            bin_num = 1
+        if bin_num not in BIN_JOINTS:
+            self.get_logger().warn(f"⚠️ 蓝方块: 无效 bin={bin_num}, 默认使用料框1")
+            bin_num = 1
+        BIN_ABOVE_JOINTS, BIN_PLACE_JOINTS = BIN_JOINTS[bin_num]
+        place_id = f"料框{bin_num}"
+        obj_class = "blue_block"
+
+        # ── 计算抓取位姿 (顶面中位抓取) ──
+        pose_data = self._compute_blue_block_pick_pose(
+            pick, surface_z_m, block_height_m, block_width_m,
+            MIN_GRASP_Z, GRIPPER_PICK_Z_OFFSET)
+        POSE_PICK = pose_data['POSE_PICK']
+        POSE_PICK_UP = pose_data['POSE_PICK_UP']
+        gripper_close_width = pose_data['gripper_close_width']
+
+        print(f"\n\n====================== 第 {loop_count} 次分拣 [🟦蓝方块] "
+              f"(从 {pick_id} 到 {place_id}) ======================")
+
+        # 清空命令队列 (避免堆积)
+        while not self.cmd_queue.empty():
+            self.cmd_queue.get_nowait()
+
+        success = True
+        grasp_reached_ok = False
+        place_reached_ok = False
+        cycle_strategies = []
+        cycle_profiles = []
+        self.last_planning_profile_name = ''
+        self.last_planning_strategy = ''
+
+        for _ in range(1):
+            # 【第零步】 在前往途中或起点提前张开夹爪
+            self.operate_gripper(GRIPPER_OPEN, "蓝方块-张开夹爪(准备抓取)")
+            if self._check_emergency("blue_block-step0-张开夹爪"):
+                success = False; break
+
+            # ── step0.5: 分层姿态预规划 (第一层宽松垂直 → 第二层严格短轴对齐) ──
+            active_ori = self._plan_blue_block_orientation(POSE_PICK, block_rotation_deg)
+            if active_ori is None:
+                # 两层均失败: 返回 CONTROL_FAILED, 机械臂回待机位
+                self.get_logger().error("❌ 蓝方块姿态预规划失败 (两层均无解, CONTROL_FAILED), 回待机位")
+                self.move_arm_joint(JOINT_STANDBY, "蓝方块-姿态失败回待机位")
+                success = False; break
+
+            # 【第一步】 关节空间移动到 POSE_PICK_UP, continuous=True
+            if not self.move_arm_pose(POSE_PICK_UP, "蓝方块-抓取位上方过渡点",
+                                       continuous=True, planning_mode='normal',
+                                       preferred_orientation=active_ori):
+                success = False; break
+            if self.last_planning_strategy:
+                cycle_strategies.append(self.last_planning_strategy)
+            if self.last_planning_profile_name:
+                cycle_profiles.append(self.last_planning_profile_name)
+
+            # 记录抓取过渡点的关节角, 用于安全抬起
+            pick_up_joints = self.current_joints.copy() if self.current_joints else None
+            if self._check_emergency("blue_block-step1-上方过渡点"):
+                success = False; break
+
+            # ── 下降前禁用所有传送带碰撞体 (复用 _set_bin_collision_allowed) ──
+            self._set_bin_collision_allowed(allowed=True)
+
+            # ═══════ 抓取重试循环 (最多 MAX_BLUE_BLOCK_RETRIES 次) ═══════
+            grasp_ok = False
+            gw = gf = 0.0
+            reason = ""
+            for retry in range(MAX_BLUE_BLOCK_RETRIES):
+                if retry > 0:
+                    # ── 重试前准备: 回观察位 → 视觉刷新 → 重新规划姿态 ──
+                    self.get_logger().warn(
+                        f"🔄 蓝方块抓取重试 {retry+1}/{MAX_BLUE_BLOCK_RETRIES}...")
+                    self.operate_gripper(GRIPPER_OPEN, f"蓝方块-重试{retry+1}-张开夹爪")
+                    time.sleep(0.2)
+                    # 回观察位 (相机视野无遮挡, 蓝方块主要用命令参数坐标, 此处备用刷新)
+                    self.get_logger().info("📡 蓝方块重试: 回观察位...")
+                    self.move_arm_joint(JOINT_OBSERVE, f"蓝方块-重试{retry+1}-回观察位")
+                    time.sleep(1.0)
+                    # 重新规划姿态 (坐标未变, 但关节状态变了)
+                    active_ori = self._plan_blue_block_orientation(POSE_PICK, block_rotation_deg)
+                    if active_ori is None:
+                        self.get_logger().warn("⚠️ 蓝方块重试: 姿态预规划失败, 跳过本次重试")
+                        continue
+                    # 从观察位移到 POSE_PICK_UP
+                    if not self.move_arm_pose(POSE_PICK_UP, f"蓝方块-重试{retry+1}-上方过渡点",
+                                               continuous=False, planning_mode='normal',
+                                               preferred_orientation=active_ori):
+                        self.get_logger().warn("⚠️ 蓝方块重试: 上方过渡点移动失败, 跳过")
+                        continue
+                    pick_up_joints = self.current_joints.copy() if self.current_joints else None
+                    self._set_bin_collision_allowed(allowed=True)
+                    if self._check_emergency(f"blue_block-retry{retry+1}-上方过渡点"):
+                        success = False; break
+
+                # 【第二步】 笛卡尔直线下降到 POSE_PICK (禁用传送带碰撞)
+                # IK 关节空间优先 (固定 joint6), 笛卡尔兜底
+                descent_success = False
+                if self.enable_ik and self.ik_solver is not None:
+                    pick_orientations = [active_ori] + self._build_pick_orientations_multi(POSE_PICK)
+                    ik_ok, ik_joints = self.move_arm_via_ik(
+                        POSE_PICK, pick_orientations,
+                        "蓝方块-下降抓取 (IK关节空间)", continuous=True)
+                    if ik_ok:
+                        descent_success = True
+                        cycle_strategies.append('ik_joint_space')
+                        cycle_profiles.append('ik_solution')
+                        self.get_logger().info("✅ 蓝方块 IK 关节空间下降完成 (joint6 固定)")
+
+                if not descent_success:
+                    self.get_logger().info("🟡 蓝方块-IK失败, 回退到笛卡尔直线插补...")
+                    pose_pick_msg = self._create_pose(POSE_PICK, active_ori)
+                    if self.execute_cartesian_path(
+                            [pose_pick_msg],
+                            f"蓝方块-下降抓取 (直线插补,retry{retry+1})",
+                            fraction_threshold=0.50):
+                        descent_success = True
+
+                if not descent_success:
+                    self.get_logger().info("🟡 蓝方块-直线插补受限, 启动多路并发退避规划...")
+                    if not self.move_arm_cartesian(
+                            POSE_PICK, f"蓝方块-下降抓取 (退避规划,retry{retry+1})",
+                            continuous=True, preferred_orientation=active_ori,
+                            allow_position_only_fallback=True, planning_mode='descend'):
+                        continue  # 下降失败跳过本次重试
+                    if self.last_planning_strategy:
+                        cycle_strategies.append(self.last_planning_strategy)
+                    if self.last_planning_profile_name:
+                        cycle_profiles.append(self.last_planning_profile_name)
+
+                if self._check_emergency(f"blue_block-step2-下降抓取,retry{retry+1}"):
+                    success = False; break
+
+                # 【第三步】 闭合夹爪 — 目标宽度 = block_width_m - 0.002m (不是 GRIPPER_GRAB=0)
+                self._pre_grasp_width = (
+                    self._latest_gripper_status.width
+                    if self._latest_gripper_status is not None else None
+                )
+                self.operate_gripper(
+                    gripper_close_width,
+                    f"蓝方块-闭合夹爪(目标宽度={gripper_close_width*1000:.1f}mm)")
+                time.sleep(GRIPPER_SETTLE_SEC)
+                time.sleep(0.05)  # planning_scene 更新
+                if self._check_emergency(f"blue_block-step3-闭合夹爪,retry{retry+1}"):
+                    success = False; break
+
+                # 【第四步】 上提至 POSE_PICK_UP, continuous=True (途径点, 不停留)
+                _lift_ok = False
+                if pick_up_joints:
+                    sorted_joints = [pick_up_joints[f'joint{i}'] for i in range(1, 7)]
+                    if self.move_arm_joint(sorted_joints, "蓝方块-抬起→夹取上方 (途径点)", continuous=True):
+                        _lift_ok = True
+                    else:
+                        self.get_logger().warn("⚠️ 蓝方块-抬起(关节空间)失败(-2), 回退到笛卡尔")
+                if not _lift_ok:
+                    POSE_LIFT = POSE_PICK.copy()
+                    POSE_LIFT['z'] = POSE_PICK_UP['z']
+                    _lift_pose_msg = self._create_pose(POSE_LIFT, active_ori)
+                    if self.execute_cartesian_path([_lift_pose_msg], "蓝方块-抬起脱离 (直线插补)", fraction_threshold=0.50):
+                        _lift_ok = True
+                    elif not self.move_arm_cartesian(
+                            POSE_LIFT, "蓝方块-抬起脱离 (退避规划)",
+                            continuous=True, preferred_orientation=active_ori,
+                            allow_position_only_fallback=True, planning_mode='retreat'):
+                        continue  # 抬起失败跳过本次重试
+                    if self.last_planning_strategy:
+                        cycle_strategies.append(self.last_planning_strategy)
+                    if self.last_planning_profile_name:
+                        cycle_profiles.append(self.last_planning_profile_name)
+                grasp_reached_ok = True
+                if self._check_emergency(f"blue_block-step4-抬起,retry{retry+1}"):
+                    success = False; break
+
+                # 【第四步半】 抓取成功检测
+                # 判定逻辑: 夹爪目标闭合宽度 = block_width_m - 0.002 (略小于物块宽度)
+                #   - 抓到物块: 物块阻止夹爪完全闭合, 实际宽度 ≈ block_width_m
+                #   - 没抓到: 夹爪完全闭合, 宽度 ≈ 0
+                # 因此: width > block_width_m * 0.7 → 物块在两指之间 → 成功
+                #       width < block_width_m * 0.7 → 夹爪空闭 → 失败
+                time.sleep(0.1)  # 等待夹爪宽度稳定
+                rclpy.spin_once(self, timeout_sec=0.1)
+                if self._latest_gripper_status is not None:
+                    gw = self._latest_gripper_status.width
+                    gf = self._latest_gripper_status.force
+                else:
+                    gw, gf = 0.0, 0.0
+                success_threshold = block_width_m * 0.7
+                if gw > success_threshold:
+                    grasp_ok = True
+                    reason = "blue_block_success"
+                else:
+                    grasp_ok = False
+                    reason = "blue_block_empty"
+                self.get_logger().info(
+                    f"🔍 蓝方块抓取检测 (retry {retry+1}/{MAX_BLUE_BLOCK_RETRIES}): "
+                    f"success={grasp_ok} width={gw*1000:.1f}mm "
+                    f"force={gf:.2f}N threshold={success_threshold*1000:.1f}mm "
+                    f"(width>{success_threshold*1000:.1f}mm→成功) reason={reason}")
+                self._publish_grasp_status(grasp_ok, gw, gf, reason)
+                if self._check_emergency(f"blue_block-step4.5-抓取检测,retry{retry+1}"):
+                    success = False; break
+
+                if grasp_ok:
+                    self.get_logger().info(
+                        f"✅ 蓝方块抓取成功 (retry {retry+1}/{MAX_BLUE_BLOCK_RETRIES})")
+                    break  # 成功! 跳出重试循环
+
+                if retry < MAX_BLUE_BLOCK_RETRIES - 1:
+                    self.get_logger().warn(
+                        f"⚠️ 蓝方块抓取失败 (retry {retry+1}/{MAX_BLUE_BLOCK_RETRIES}, "
+                        f"reason={reason}), 准备重试...")
+                    continue
+
+            # ═══════ 重试循环结束 ═══════
+
+            if not grasp_ok:
+                self.get_logger().error(
+                    f"❌ 蓝方块 {MAX_BLUE_BLOCK_RETRIES}次抓取全部失败 "
+                    f"(最后reason={reason}), 跳过本轮")
+                self.operate_gripper(GRIPPER_OPEN, "蓝方块-重试耗尽-张开夹爪")
+                self.move_arm_joint(JOINT_STANDBY, "蓝方块-重试耗尽-回待机位")
+                if self._check_emergency("blue_block-retry_exhausted-回待机位"):
+                    pass  # 已安全停机
+                success = False; break
+
+            # 【第五步】 关节空间到料框上方 (需稳定后再下降)
+            # ⚠️ continuous=False: BIN_ABOVE完成后等0.15s稳定, 否则BIN_PLACE起点偏差→-4
+            self._set_bin_collision_allowed(allowed=True)
+            if not self.move_arm_joint(BIN_ABOVE_JOINTS, f"蓝方块-移动到{place_id}上方 (途径点)", continuous=False):
+                success = False; break
+            if self._check_emergency("blue_block-step5-料框上方"):
+                success = False; break
+
+            # 【第六步】 关节空间到料框放置位
+            if not self.move_arm_joint(BIN_PLACE_JOINTS, f"蓝方块-移动到{place_id}放置位 (关节空间)", continuous=True):
+                success = False; break
+            place_reached_ok = True
+            if self._check_emergency("blue_block-step6-料框放置位"):
+                success = False; break
+
+            # 【第七步】 松开夹爪释放物品
+            self.operate_gripper(GRIPPER_OPEN, f"蓝方块-松开夹爪(在{place_id}放置位释放)")
+            time.sleep(GRIPPER_SETTLE_SEC)
+            if self._check_emergency("blue_block-step7-松开夹爪"):
+                success = False; break
+
+            # 【第八步】 关节空间回到料框上方 (抬起脱离放置位, 途径点)
+            if not self.move_arm_joint(BIN_ABOVE_JOINTS, f"蓝方块-从{place_id}放置位抬起 (途径点)", continuous=True):
+                success = False; break
+            if self._check_emergency("blue_block-step8-料框抬起"):
+                success = False; break
+
+            # 【第九步】 关节空间回到待机位 (等待下一次抓取)
+            if not self.move_arm_joint(JOINT_STANDBY, "蓝方块-回到待机位 (关节空间)", continuous=True):
+                success = False; break
+            if self._check_emergency("blue_block-step9-回待机位"):
+                success = False; break
+
+        # ── 碰撞检测恢复 (成功和错误路径均) ──
+        final_strategy = 'cartesian_only'
+        if 'ik_joint_space' in cycle_strategies:
+            final_strategy = 'ik_joint_space'
+        elif 'free_yaw' in cycle_strategies:
+            final_strategy = 'free_yaw'
+        elif 'relaxed' in cycle_strategies:
+            final_strategy = 'relaxed'
+        elif 'direct' in cycle_strategies:
+            final_strategy = 'direct'
+        elif 'position_only' in cycle_strategies:
+            final_strategy = 'position_only'
+
+        if not success:
+            # ── 急停锁定: 跳过自动回待机位, 等待复位 ──
+            if self._emergency_flag and self._emergency_req_type == "estop":
+                self.get_logger().error(
+                    "⛔ 急停锁定中, 跳过自动退回. 按【复位】按钮回待机位.")
+                status_msg = String(); status_msg.data = 'estop'
+                self.status_pub.publish(status_msg)
+                self.get_logger().info("⏳ 等待复位信号...")
+                while rclpy.ok() and self._emergency_flag:
+                    rclpy.spin_once(self, timeout_sec=0.2)
+                    if self._emergency_req_type == "reset":
+                        self._check_emergency("blue_block-error_handler-reset")
+                        break
+                return {'success': False, 'cycle_id': cycle_id}
+
+            self.get_logger().info("⚠️ 蓝方块执行失败！启动自动退回防护...")
+            status_msg = String(); status_msg.data = 'error'
+            self.status_pub.publish(status_msg)
+            result_msg = String()
+            result_msg.data = json.dumps({
+                'cycle_success': 0,
+                'cycle_id': cycle_id,
+                'grasp_reached_ok': int(grasp_reached_ok),
+                'place_reached_ok': int(place_reached_ok),
+                'planning_strategy': final_strategy,
+                'planning_profile': cycle_profiles[-1] if cycle_profiles else '',
+                'planning_profiles': cycle_profiles,
+                'block_width_m': block_width_m,
+                'gripper_close_target': round(gripper_close_width, 4),
+            }, ensure_ascii=False)
+            self.cycle_result_pub.publish(result_msg)
+
+            self.operate_gripper(GRIPPER_OPEN, "蓝方块-防碰撞提前张开夹爪")
+            self.move_arm_joint(JOINT_STANDBY, "蓝方块-自动回到待机位")
+
+            # ── 发布机械臂状态 (失败) ──
+            self._publish_robot_status(
+                success=False, cargo_type=obj_class, confidence=0.95,
+                source_pos_dict={"x": float(POSE_PICK['x']), "y": float(POSE_PICK['y']),
+                                 "z": float(POSE_PICK['z'])},
+                target_joints=BIN_PLACE_JOINTS, grasp_ok=False, error_code=99)
+
+            # 安全回到待机位后恢复碰撞检测 (无论回待机位是否成功都恢复)
+            self._set_bin_collision_allowed(allowed=False)
+            self.operate_gripper(GRIPPER_OPEN, "蓝方块-张开夹爪(待机)")
+            time.sleep(0.5)
+            return {'success': False, 'cycle_id': cycle_id}
+
+        # 成功完成分拣后恢复碰撞检测
+        self._set_bin_collision_allowed(allowed=False)
+
+        # ── 发布机械臂状态 (成功) ──
+        self._publish_robot_status(
+            success=True, cargo_type=obj_class, confidence=0.95,
+            source_pos_dict={"x": float(POSE_PICK['x']), "y": float(POSE_PICK['y']),
+                             "z": float(POSE_PICK['z'])},
+            target_joints=BIN_PLACE_JOINTS, grasp_ok=True, error_code=0)
+
+        print(f"🎉 第 {loop_count} 次蓝方块分拣顺利完成！休整一下...")
+        result_msg = String()
+        result_msg.data = json.dumps({
+            'cycle_success': 1,
+            'cycle_id': cycle_id,
+            'grasp_reached_ok': int(grasp_reached_ok),
+            'place_reached_ok': int(place_reached_ok),
+            'planning_strategy': final_strategy,
+            'planning_profile': cycle_profiles[-1] if cycle_profiles else '',
+            'planning_profiles': cycle_profiles,
+            'block_width_m': block_width_m,
+            'gripper_close_target': round(gripper_close_width, 4),
+        }, ensure_ascii=False)
+        self.cycle_result_pub.publish(result_msg)
+        time.sleep(0.5)
+        return {'success': True, 'cycle_id': cycle_id}
+
 
 def main():
     rclpy.init()
@@ -2234,6 +2811,26 @@ def main():
                 }, ensure_ascii=False)
                 node.cycle_result_pub.publish(result_msg)
                 time.sleep(0.5)
+
+            elif data.get("cmd") == "sort_blue_block":
+                # 🟦 蓝方块分拣 (Task 2.1): 顶面中位抓取 + 分层姿态约束
+                # 命令 JSON: {cmd, pick, surface_z_m, block_width_m, block_length_m,
+                #             block_height_m, block_rotation_deg}
+                node.is_busy = True
+                status_msg.data = 'busy'
+                node.status_pub.publish(status_msg)
+                loop_count += 1
+                blue_block_config = {
+                    'JOINT_STANDBY': JOINT_STANDBY,
+                    'JOINT_OBSERVE': JOINT_OBSERVE,
+                    'BIN_JOINTS': BIN_JOINTS,
+                    'GRIPPER_OPEN': GRIPPER_OPEN,
+                    'GRIPPER_SETTLE_SEC': GRIPPER_SETTLE_SEC,
+                    'GRIPPER_PICK_Z_OFFSET': GRIPPER_PICK_Z_OFFSET,
+                    'MIN_GRASP_Z': MIN_GRASP_Z,
+                    'loop_count': loop_count,
+                }
+                node._execute_blue_block_sort(data, blue_block_config)
 
     except KeyboardInterrupt:
         print("\n⏹️ 收到 Ctrl+C，正在复位机械臂...")

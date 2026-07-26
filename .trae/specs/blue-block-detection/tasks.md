@@ -13,53 +13,53 @@
 
 ## Phase 1: 视觉节点开发
 
-- [ ] Task 1.1: 创建 blue_block_detector.py 基础框架
-  - [ ] 创建 ROS2 节点 `blue_block_detector`，继承 Node
-  - [ ] 订阅 `/camera/camera/color/image_raw`、`/camera/camera/aligned_depth_to_color/image_raw`、`/camera/camera/color/camera_info`
-  - [ ] 发布 `/detection_info`（String, JSON）、`/yolo/annotated_image/compressed`（CompressedImage）
-  - [ ] 使用 `/home/lxf/orange_dataset/.venv` Python 环境
+- [x] Task 1.1: 创建 blue_block_detector.py 基础框架
+  - [x] 创建 ROS2 节点 `blue_block_detector`，继承 Node
+  - [x] 订阅 `/camera/camera/color/image_raw`、`/camera/camera/aligned_depth_to_color/image_raw`、`/camera/camera/color/camera_info`
+  - [x] 发布 `/detection_info`（String, JSON）、`/yolo/annotated_image/compressed`（CompressedImage）
+  - [x] 使用 `/home/lxf/orange_dataset/.venv` Python 环境
 
-- [ ] Task 1.2: 实现 HSV 颜色分割 + minAreaRect 检测
-  - [ ] RGB → HSV 转换，蓝色掩膜提取（H∈[95,125], S∈[80,255], V∈[50,255]）
-  - [ ] 形态学处理（开运算 + 闭运算）+ 面积滤波
-  - [ ] `cv2.findContours` + `cv2.minAreaRect` 获取旋转矩形
-  - [ ] 多物块筛选（面积最大优先）
-  - [ ] EMA 滤波（α=0.25）帧间平滑
-  - [ ] 标注图像绘制（旋转矩形 + 中心点），发布到 `/yolo/annotated_image/compressed`
+- [x] Task 1.2: 实现 HSV 颜色分割 + minAreaRect 检测
+  - [x] RGB → HSV 转换，蓝色掩膜提取（H∈[95,125], S∈[80,255], V∈[50,255]）
+  - [x] 形态学处理（开运算 + 闭运算）+ 面积滤波
+  - [x] `cv2.findContours` + `cv2.minAreaRect` 获取旋转矩形
+  - [x] 多物块筛选（面积最大优先）
+  - [x] EMA 滤波（α=0.25）帧间平滑
+  - [x] 标注图像绘制（旋转矩形 + 中心点），发布到 `/yolo/annotated_image/compressed`
 
-- [ ] Task 1.3: 实现 RANSAC 平面拟合深度估计
-  - [ ] 从 minAreaRect 提取收缩后 ROI，载入对齐深度图
-  - [ ] 有效深度过滤 → 反投影为 3D 点云（相机坐标系）
-  - [ ] Open3D `segment_plane(distance_threshold=0.005)` 拟合平面
-  - [ ] 法向量校验（c > 0.7）+ inlier 比例校验（≥ 30%）
-  - [ ] inliers Z 中位数作为 surface_z_m
-  - [ ] 失败回退到 25% 分位数统计
+- [x] Task 1.3: 实现 RANSAC 平面拟合深度估计
+  - [x] 从 minAreaRect 提取收缩后 ROI，载入对齐深度图
+  - [x] 有效深度过滤 → 反投影为 3D 点云（相机坐标系）
+  - [x] Open3D `segment_plane(distance_threshold=0.005)` 拟合平面
+  - [x] 法向量校验（c > 0.7）+ inlier 比例校验（≥ 30%）
+  - [x] inliers Z 中位数作为 surface_z_m
+  - [x] 失败回退到 25% 分位数统计
 
-- [ ] Task 1.4: 实现物块高度估算与三维坐标计算
-  - [ ] bbox 外扩环形区域桌面深度中位数提取
-  - [ ] `block_height = surface_z_m - table_z` + 范围校验
-  - [ ] 像素中心 → 相机坐标系（用 surface_z_m 而非单点深度）
-  - [ ] 相机坐标系 → 基坐标系（T_cam_to_base + calibration offsets）
-  - [ ] 组装 JSON 并发布到 `/detection_info`
+- [x] Task 1.4: 实现物块高度估算与三维坐标计算
+  - [x] bbox 外扩环形区域桌面深度中位数提取
+  - [x] `block_height = table_z - surface_z_m`（相机系符号修正）+ 范围校验
+  - [x] 像素中心 → 相机坐标系（用 surface_z_m 而非单点深度）
+  - [x] 相机坐标系 → 基坐标系（T_cam_to_base + calibration offsets）
+  - [x] 组装 JSON 并发布到 `/detection_info`
 
 ## Phase 2: 抓取集成
 
-- [ ] Task 2.1: auto_sorting_action.py 新增 sort_blue_block 流程
-  - [ ] 新增 `sort_blue_block` 命令解析（从 `/sorting_cmds` 提取 field）
-  - [ ] 实现顶面中位抓取下降深度计算：`clamping_z = surface_z - height/2`
-  - [ ] 实现分层姿态约束：第一层宽松垂直 → 第二层短轴对齐回退
-  - [ ] 实现蓝方块抓取序列（step0-step9）
-  - [ ] 夹爪开合宽度 = `block_width_m - 0.002m`
-  - [ ] 抓取成功判定：闭合宽度 < `block_width_m * 0.7`
-  - [ ] 失败重试最多 2 次
-  - [ ] 碰撞检测禁用/恢复（复用现有逻辑）
+- [x] Task 2.1: auto_sorting_action.py 新增 sort_blue_block 流程
+  - [x] 新增 `sort_blue_block` 命令解析（从 `/sorting_cmds` 提取 field）
+  - [x] 实现顶面中位抓取下降深度计算：`clamping_z = surface_z - height/2`
+  - [x] 实现分层姿态约束：第一层宽松垂直 → 第二层短轴对齐回退
+  - [x] 实现蓝方块抓取序列（step0-step9）
+  - [x] 夹爪开合宽度 = `block_width_m - 0.002m`
+  - [x] 抓取成功判定：闭合宽度 > `block_width_m * 0.7`（修正方向：宽度大说明物块在两指间）
+  - [x] 失败重试最多 2 次
+  - [x] 碰撞检测禁用/恢复（复用现有逻辑）
 
-- [ ] Task 2.2: sorting_gui_client.py 新增蓝方块模式
-  - [ ] 新增"蓝方块分拣"按钮（蓝色背景 #33CAE8）+ "水果分拣"切换按钮
-  - [ ] 模式切换逻辑：停止/启动对应视觉节点（通过 ROS worker 子进程，避免 fork）
-  - [ ] 蓝方块检测结果显示面板（XYZ、尺寸、旋转角、深度方法）
-  - [ ] 手动抓取触发：发送 `sort_blue_block` 命令到 `/sorting_cmds`
-  - [ ] 与水果模式互斥（同一时间只有一个视觉节点运行）
+- [x] Task 2.2: sorting_gui_client.py 新增蓝方块模式
+  - [x] 新增"蓝方块分拣"按钮（蓝色背景 #33CAE8）+ "水果分拣"切换按钮
+  - [x] 模式切换逻辑：停止/启动对应视觉节点（通过 ROS worker 子进程，避免 fork）
+  - [x] 蓝方块检测结果显示面板（XYZ、尺寸、旋转角、深度方法）
+  - [x] 手动抓取触发：发送 `sort_blue_block` 命令到 `/sorting_cmds`
+  - [x] 与水果模式互斥（同一时间只有一个视觉节点运行）
 
 ## Phase 3: 精度调优与测试验证
 
