@@ -1667,8 +1667,9 @@ class MoveItActionClient(Node):
 
         # ═══════ 第一层: 宽松垂直约束 (RadialDownwardOri) ═══════
         # 生成多个 yaw 候选姿态 (径向朝下 + 均匀 yaw 采样), 复用现有 IK 求解逻辑
+        # 注: 增加 yaw 样本到 16 (原 8), 放宽 err 到 0.020 (原 0.015), 提高求解率
         self.get_logger().info("📐 蓝方块姿态预规划 - 第一层 (宽松垂直约束, RadialDownwardOri)")
-        layer1_quats = self._build_pick_orientations_multi(pose_pick, num_yaw_samples=8)
+        layer1_quats = self._build_pick_orientations_multi(pose_pick, num_yaw_samples=16)
         # _build_pick_orientations_multi 返回 [Quaternion], 转为 [x,y,z,w] list
         layer1_ori_lists = []
         for ori in layer1_quats:
@@ -1681,8 +1682,8 @@ class MoveItActionClient(Node):
             target_quat = np.array(ori_list)
             ok, q_sol, err, comp_t = self.ik_solver.get_ik_solution(
                 target_pos, target_quat, initial_guess=initial_guess)
-            # 复用现有安全约束: final_pe < 0.015 且 final_ze < 0.52 (IK solver 内部已检查)
-            if ok and err < 0.015:
+            # 复用现有安全约束: final_ze < 0.52 (IK solver 内部已检查), 放宽位置误差到 0.020
+            if ok and err < 0.020:
                 self.get_logger().info(
                     f"✅ 第一层姿态求解成功: err={err:.4f} time={comp_t*1000:.1f}ms "
                     f"(RadialDownwardOri, final_ze<0.52)")
