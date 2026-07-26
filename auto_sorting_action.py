@@ -1854,6 +1854,10 @@ class MoveItActionClient(Node):
         # 桌面(传送带台面)在 z≈-0.015m, 蓝方块中位 z≈0.003m (3cm 物块)
         # 设 0.0m: 比桌面高 15mm, 夹爪手指有足够离地间隙
         MIN_GRASP_Z = 0.0
+        # 蓝方块专用 Z 偏移: FK 实测 gripper_link1/2 在 link6 下方 135.5mm
+        # (非水果模式的 64mm). 用 0.1355m 让手指对齐物块顶面, 避免触碰台面.
+        # FK 诊断: link6_z=0.0998 → gripper_link1/2_z=-0.0357, 距离=0.1355m
+        GRIPPER_PICK_Z_OFFSET = 0.1355
         loop_count = config.get('loop_count', 0)
         MAX_BLUE_BLOCK_RETRIES = 2  # 蓝方块重试上限 (任务要求 2 次)
 
