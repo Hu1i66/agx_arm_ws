@@ -1896,27 +1896,30 @@ class MoveItActionClient(Node):
                         success = False; break
 
                 # 【第二步】 笛卡尔直线下降到 POSE_PICK (禁用传送带碰撞)
-                # IK 关节空间优先 (固定 joint6), 笛卡尔兜底
+                # 蓝方块专用: 笛卡尔直线优先 (垂直下降, 避免关节空间"扫"向目标戳台面)
                 descent_success = False
-                if self.enable_ik and self.ik_solver is not None:
-                    pick_orientations = [active_ori] + self._build_pick_orientations_multi(POSE_PICK)
-                    ik_ok, ik_joints = self.move_arm_via_ik(
-                        POSE_PICK, pick_orientations,
-                        "蓝方块-下降抓取 (IK关节空间)", continuous=True)
-                    if ik_ok:
-                        descent_success = True
-                        cycle_strategies.append('ik_joint_space')
-                        cycle_profiles.append('ik_solution')
-                        self.get_logger().info("✅ 蓝方块 IK 关节空间下降完成 (joint6 固定)")
+                pose_pick_msg = self._create_pose(POSE_PICK, active_ori)
+                if self.execute_cartesian_path(
+                        [pose_pick_msg],
+                        f"蓝方块-下降抓取 (笛卡尔直线,retry{retry+1})",
+                        fraction_threshold=0.50):
+                    descent_success = True
+                    cycle_strategies.append('cartesian_line')
+                    cycle_profiles.append('cartesian')
+                    self.get_logger().info("✅ 蓝方块笛卡尔直线下降完成")
 
                 if not descent_success:
-                    self.get_logger().info("🟡 蓝方块-IK失败, 回退到笛卡尔直线插补...")
-                    pose_pick_msg = self._create_pose(POSE_PICK, active_ori)
-                    if self.execute_cartesian_path(
-                            [pose_pick_msg],
-                            f"蓝方块-下降抓取 (直线插补,retry{retry+1})",
-                            fraction_threshold=0.50):
-                        descent_success = True
+                    self.get_logger().info("🟡 蓝方块-笛卡尔受限, 回退到 IK 关节空间...")
+                    if self.enable_ik and self.ik_solver is not None:
+                        pick_orientations = [active_ori] + self._build_pick_orientations_multi(POSE_PICK)
+                        ik_ok, ik_joints = self.move_arm_via_ik(
+                            POSE_PICK, pick_orientations,
+                            "蓝方块-下降抓取 (IK关节空间兜底)", continuous=True)
+                        if ik_ok:
+                            descent_success = True
+                            cycle_strategies.append('ik_joint_space')
+                            cycle_profiles.append('ik_solution')
+                            self.get_logger().info("✅ 蓝方块 IK 关节空间下降完成 (兜底)")
 
                 if not descent_success:
                     self.get_logger().info("🟡 蓝方块-直线插补受限, 启动多路并发退避规划...")
