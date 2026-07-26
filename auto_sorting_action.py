@@ -1665,45 +1665,63 @@ class MoveItActionClient(Node):
                 self.current_joints.get(f'joint{i}', 0.0) for i in range(1, 7)
             ])
 
-        # ═══════ 第一层: 宽松垂直约束 (主轴朝向优先) ═══════
-        # 蓝方块专用: 优先尝试 0°/90°/180°/270° 主轴朝向 (夹侧面, 避免夹棱边)
-        # 立方体四个侧面对称, 主轴朝向确保夹爪 Y 轴(闭合方向)对齐侧面
-        # 如果主轴朝向都失败, 再用径向朝向 + 均匀 yaw 采样
-        self.get_logger().info("📐 蓝方块姿态预规划 - 第一层 (主轴朝向优先, RadialDownwardOri)")
+        # ═══════ 第一层: 物块旋转角对齐 (从 block_rotation_deg 计算) ═══════
+        # 蓝方块专用: 根据视觉检测的物块旋转角规划夹爪朝向
+        # 物块长边方向 = block_rotation_deg, 短边方向 = 长边 + 90°
+        # 夹爪 Y 轴 (闭合方向) 对齐短边方向, 确保夹住侧面而非棱边
+        # 生成候选: 目标朝向 + 90° 倍数 (立方体侧面对称) + ±10°/±20° 微调
+        self.get_logger().info(
+            f"📐 蓝方块姿态预规划 - 第一层 (物块旋转角对齐, rotation={block_rotation_deg:.1f}°)")
 
-        # 1. 生成 4 个主轴朝向 (0°/90°/180°/270°), 优先尝试
         z_axis = [0.0, 0.0, -1.0]
-        principal_ori_lists = []
-        for yaw_deg in [0, 90, 180, 270]:
-            yaw_rad = math.radians(yaw_deg)
-            x_axis = [math.cos(yaw_rad), math.sin(yaw_rad), 0.0]
-            y_axis = self._cross(z_axis, x_axis)
+        # 短边方向 = 长边 + 90° (夹爪 Y 轴对齐短边)
+        short_axis_yaw = math.radians(float(block_rotation_deg)) + math.pi / 2.0
+
+        # 生成候选朝向列表:
+        # 1. 目标朝向 (短边方向) + 90° 倍数 (立方体侧面对称, 4 个等价方向)
+        # 2. 每个方向 ±10°/±20° 微调 (适应旋转角检测误差)
+        candidate_yaws = []
+        for base_yaw in [short_axis_yaw, short_axis_yaw + math.pi/2,
+                         short_axis_yaw + math.pi, short_axis_yaw + 3*math.pi/2]:
+            for delta in [0.0, math.radians(10), math.radians(-10),
+                          math.radians(20), math.radians(-20)]:
+                yaw = base_yaw + delta
+                # 归一化到 [0, 2π)
+                yaw = yaw % (2 * math.pi)
+                if yaw not in candidate_yaws:
+                    candidate_yaws.append(yaw)
+
+        # 构建朝向四元数列表 (夹爪 Y 轴 = 候选 yaw 方向)
+        ori_lists = []
+        for yaw in candidate_yaws:
+            # Y 轴方向 (闭合方向, 对齐物块短边)
+            y_axis = [math.cos(yaw), math.sin(yaw), 0.0]
+            # X 轴 = Y × Z (右手系)
+            x_axis = self._cross(y_axis, z_axis)
+            x_axis = self._normalize(x_axis)
             y_axis = self._normalize(y_axis)
             q = self._matrix_to_quaternion(x_axis, y_axis, z_axis)
-            principal_ori_lists.append([q.x, q.y, q.z, q.w])
+            ori_lists.append([q.x, q.y, q.z, q.w])
 
-        # 2. 生成径向朝向 + 均匀 yaw 采样 (兜底候选)
+        # 兜底: 径向朝向 + 均匀 yaw 采样 (如果旋转角对齐全部失败)
         layer1_quats = self._build_pick_orientations_multi(pose_pick, num_yaw_samples=16)
-        layer1_ori_lists = []
         for ori in layer1_quats:
             if isinstance(ori, Quaternion):
-                layer1_ori_lists.append([ori.x, ori.y, ori.z, ori.w])
+                ori_lists.append([ori.x, ori.y, ori.z, ori.w])
             else:
-                layer1_ori_lists.append(list(ori))
+                ori_lists.append(list(ori))
 
-        # 合并: 主轴朝向优先 + 径向/yaw 兜底
-        all_ori_lists = principal_ori_lists + layer1_ori_lists
-
-        for idx, ori_list in enumerate(all_ori_lists):
+        rotation_aligned_count = len(candidate_yaws)
+        for idx, ori_list in enumerate(ori_lists):
             target_quat = np.array(ori_list)
             ok, q_sol, err, comp_t = self.ik_solver.get_ik_solution(
                 target_pos, target_quat, initial_guess=initial_guess)
             # 复用现有安全约束: final_ze < 0.52 (IK solver 内部已检查), 放宽位置误差到 0.020
             if ok and err < 0.020:
-                src = "主轴" if idx < 4 else "径向/yaw"
+                src = "旋转角对齐" if idx < rotation_aligned_count else "径向/yaw兜底"
                 self.get_logger().info(
                     f"✅ 第一层姿态求解成功: err={err:.4f} time={comp_t*1000:.1f}ms "
-                    f"({src}朝向, final_ze<0.52)")
+                    f"({src}, final_ze<0.52)")
                 return ori_list
 
         self.get_logger().warn("⚠️ 第一层 (宽松垂直) 无有效解, 回退到第二层 (严格短轴对齐)")
