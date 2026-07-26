@@ -1781,6 +1781,10 @@ class MoveItActionClient(Node):
         GRIPPER_SETTLE_SEC = config['GRIPPER_SETTLE_SEC']
         GRIPPER_PICK_Z_OFFSET = config['GRIPPER_PICK_Z_OFFSET']
         MIN_GRASP_Z = config['MIN_GRASP_Z']
+        # 蓝方块专用安全下限: 水果的 0.045m 对 1-5cm 物块过高
+        # 桌面(传送带台面)在 z≈-0.015m, 蓝方块中位 z≈0.003m (3cm 物块)
+        # 设 0.0m: 比桌面高 15mm, 夹爪手指有足够离地间隙
+        MIN_GRASP_Z = 0.0
         loop_count = config.get('loop_count', 0)
         MAX_BLUE_BLOCK_RETRIES = 2  # 蓝方块重试上限 (任务要求 2 次)
 
