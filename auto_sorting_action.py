@@ -1570,10 +1570,13 @@ class MoveItActionClient(Node):
 
     def _compute_blue_block_pick_pose(self, pick, surface_z_m, block_height_m,
                                        block_width_m, min_grasp_z, gripper_pick_z_offset):
-        """📐 计算蓝方块顶面中位抓取位姿 (Task 2.1)。
+        """📐 计算蓝方块顶面抓取位姿 (Task 2.1)。
 
-        下降深度策略: 夹爪夹物块中部 (surface_z - height/2), 安全下限 MIN_GRASP_Z。
+        下降深度策略: 夹爪夹物块顶面 (surface_z), 安全下限 MIN_GRASP_Z。
         POSE_PICK.z = clamping_z + GRIPPER_PICK_Z_OFFSET (link6 原点到夹爪夹持点的 z 距离)。
+
+        注: 原设计用物块中位 (surface_z - height/2), 但对矮物块 (2-3cm) 中位太低,
+        夹爪手指底部会触碰台面。改为顶面抓取, 夹爪从顶面开始夹住物块上部。
 
         Args:
             pick: {'x','y','z'} 命令中的 pick 坐标 (base 系)
@@ -1588,11 +1591,12 @@ class MoveItActionClient(Node):
                 'POSE_PICK': {'x','y','z'},         # link6 目标位姿 (base 系)
                 'POSE_PICK_UP': {'x','y','z'},      # 抬起 12cm
                 'clamping_z': float,                # 夹持点 z (米)
-                'gripper_close_width': float,       # 闭合目标宽度 (米) = block_width_m - 0.002
+                'gripper_close_width': float,       # 闭合目标宽度 (米) = 0.0 (完全闭合)
             }
         """
-        # 顶面中位抓取: clamping_z = surface_z - height/2 (物块中位高度, 基座坐标系)
-        clamping_z = float(surface_z_m) - float(block_height_m) / 2.0
+        # 顶面抓取: clamping_z = surface_z (物块顶面高度, 基座坐标系)
+        # 夹爪从顶面开始夹住物块上部, 避免手指底部触碰台面
+        clamping_z = float(surface_z_m)
         # 安全下限 (复用 MIN_GRASP_Z)
         if clamping_z < min_grasp_z:
             self.get_logger().info(
