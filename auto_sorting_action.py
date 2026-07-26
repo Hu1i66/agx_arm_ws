@@ -1665,12 +1665,25 @@ class MoveItActionClient(Node):
                 self.current_joints.get(f'joint{i}', 0.0) for i in range(1, 7)
             ])
 
-        # ═══════ 第一层: 宽松垂直约束 (RadialDownwardOri) ═══════
-        # 生成多个 yaw 候选姿态 (径向朝下 + 均匀 yaw 采样), 复用现有 IK 求解逻辑
-        # 注: 增加 yaw 样本到 16 (原 8), 放宽 err 到 0.020 (原 0.015), 提高求解率
-        self.get_logger().info("📐 蓝方块姿态预规划 - 第一层 (宽松垂直约束, RadialDownwardOri)")
+        # ═══════ 第一层: 宽松垂直约束 (主轴朝向优先) ═══════
+        # 蓝方块专用: 优先尝试 0°/90°/180°/270° 主轴朝向 (夹侧面, 避免夹棱边)
+        # 立方体四个侧面对称, 主轴朝向确保夹爪 Y 轴(闭合方向)对齐侧面
+        # 如果主轴朝向都失败, 再用径向朝向 + 均匀 yaw 采样
+        self.get_logger().info("📐 蓝方块姿态预规划 - 第一层 (主轴朝向优先, RadialDownwardOri)")
+
+        # 1. 生成 4 个主轴朝向 (0°/90°/180°/270°), 优先尝试
+        z_axis = [0.0, 0.0, -1.0]
+        principal_ori_lists = []
+        for yaw_deg in [0, 90, 180, 270]:
+            yaw_rad = math.radians(yaw_deg)
+            x_axis = [math.cos(yaw_rad), math.sin(yaw_rad), 0.0]
+            y_axis = self._cross(z_axis, x_axis)
+            y_axis = self._normalize(y_axis)
+            q = self._matrix_to_quaternion(x_axis, y_axis, z_axis)
+            principal_ori_lists.append([q.x, q.y, q.z, q.w])
+
+        # 2. 生成径向朝向 + 均匀 yaw 采样 (兜底候选)
         layer1_quats = self._build_pick_orientations_multi(pose_pick, num_yaw_samples=16)
-        # _build_pick_orientations_multi 返回 [Quaternion], 转为 [x,y,z,w] list
         layer1_ori_lists = []
         for ori in layer1_quats:
             if isinstance(ori, Quaternion):
@@ -1678,15 +1691,19 @@ class MoveItActionClient(Node):
             else:
                 layer1_ori_lists.append(list(ori))
 
-        for ori_list in layer1_ori_lists:
+        # 合并: 主轴朝向优先 + 径向/yaw 兜底
+        all_ori_lists = principal_ori_lists + layer1_ori_lists
+
+        for idx, ori_list in enumerate(all_ori_lists):
             target_quat = np.array(ori_list)
             ok, q_sol, err, comp_t = self.ik_solver.get_ik_solution(
                 target_pos, target_quat, initial_guess=initial_guess)
             # 复用现有安全约束: final_ze < 0.52 (IK solver 内部已检查), 放宽位置误差到 0.020
             if ok and err < 0.020:
+                src = "主轴" if idx < 4 else "径向/yaw"
                 self.get_logger().info(
                     f"✅ 第一层姿态求解成功: err={err:.4f} time={comp_t*1000:.1f}ms "
-                    f"(RadialDownwardOri, final_ze<0.52)")
+                    f"({src}朝向, final_ze<0.52)")
                 return ori_list
 
         self.get_logger().warn("⚠️ 第一层 (宽松垂直) 无有效解, 回退到第二层 (严格短轴对齐)")
@@ -1884,7 +1901,39 @@ class MoveItActionClient(Node):
                     self.get_logger().info("📡 蓝方块重试: 回观察位...")
                     self.move_arm_joint(JOINT_OBSERVE, f"蓝方块-重试{retry+1}-回观察位")
                     time.sleep(1.0)
-                    # 重新规划姿态 (坐标未变, 但关节状态变了)
+                    # ── 从最新检测刷新 POSE_PICK (物块可能被上次抓取推走) ──
+                    latest_det = getattr(self, '_latest_detection', None)
+                    if latest_det:
+                        detections = latest_det.get('detections', [])
+                        if detections and isinstance(detections, list):
+                            det = detections[0]
+                            bc = det.get('base_coords', {})
+                            if bc and all(k in bc for k in ('x', 'y', 'z')):
+                                new_x = float(bc['x'])
+                                new_y = float(bc['y'])
+                                new_surf = det.get('surface_z_m', surface_z_m)
+                                old_x, old_y = POSE_PICK['x'], POSE_PICK['y']
+                                # 仅当坐标变化 >1cm 时更新 (避免噪声导致频繁变化)
+                                if abs(new_x - old_x) > 0.01 or abs(new_y - old_y) > 0.01:
+                                    self.get_logger().info(
+                                        f"📡 蓝方块重试: 检测坐标更新 "
+                                        f"({old_x:.3f},{old_y:.3f})→({new_x:.3f},{new_y:.3f})")
+                                    POSE_PICK['x'] = new_x
+                                    POSE_PICK['y'] = new_y
+                                    # 重新计算 clamping_z 和 link6_z
+                                    clamping_z = max(float(new_surf), MIN_GRASP_Z)
+                                    POSE_PICK['z'] = clamping_z + GRIPPER_PICK_Z_OFFSET
+                                    POSE_PICK_UP = POSE_PICK.copy()
+                                    POSE_PICK_UP['z'] += 0.12
+                                    # 更新 block 参数
+                                    surface_z_m = float(new_surf)
+                                    block_rotation_deg = det.get('block_rotation_deg', block_rotation_deg)
+                                    block_width_m = det.get('block_width_m', block_width_m)
+                                    block_height_m = det.get('block_height_m', block_height_m)
+                                    self.get_logger().info(
+                                        f"📐 蓝方块重试: 位姿更新 surface_z={surface_z_m:.3f}m "
+                                        f"clamping_z={clamping_z:.3f}m link6_z={POSE_PICK['z']:.3f}m")
+                    # 重新规划姿态 (坐标可能已更新)
                     active_ori = self._plan_blue_block_orientation(POSE_PICK, block_rotation_deg)
                     if active_ori is None:
                         self.get_logger().warn("⚠️ 蓝方块重试: 姿态预规划失败, 跳过本次重试")
