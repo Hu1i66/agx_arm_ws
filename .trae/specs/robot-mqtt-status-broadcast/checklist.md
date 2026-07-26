@@ -1,0 +1,27 @@
+# Checklist
+
+- [x] auto_sorting_action.py 中存在 `/sorting/robot_status` publisher（`std_msgs/String`）
+- [x] auto_sorting_action.py 在每次分拣周期结束后（成功和失败路径）发布 robot_status
+- [x] 成功时 publish 的 JSON 中 `action="sort_complete"`, `grasp_success=true`, `error_code=0`
+- [x] 失败时 publish 的 JSON 中 `action="sort_failed"`, `grasp_success=false`, `error_code` 为非零分类码
+- [x] RobotPayload 包含所有字段：action, cargo_type, confidence, source_position, target_position, actual_position, grasp_success, joint_angles(6个角度，度), tcp_position(3个坐标，mm), error_code
+- [x] cargo_type 从 `_latest_detection` 的 object_name 提取，去除 ` (detected)` 后缀
+- [x] confidence 从 `_latest_detection` 的 confidence 字段获取
+- [x] source_position 为抓取位姿坐标字符串 `"(x, y, z)"`
+- [x] target_position 为 BIN_PLACE_JOINTS 经 FK 计算的目标料框放置位坐标
+- [x] actual_position 成功时等于 target_position，失败时为 `"NONE"`
+- [x] joint_angles 弧度正确转换为度
+- [x] tcp_position 从 TF base_link→link6 lookup 获取，米转换为毫米
+- [x] robot_status_bridge.py 作为独立 ROS2 节点存在
+- [x] robot_status_bridge.py 使用 Pydantic 定义 RobotPayload 和 RobotData 模型
+- [x] robot_status_bridge.py 订阅 `/sorting/robot_status`
+- [x] robot_status_bridge.py 将 RobotPayload 封装为 RobotData（含 msg_type, device_id, device_type, timestamp, seq）
+- [x] robot_status_bridge.py 通过 paho-mqtt 发布到 MQTT Broker
+- [x] robot_status_bridge.py 支持 MQTT 断线重连
+- [x] MQTT 发布失败或连接断开不影响 auto_sorting_action 的抓取流程
+- [x] config/robot_status_bridge.yaml 包含所有可配置参数，带中文注释
+- [x] launch/robot_status_bridge.launch.py 可独立启动桥接节点
+- [x] MQTT JSON 输出格式与 RobotData 模型定义一致
+- [x] 桥接节点未启动时 auto_sorting_action 正常执行分拣
+- [x] timestamp 为 ISO 8601 格式含时区
+- [x] seq 为 Unix 秒级时间戳

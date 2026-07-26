@@ -251,7 +251,7 @@ D455 相机 (固定) ──→ realsense_yolo_node (YOLO检测 + D455深度)
 2. **机械臂已使能**: `python3 /home/lxf/agx_arm_ws/activate_robot.py`
 3. **D455 相机已连接** (固定安装在传送带上方)
 4. **CH340 继电器已连接** (传送带控制)
-5. **手眼标定数据**: `/home/lxf/handeye/result/2026-07-25_03-57-46_calibration.json`
+5. **手眼标定数据**: `/home/lxf/handeye/result/2026-07-26_16-17-46_calibration.json`
 6. **GraspNet checkpoint**: `/home/lxf/graspnet/checkpoints/checkpoint-rs.tar`
 
 ### 一键前置检查

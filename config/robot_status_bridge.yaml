@@ -1,0 +1,29 @@
+# 机械臂状态 MQTT 桥接节点配置文件
+# 使用: ros2 launch /home/lxf/agx_arm_ws/launch/robot_status_bridge.launch.py
+# 或: ros2 run <package> robot_status_bridge --ros-args --params-file config/robot_status_bridge.yaml
+
+robot_status_bridge:
+  ros__parameters:
+    # ── MQTT Broker 连接参数 ──
+    # Broker 地址
+    broker_host: "10.155.99.253"
+    # Broker 端口 (默认 1883)
+    broker_port: 1883
+    # 发布的 MQTT Topic (B组约定: sensor/{device_type}/{device_id})
+    topic: "sensor/robot/ROBOT-01"
+    # QoS 等级 (0/1/2)
+    qos: 1
+    # MQTT Client ID (唯一标识)
+    client_id: "robot_status_bridge"
+    # 心跳间隔 (秒)
+    keepalive: 60
+    # 用户名 (无认证则留空)
+    username: ""
+    # 密码 (无认证则留空)
+    password: ""
+
+    # ── 设备标识参数 ──
+    # 设备编号
+    device_id: "ROBOT-01"
+    # 设备类型
+    device_type: "robot"

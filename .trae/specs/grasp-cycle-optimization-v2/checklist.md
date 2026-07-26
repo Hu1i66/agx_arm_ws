@@ -1,0 +1,12 @@
+- [x] `GRIPPER_SETTLE_SEC` = 0.05
+- [x] planning_scene sleep = 0.05s
+- [x] step4 抬起目标为 BIN_ABOVE_JOINTS，跳过 PICK_UP 停留
+- [x] step5（BIN_ABOVE 移动）已删除，step4 直接到达
+- [x] step1 `continuous=True`（PICK_UP 为途径点）
+- [x] step5 `continuous=True`（BIN_ABOVE→BIN_PLACE 连贯）
+- [x] step7 `continuous=True`（BIN_ABOVE 为途径点）
+- [x] step8 `continuous=True`（连贯回待机位）
+- [x] `_set_bin_collision_allowed(allowed=True)` 在 step4 之前调用
+- [x] 语法检查通过
+- [ ] 单次分拣周期 ≤ 13s
+- [ ] 连续 5 次无 -4/-2 错误

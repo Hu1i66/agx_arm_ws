@@ -39,7 +39,7 @@ from std_msgs.msg import String
 # ========================================================================
 # 常量
 # ========================================================================
-_HANDEYE_JSON_PATH = "/home/lxf/handeye/result/2026-07-25_03-57-46_calibration.json"
+_HANDEYE_JSON_PATH = "/home/lxf/handeye/result/2026-07-26_16-17-46_calibration.json"
 _GRASPNET_CHECKPOINT = "/home/lxf/graspnet/checkpoints/checkpoint-rs.tar"
 _DEPTH_OFFSET_M = 0.0           # eye-to-hand: 相机在可靠深度范围 (0.5-0.8m), 无需近距校正
 _NUM_POINT = 20000

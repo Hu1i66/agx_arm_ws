@@ -71,7 +71,7 @@ fi
 info "GraspNet checkpoint OK ($(du -h ${CKPT} | cut -f1))"
 
 # 5. 手眼标定数据 (eye-to-hand: 相机固定在传送带上方)
-HANDEYE="/home/lxf/handeye/result/2026-07-25_03-57-46_calibration.json"
+HANDEYE="/home/lxf/handeye/result/2026-07-26_16-17-46_calibration.json"
 if [ ! -f "${HANDEYE}" ]; then
     echo "❌ 手眼标定数据不存在: ${HANDEYE}"
     exit 1

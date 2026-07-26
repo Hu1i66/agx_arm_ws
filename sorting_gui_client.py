@@ -56,6 +56,8 @@ def ros_process_worker(cmd_q, st_q, pose_q, img_q, det_q, conv_q, mp_status_q):
             self._pub = self.create_publisher(String, '/sorting_cmds', 10)
             # 曝光控制命令发布器 (realsense_yolo_node.py 订阅 /camera/exposure_ctrl)
             self._exp_pub = self.create_publisher(String, '/camera/exposure_ctrl', 10)
+            # 急停/返回待机位 命令发布器 (auto_sorting_action.py 订阅 /emergency_stop)
+            self._emergency_pub = self.create_publisher(String, '/emergency_stop', 10)
             self.create_subscription(String, '/sorting_status', self._on_st, 10)
             self._tf_buf = tf2_ros.Buffer()
             self._tf_lis = tf2_ros.TransformListener(self._tf_buf, self)
@@ -121,6 +123,10 @@ def ros_process_worker(cmd_q, st_q, pose_q, img_q, det_q, conv_q, mp_status_q):
                 # 曝光控制命令发到 /camera/exposure_ctrl, 其他命令发到 /sorting_cmds
                 if cmd.get("cmd") == "exposure":
                     self._exp_pub.publish(m)
+                elif cmd.get("cmd") in ("emergency_stop", "standby"):
+                    # 急停/返回待机位: 发布到独立 /emergency_stop topic
+                    # auto_sorting_action.py 在分拣序列检查点中检测此信号并执行安全停机
+                    self._emergency_pub.publish(m)
                 else:
                     self._pub.publish(m)
 
@@ -312,6 +318,28 @@ def main():
                                        font=("Arial",9),width=8,state=tk.DISABLED); self.exp_dec_btn.pack(side=tk.LEFT)
             tk.Label(ef,text="手动模式 +/- 调节 (步长 100, 范围 1-10000)",font=("Arial",8),fg="gray").pack(anchor=tk.W,pady=(3,0))
 
+            # ── 夹爪力矩控制 (通过 /sorting_cmds 发给 auto_sorting_action.py) ──
+            gf=tk.LabelFrame(f,text="夹爪力矩控制",padx=5,pady=5); gf.pack(fill=tk.X,pady=(5,0))
+            self.gripper_force_var=tk.DoubleVar(value=1.5)
+            self.gripper_force_label=tk.StringVar(value="当前: 1.50N")
+            tk.Label(gf,textvariable=self.gripper_force_label,font=("Arial",10,"bold"),fg="blue").pack(anchor=tk.W,pady=(0,3))
+            # 力矩滑块 (0.5-3.0N) + 快速预设按钮
+            sf=tk.Frame(gf); sf.pack(fill=tk.X)
+            tk.Scale(sf,from_=0.5,to=3.0,resolution=0.1,orient=tk.HORIZONTAL,
+                     variable=self.gripper_force_var,command=self._on_force_change,
+                     length=160,font=("Arial",8)).pack(side=tk.LEFT,padx=(0,4))
+            for label,val in [("软",0.8),("中",1.5),("硬",2.5)]:
+                tk.Button(sf,text=label,command=lambda v=val:self._set_force(v),
+                          font=("Arial",8),width=3).pack(side=tk.LEFT,padx=1)
+            # 抓取状态显示
+            ttk.Separator(gf,orient='horizontal').pack(fill=tk.X,pady=3)
+            self.grasp_status_var=tk.StringVar(value="抓取状态: --")
+            self.grasp_status_label=tk.Label(gf,textvariable=self.grasp_status_var,
+                     font=("Arial",10),fg="gray")
+            self.grasp_status_label.pack(anchor=tk.W)
+            self.grasp_detail_var=tk.StringVar(value="")
+            tk.Label(gf,textvariable=self.grasp_detail_var,font=("Arial",8),fg="gray").pack(anchor=tk.W)
+
         def _ui_detection(self):
             df=tk.LabelFrame(self.left_frame,text=" 检测信息",padx=5,pady=5); df.pack(fill=tk.BOTH,expand=True)
             self.det_status_var=tk.StringVar(value=" 等待检测数据...")
@@ -422,7 +450,14 @@ def main():
             tk.Label(fas,text=" 分界线 u=260 (物体左→右) | 苹果/草莓/橙→框1 | 柠檬/桃/梨→框2 | 失败重试1次",
                      font=("Arial",8),fg="gray").pack(pady=(6,0))
             fa=tk.Frame(self.right_frame); fa.pack(pady=10)
-            tk.Button(fa,text="回到待机位",command=self.send_observe,font=("Arial",12,"bold"),bg="#2196F3",fg="white",width=40).pack(pady=5)
+            tk.Button(fa,text="🛑 急停 (EMERGENCY STOP)",command=self._on_emergency_stop,
+                      font=("Arial",14,"bold"),bg="#FF0000",fg="white",
+                      activebackground="#CC0000",activeforeground="white",
+                      height=2,width=40).pack(pady=5)
+            tk.Button(fa,text="🔄 复位 (急停后回待机位)",command=self._on_reset,
+                      font=("Arial",12,"bold"),bg="#4CAF50",fg="white",width=40).pack(pady=5)
+            tk.Button(fa,text="返回待机位 (中断当前动作)",command=self.send_observe,
+                      font=("Arial",12,"bold"),bg="#FF9800",fg="white",width=40).pack(pady=5)
             tk.Button(fa,text="一键回到待机位并关闭夹爪",command=self.send_reset,font=("Arial",12,"bold"),bg="orange",width=40).pack(pady=5)
             tk.Button(fa,text="退出服务端系统",command=self.send_quit,font=("Arial",12,"bold"),bg="tomato",fg="white",width=40).pack(pady=5)
 
@@ -698,10 +733,19 @@ def main():
             if not n: return messagebox.showerror("错误","未选择坐标！")
             if messagebox.askyesno("确认",f"永久删除 '{n}'？"): del self.poses[n]; self.save_poses(); messagebox.showinfo("成功","已删除。")
 
+        def _on_emergency_stop(self):
+            """急停按钮回调: 无条件中断机械臂所有运动, 停在原地."""
+            self.cmd_queue.put({"cmd": "emergency_stop", "req": "estop"})
+            self.clear_queue()
+
+        def _on_reset(self):
+            """复位按钮回调: 急停后清除锁定, 回待机位."""
+            self.cmd_queue.put({"cmd": "emergency_stop", "req": "reset"})
+
         def send_observe(self):
-            if self.current_status=='busy': return messagebox.showwarning("忙碌","机械臂正在执行动作。")
-            if messagebox.askyesno("确认","机械臂将以关节空间运动到待机位。确定？"):
-                self.cmd_queue.put({"cmd":"observe"}); messagebox.showinfo("已发送","待机位指令发送成功！")
+            # 使用急停机制的返回待机位: 无条件中断并回待机位
+            self.cmd_queue.put({"cmd": "standby", "req": "standby"})
+            self.clear_queue()
 
         # ── 曝光控制 (通过 cmd_queue → ROS 子进程 → /camera/exposure_ctrl 话题) ──
         def _exposure_toggle(self):
@@ -726,6 +770,31 @@ def main():
             self._exposure_value = max(1, min(10000, self._exposure_value + direction * step))
             self.cmd_queue.put({"cmd":"exposure","auto":False,"value":int(self._exposure_value)})
             self.exposure_var.set(f"当前: {int(self._exposure_value)}")
+
+        def _on_force_change(self, val):
+            """力矩滑块变化回调: 发送 set_gripper_force 命令到 action 节点."""
+            force = round(float(val), 2)
+            self.gripper_force_label.set(f"当前: {force:.2f}N")
+            self.cmd_queue.put({"cmd": "set_gripper_force", "force": force})
+
+        def _set_force(self, val):
+            """快速预设按钮: 跳到指定力矩值."""
+            self.gripper_force_var.set(val)
+            self._on_force_change(val)
+
+        def _on_grasp_result(self, d):
+            """处理 action 节点发来的抓取结果 JSON."""
+            success = d.get("success", False)
+            width = d.get("width", 0)
+            force = d.get("force", 0)
+            reason = d.get("reason", "")
+            if success:
+                self.grasp_status_var.set("抓取状态: ✅ 成功")
+                self.grasp_status_label.configure(fg="green")
+            else:
+                self.grasp_status_var.set(f"抓取状态: ❌ 失败 ({reason})")
+                self.grasp_status_label.configure(fg="red")
+            self.grasp_detail_var.set(f"宽度={width*1000:.1f}mm  力矩={force:.2f}N")
 
         def send_reset(self):
             if self.current_status=='busy': return messagebox.showwarning("忙碌","机械臂正在执行动作。")
@@ -849,8 +918,17 @@ def main():
 
         def _update_status_loop(self):
             while not self.status_queue.empty():
-                try: self.current_status=self.status_queue.get_nowait()
+                try: s=self.status_queue.get_nowait()
                 except: break
+                # JSON 状态消息 (如 grasp_result) — 立即处理, 不覆盖 idle/busy/error
+                if s and isinstance(s, str) and s.startswith('{'):
+                    try:
+                        d = json.loads(s)
+                        if d.get("type") == "grasp_result":
+                            self._on_grasp_result(d)
+                    except: pass
+                    continue
+                self.current_status = s
             s=self.current_status
             if s=='idle':
                 self.status_var.set("当前服务器状态: 空闲 (Idle)"); self.status_label.configure(fg="green")

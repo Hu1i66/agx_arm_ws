@@ -1,0 +1,188 @@
+#!/usr/bin/env python3
+"""给 verify_grasp_pose.py 添加'夹短边+夹中心'过滤功能.
+3 处精确替换: 过滤函数 + main调用 + 参数."""
+import sys
+
+F = "/home/lxf/graspnet/verify_grasp_pose.py"
+with open(F, "r", encoding="utf-8") as fh:
+    src = fh.read()
+
+# ── 修改1: 插入过滤函数 (在 print_poses section 前) ──
+OLD1 = (
+    "# ========================================================================\n"
+    "# 4. 终端打印位姿详情\n"
+    "# ========================================================================\n"
+    "def print_poses(gg, top_n):\n"
+)
+NEW1 = (
+    "# ========================================================================\n"
+    "# 4. 短边+中心过滤 (夹爪闭合方向对齐物体短轴 + 位置接近中心)\n"
+    "# ========================================================================\n"
+    "def segment_object_points(pcd, distance_thresh=0.01, ransac_n=3, num_iterations=2000):\n"
+    "    \"\"\"RANSAC 去桌面平面, 返回物体点云 (非桌面点)\"\"\"\n"
+    "    plane_model, inliers = pcd.segment_plane(\n"
+    "        distance_thresh, ransac_n, num_iterations\n"
+    "    )\n"
+    "    object_cloud = pcd.select_by_index(inliers, invert=True)\n"
+    "    print(\n"
+    "        f\"  去桌面: {len(pcd.points)} → {len(object_cloud.points)} 个物体点 \"\n"
+    "        f\"(平面法向量: [{plane_model[0]:.2f}, {plane_model[1]:.2f}, {plane_model[2]:.2f}])\"\n"
+    "    )\n"
+    "    return object_cloud\n"
+    "\n"
+    "\n"
+    "def analyze_object_shape(object_cloud):\n"
+    "    \"\"\"PCA 分析物体形状, 返回 centroid + 长轴/短轴 (XY 平面投影)\n"
+    "\n"
+    "    物体在桌面上, 长短轴在水平面 (XY). 用 PCA 最大/最小方差方向.\n"
+    "    Returns:\n"
+    "        dict: centroid, centroid_xy, long_axis_xy, short_axis_xy, elongation, size_xy\n"
+    "    \"\"\"\n"
+    "    points = np.asarray(object_cloud.points)\n"
+    "    centroid = points.mean(axis=0)\n"
+    "    centered = points - centroid\n"
+    "    cov = np.cov(centered.T)\n"
+    "    eigenvalues, eigenvectors = np.linalg.eigh(cov)  # 升序: [0]最小 [2]最大\n"
+    "    long_axis = eigenvectors[:, 2]   # 最大方差 = 长轴\n"
+    "    short_axis = eigenvectors[:, 0]  # 最小方差 = 短轴\n"
+    "    # XY 平面投影归一化\n"
+    "    long_xy = long_axis[:2].copy()\n"
+    "    short_xy = short_axis[:2].copy()\n"
+    "    long_xy /= max(np.linalg.norm(long_xy), 1e-9)\n"
+    "    short_xy /= max(np.linalg.norm(short_xy), 1e-9)\n"
+    "    # 物体 XY 尺寸 (用于归一化中心距离)\n"
+    "    xy = points[:, :2]\n"
+    "    size_xy = max(float(np.linalg.norm(xy.max(axis=0) - xy.min(axis=0))), 0.01)\n"
+    "    elongation = float(eigenvalues[2] / max(eigenvalues[0], 1e-9))\n"
+    "    return {\n"
+    "        'centroid': centroid,\n"
+    "        'centroid_xy': centroid[:2],\n"
+    "        'long_axis_xy': long_xy,\n"
+    "        'short_axis_xy': short_xy,\n"
+    "        'elongation': elongation,\n"
+    "        'size_xy': size_xy,\n"
+    "    }\n"
+    "\n"
+    "\n"
+    "def filter_grasps_short_edge_center(gg, shape, w_align=0.45, w_center=0.35, w_score=0.20):\n"
+    "    \"\"\"重排候选: 优先闭合方向对齐短轴 (夹短边) + 位置接近中心 + GraspNet score\n"
+    "\n"
+    "    GraspNet 坐标系约定 (plot_gripper_pro_max 源码确认):\n"
+    "      R[:,0] = approach direction (接近方向)\n"
+    "      R[:,1] = closing direction (闭合方向, 两指开合 = width 方向)\n"
+    "      R[:,2] = 正交方向\n"
+    "\n"
+    "    '夹短边' = 闭合方向 R[:,1] 对齐物体短轴 → 夹爪跨过短轴, 夹住窄的宽度.\n"
+    "    '夹中心' = translation 接近物体 centroid.\n"
+    "    \"\"\"\n"
+    "    from graspnetAPI import GraspGroup\n"
+    "\n"
+    "    short_xy = shape['short_axis_xy']\n"
+    "    centroid_xy = shape['centroid_xy']\n"
+    "    size_xy = shape['size_xy']\n"
+    "\n"
+    "    max_score = max(abs(g.score) for g in gg) or 1.0\n"
+    "    records = []\n"
+    "    for i in range(len(gg)):\n"
+    "        g = gg[i]\n"
+    "        R = g.rotation_matrix\n"
+    "        # 闭合方向 XY 投影\n"
+    "        closing_xy = R[:2, 1].copy()\n"
+    "        closing_xy /= max(np.linalg.norm(closing_xy), 1e-9)\n"
+    "        # 对齐度: |dot| (闭合方向平行于短轴, 允许正反), 0~1\n"
+    "        align = abs(float(np.dot(closing_xy, short_xy)))\n"
+    "        # 中心距离归一化 (用物体尺寸), exp 衰减\n"
+    "        center_dist = float(np.linalg.norm(g.translation[:2] - centroid_xy))\n"
+    "        center_score = float(np.exp(-center_dist / size_xy * 3.0))\n"
+    "        # score 归一化\n"
+    "        score_norm = abs(g.score) / max_score\n"
+    "        total = w_align * align + w_center * center_score + w_score * score_norm\n"
+    "        records.append((total, i, align, center_dist, g.score))\n"
+    "\n"
+    "    records.sort(key=lambda x: -x[0])\n"
+    "\n"
+    "    print(f\"\\n  过滤重排 (夹短边+夹中心):\")\n"
+    "    print(\n"
+    "        f\"    物体 centroid_xy=({centroid_xy[0]:.3f},{centroid_xy[1]:.3f}) \"\n"
+    "        f\"size={size_xy:.3f} elongation={shape['elongation']:.2f}\"\n"
+    "    )\n"
+    "    print(f\"    短轴方向=({short_xy[0]:.3f},{short_xy[1]:.3f})\")\n"
+    "    print(f\"    {'idx':>3} {'total':>6} {'align':>6} {'c_dist':>6} {'score':>6}\")\n"
+    "    for total, idx, align, cd, sc in records[:5]:\n"
+    "        print(f\"    {idx:>3} {total:6.3f} {align:6.3f} {cd:6.3f} {sc:6.3f}\")\n"
+    "\n"
+    "    # 按打分重排 GraspGroup\n"
+    "    order = [r[1] for r in records]\n"
+    "    arr = gg.grasp_group_array[order]\n"
+    "    gg_sorted = GraspGroup(arr)\n"
+    "    return gg_sorted\n"
+    "\n"
+    "\n"
+    "# ========================================================================\n"
+    "# 5. 终端打印位姿详情\n"
+    "# ========================================================================\n"
+    "def print_poses(gg, top_n):\n"
+)
+
+# ── 修改2: main 中添加过滤调用 (碰撞检测后, 打印前) ──
+OLD2 = (
+    "    # ── 5. 打印 + 可视化 ──\n"
+    "    if len(gg) == 0:\n"
+)
+NEW2 = (
+    "    # ── 4.5 短边+中心过滤 (夹爪闭合方向对齐短轴 + 位置接近中心) ──\n"
+    "    if not args.no_filter and len(gg) > 0:\n"
+    "        print(\"\\n[4.5] 短边+中心过滤...\")\n"
+    "        try:\n"
+    "            object_cloud = segment_object_points(pcd)\n"
+    "            if len(object_cloud.points) < 50:\n"
+    "                print(\"  ⚠️ 物体点云过少, 跳过过滤 (用原始 score 排序)\")\n"
+    "            else:\n"
+    "                shape = analyze_object_shape(object_cloud)\n"
+    "                if shape['elongation'] < 1.5:\n"
+    "                    print(\n"
+    "                        f\"  ⚠️ 物体长宽比={shape['elongation']:.2f} < 1.5 \"\n"
+    "                        f\"(近似圆形), 短边过滤意义不大, 仅按中心+score排序\"\n"
+    "                    )\n"
+    "                gg = filter_grasps_short_edge_center(gg, shape)\n"
+    "        except Exception as e:\n"
+    "            print(f\"  ⚠️ 过滤失败 ({e}), 用原始 score 排序\")\n"
+    "    else:\n"
+    "        print(\"\\n[4.5] 跳过短边+中心过滤 (--no_filter)\")\n"
+    "        gg.sort_by_score()\n"
+    "\n"
+    "    # ── 5. 打印 + 可视化 ──\n"
+    "    if len(gg) == 0:\n"
+)
+
+# ── 修改3: 添加 --no_filter 参数 ──
+OLD3 = (
+    "    parser.add_argument(\n"
+    "        \"--depth_offset\", type=float, default=0.04,\n"
+    "        help=\"D455 近距离深度修正 (m, 与 grasp_pose_node.py 一致)\",\n"
+    "    )\n"
+    "    args = parser.parse_args()\n"
+)
+NEW3 = (
+    "    parser.add_argument(\n"
+    "        \"--depth_offset\", type=float, default=0.04,\n"
+    "        help=\"D455 近距离深度修正 (m, 与 grasp_pose_node.py 一致)\",\n"
+    "    )\n"
+    "    parser.add_argument(\n"
+    "        \"--no_filter\", action=\"store_true\",\n"
+    "        help=\"禁用短边+中心过滤 (默认启用: 闭合方向对齐短轴 + 位置接近中心)\",\n"
+    "    )\n"
+    "    args = parser.parse_args()\n"
+)
+
+for label, old, new in [("过滤函数", OLD1, NEW1), ("main调用", OLD2, NEW2), ("参数", OLD3, NEW3)]:
+    cnt = src.count(old)
+    if cnt != 1:
+        print(f"❌ [{label}] 期望匹配 1 次, 实际 {cnt} 次, 中止")
+        sys.exit(1)
+    src = src.replace(old, new)
+    print(f"✅ [{label}] 替换成功")
+
+with open(F, "w", encoding="utf-8") as fh:
+    fh.write(src)
+print("\n✅ 全部 3 处修改完成")
