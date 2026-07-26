@@ -1631,6 +1631,23 @@ class MoveItActionClient(Node):
                 f"{min_grasp_z}m, 钳位至 {min_grasp_z}m (防碰台面)")
             clamping_z = min_grasp_z
 
+        # ═══════ 动态 Z 偏移: 手指底部始终比台面高 4mm (固定) ═══════
+        # FK 实测: gripper_link1/2 在 link6 下方 0.1358m (固定)
+        # 手指底部 z = link6_z - 0.1358
+        # 台面 z = surface_z - height
+        # 要求: 手指底部 z = 台面 z + 0.004 (安全间隙)
+        # → link6_z = (surface_z - height) + 0.004 + 0.1358 = 台面 z + 0.1398
+        # → GRIPPER_PICK_Z_OFFSET = link6_z - clamping_z = 0.1398 - height
+        FINGER_TO_LINK6 = 0.1358  # FK 实测: gripper_link1/2 原点到 link6 的距离
+        TABLE_SAFETY_M = 0.004    # 手指底部比台面高 4mm (用户反馈: 4cm物块"正好")
+        if block_height_m and block_height_m > 0:
+            dynamic_offset = (FINGER_TO_LINK6 + TABLE_SAFETY_M) - float(block_height_m)
+            gripper_pick_z_offset = max(dynamic_offset, 0.05)  # 下限 50mm, 防止 IK 无解
+            self.get_logger().info(
+                f"📐 动态Z偏移: height={block_height_m*1000:.0f}mm → "
+                f"offset={gripper_pick_z_offset*1000:.1f}mm "
+                f"(手指底部比台面高{TABLE_SAFETY_M*1000:.0f}mm)")
+
         # POSE_PICK: link6 目标位姿 (夹持点 z + link6 偏置)
         POSE_PICK = {
             'x': float(pick['x']),
@@ -1649,7 +1666,10 @@ class MoveItActionClient(Node):
         self.get_logger().info(
             f"📐 蓝方块抓取位姿: surface_z={surface_z_m:.3f}m "
             f"height={block_height_m:.3f}m → clamping_z={clamping_z:.3f}m "
-            f"link6_z={POSE_PICK['z']:.3f}m pick=({POSE_PICK['x']:.3f},{POSE_PICK['y']:.3f}) "
+            f"link6_z={POSE_PICK['z']:.3f}m offset={gripper_pick_z_offset*1000:.1f}mm "
+            f"pick=({POSE_PICK['x']:.3f},{POSE_PICK['y']:.3f}) "
+            f"finger_z≈{(POSE_PICK['z'] - FINGER_TO_LINK6)*1000:.1f}mm "
+            f"table_z≈{(surface_z_m - block_height_m)*1000:.1f}mm "
             f"gripper_close={gripper_close_width*1000:.1f}mm")
 
         return {
@@ -1970,18 +1990,21 @@ class MoveItActionClient(Node):
                                         f"({old_x:.3f},{old_y:.3f})→({new_x:.3f},{new_y:.3f})")
                                     POSE_PICK['x'] = new_x
                                     POSE_PICK['y'] = new_y
-                                    # 重新计算 clamping_z 和 link6_z
-                                    clamping_z = max(float(new_surf), MIN_GRASP_Z)
-                                    POSE_PICK['z'] = clamping_z + GRIPPER_PICK_Z_OFFSET
-                                    POSE_PICK_UP = POSE_PICK.copy()
-                                    POSE_PICK_UP['z'] += 0.12
                                     # 更新 block 参数
                                     surface_z_m = float(new_surf)
                                     block_rotation_deg = det.get('block_rotation_deg', block_rotation_deg)
                                     block_width_m = det.get('block_width_m', block_width_m)
                                     block_height_m = det.get('block_height_m', block_height_m)
+                                    # 重新计算动态偏移和 clamping_z
+                                    clamping_z = max(float(new_surf), MIN_GRASP_Z)
+                                    new_height = float(block_height_m) if block_height_m else 0.04
+                                    dynamic_offset = max((0.1358 + 0.004) - new_height, 0.05)
+                                    POSE_PICK['z'] = clamping_z + dynamic_offset
+                                    POSE_PICK_UP = POSE_PICK.copy()
+                                    POSE_PICK_UP['z'] += 0.12
                                     self.get_logger().info(
                                         f"📐 蓝方块重试: 位姿更新 surface_z={surface_z_m:.3f}m "
+                                        f"height={block_height_m:.3f}m offset={dynamic_offset*1000:.1f}mm "
                                         f"clamping_z={clamping_z:.3f}m link6_z={POSE_PICK['z']:.3f}m")
                     # 重新规划姿态 (坐标可能已更新)
                     active_ori = self._plan_blue_block_orientation(POSE_PICK, block_rotation_deg)
