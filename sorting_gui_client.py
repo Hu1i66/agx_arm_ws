@@ -26,7 +26,7 @@ def euler_to_quaternion(roll_deg, pitch_deg, yaw_deg):
 
 # ═══════════════════════ ROS 子进程 ═══════════════════════
 
-def ros_process_worker(cmd_q, st_q, pose_q, img_q, det_q, conv_q, mp_status_q):
+def ros_process_worker(cmd_q, st_q, pose_q, img_q, det_q, conv_q, conv_status_q, mp_status_q):
     """ROS2 子进程 — camera/YOLO 回调即时推送 JPEG。 无 Tkinter 依赖。
 
     ⚠️ auto_start_pipeline (相机/YOLO 自动拉起) 也在此子进程中以守护线程运行。
@@ -39,6 +39,56 @@ def ros_process_worker(cmd_q, st_q, pose_q, img_q, det_q, conv_q, mp_status_q):
         try: mp_status_q.put_nowait(msg)
         except: pass
     threading.Thread(target=auto_start_pipeline, args=(_mp_set_status,), daemon=True).start()
+
+    # ═════════ STM32 传送带初始化 (串口 115200-8N1) ═════════
+    # 取代原 CH340 继电器控制 (Modbus RTU 9600)
+    from stm32_conveyor import STM32Conveyor
+    _conv = STM32Conveyor()
+    _conv_ok = False
+    try:
+        _conv.connect()
+        _conv_ok = True
+        _log(f"STM32 传送带已连接: {_conv.port} @ {_conv.baudrate}")
+    except Exception as e:
+        _log(f"STM32 传送带连接失败: {e} (将使用模拟模式)")
+
+    # ⚠️ 父进程监控: GUI 崩溃/退出后, worker 必须自动释放串口,
+    # 否则变成孤儿进程持续抢占 /dev/ttyUSB0 → 下次 GUI 显示速度 0。
+    _ppid0 = os.getppid()
+    def _parent_watchdog():
+        while True:
+            try:
+                if os.getppid() != _ppid0:
+                    _log(f"父进程已退出 (pid {_ppid0}), worker 自动退出")
+                    try: _conv.disconnect()
+                    except Exception: pass
+                    os._exit(0)
+            except Exception:
+                pass
+            time.sleep(1.0)
+    threading.Thread(target=_parent_watchdog, daemon=True).start()
+    # 传送带状态监控线程: 每 250ms 推送一次状态到 conv_status_q
+    def _conv_monitor():
+        while True:
+            try:
+                if _conv_ok:
+                    s = _conv.get_status()
+                    try:
+                        conv_status_q.put_nowait({'type': 'status', 'speed': s['speed'],
+                                       'object_detected': s['object_detected'],
+                                       'motor_running': s['motor_running']})
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        conv_status_q.put_nowait({'type': 'status', 'speed': 0.0,
+                                       'object_detected': False, 'motor_running': False})
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            time.sleep(0.25)
+    threading.Thread(target=_conv_monitor, daemon=True).start()
 
     # ═════════ 模式切换 (水果 YOLO ↔ 蓝方块检测) ═════════
     # 在 ROS worker 子进程中执行 kill/launch (fork 安全), 通过 mp_status_q 回报状态。
@@ -138,20 +188,26 @@ def ros_process_worker(cmd_q, st_q, pose_q, img_q, det_q, conv_q, mp_status_q):
         def _cmd_tick(self):
             while not cmd_q.empty():
                 cmd = cmd_q.get()
-                # 传送带继电器控制: 在 ROS worker 进程中执行 (主进程有 Tcl, fork 会导致崩溃)
+                # 传送带控制: STM32 串口协议 (115200-8N1, 取代原 CH340 继电器)
                 if cmd.get("cmd") == "conveyor":
                     relay_action = cmd.get("relay_action", "off")
                     try:
-                        r = subprocess.run(
-                            ['python3', _RELAY_SCRIPT, relay_action],
-                            capture_output=True, text=True, timeout=10)
-                        ok = (r.returncode == 0 and '✅' in (r.stdout or ''))
-                        err = (r.stderr or r.stdout or '').strip()[-300:]
+                        if _conv_ok:
+                            if relay_action == "on":
+                                ok = _conv.start()
+                            else:
+                                ok = _conv.stop()
+                            err = ""
+                        else:
+                            ok = False
+                            err = "STM32 未连接"
                     except Exception as e:
-                        ok = False; err = str(e)
+                        ok = False
+                        err = str(e)
                     try:
-                        _putq(conv_q, {'ok': ok, 'err': err})
-                    except: pass
+                        conv_q.put_nowait({'ok': ok, 'err': err, 'type': 'cmd_result'})
+                    except:
+                        pass
                     continue
                 # 模式切换 (水果 YOLO ↔ 蓝方块检测): 在 ROS worker 子进程中执行 kill/launch
                 # 主进程有 Tcl, fork 会导致崩溃, 所有 subprocess 调用委托至此子进程
@@ -210,8 +266,7 @@ _YOLO_CMD   = f"{_ROS2_SRC} && {_VENV_SRC} && python3 {_YOLO_SCRIPT} --ros-args 
 # 蓝方块检测节点启动命令 (venv python 直接调用, 不通过 activate)
 _BLUE_BLOCK_CMD = f"{_ROS2_SRC} && {_BLUE_BLOCK_VENV_PY} {_BLUE_BLOCK_SCRIPT}"
 
-# CH340 USB 继电器控制脚本（Modbus RTU）。继电器接在传送带电路的常闭(NC)接口上。
-_RELAY_SCRIPT = "/home/lxf/agx_arm_ws/ch340-relay/relay_control.py"
+
 
 def _topic_ok(topic, timeout=3.0):
     try:
@@ -277,11 +332,12 @@ def main():
     cmd_q = multiprocessing.Queue(); st_q = multiprocessing.Queue()
     pose_q = multiprocessing.Queue(); img_q = multiprocessing.Queue(maxsize=1)
     det_q = multiprocessing.Queue(maxsize=1)
-    conv_q = multiprocessing.Queue()  # 传送带继电器结果队列 (ROS worker → GUI)
+    conv_q = multiprocessing.Queue()  # 传送带命令结果队列 (ROS worker → GUI, 仅 cmd_result)
+    conv_status_q = multiprocessing.Queue()  # 传送带状态队列 (ROS worker → GUI, 仅 status)
     mp_status_q = multiprocessing.Queue()  # 相机/YOLO 启动状态消息队列 (ROS worker → GUI)
 
     ros_proc = multiprocessing.Process(target=ros_process_worker,
-                                       args=(cmd_q,st_q,pose_q,img_q,det_q,conv_q,mp_status_q), name="ros")
+                                       args=(cmd_q,st_q,pose_q,img_q,det_q,conv_q,conv_status_q,mp_status_q), name="ros")
     ros_proc.start()
     _log("ROS proc started")
 
@@ -292,7 +348,8 @@ def main():
             super().__init__()
             self.cmd_queue=cmd_q; self.status_queue=st_q; self.pose_queue=pose_q
             self.image_queue=img_q; self.detection_queue=det_q
-            self.conveyor_queue=conv_q  # 传送带继电器结果队列 (ROS worker → GUI)
+            self.conveyor_queue=conv_q  # 传送带命令结果队列 (仅 cmd_result)
+            self.conveyor_status_queue=conv_status_q  # 传送带状态队列 (仅 status)
             self.title("机械臂分拣控制面板")
             self.geometry("1350x680"); self.configure(padx=10, pady=10)
             self.poses = {}; self.load_poses()
@@ -342,6 +399,8 @@ def main():
             # 1) 确保传送带处于停止状态 (安全默认)
             # 2) 继电器调用已委托给 ROS worker 进程, 不会触发 Tcl 崩溃
             self.after(800, lambda: self._conveyor_set(False))
+            # 启动传送带状态轮询 (速度、物体检测显示)
+            self.after(1000, self._conveyor_status_poll)
 
         def load_poses(self):
             f='/home/lxf/agx_arm_ws/saved_poses.json'
@@ -515,11 +574,18 @@ def main():
             tk.Button(ft,text="添加至分拣队列",command=self.add_to_queue,font=("Arial",11,"bold"),bg="lightblue",width=18).grid(row=1,column=0,columnspan=2,pady=10)
             tk.Button(ft,text="立即发送分拣指令",command=self.send_sort,font=("Arial",11,"bold"),bg="lightgreen",width=18).grid(row=1,column=2,columnspan=2,pady=10)
             self.update_comboboxes()
-            # ── 传送带控制（继电器接常闭 NC，存在反转，详见 _conveyor_set 注释）──
+            # ── 传送带控制（STM32 串口协议 115200-8N1）──
             fc=tk.LabelFrame(self.right_frame,text="传送带控制",padx=10,pady=10); fc.pack(fill="x",pady=5)
             self.conveyor_state_var=tk.StringVar(value="传送带状态: 未知")
             self.conveyor_state_label=tk.Label(fc,textvariable=self.conveyor_state_var,font=("Arial",11,"bold"),fg="gray")
-            self.conveyor_state_label.pack(pady=(0,8))
+            self.conveyor_state_label.pack(pady=(0,4))
+            # 速度 & 物体检测显示
+            info_f=tk.Frame(fc); info_f.pack(fill="x",pady=(0,6))
+            self._conveyor_speed_var=tk.StringVar(value="速度: -- m/s")
+            tk.Label(info_f,textvariable=self._conveyor_speed_var,font=("Arial",10),fg="blue").pack(side=tk.LEFT,padx=5)
+            self._conveyor_obj_var=tk.StringVar(value="物体: --")
+            self._conveyor_obj_label=tk.Label(info_f,textvariable=self._conveyor_obj_var,font=("Arial",10),fg="gray")
+            self._conveyor_obj_label.pack(side=tk.LEFT,padx=5)
             cbf=tk.Frame(fc); cbf.pack(fill="x")
             self.conveyor_on_btn=tk.Button(cbf,text="传送带开",command=lambda:self._conveyor_set(True),
                                            font=("Arial",12,"bold"),bg="#4CAF50",fg="white")
@@ -527,7 +593,7 @@ def main():
             self.conveyor_off_btn=tk.Button(cbf,text="传送带关",command=lambda:self._conveyor_set(False),
                                             font=("Arial",12,"bold"),bg="#f44336",fg="white")
             self.conveyor_off_btn.pack(side=tk.LEFT,expand=True,fill="x",padx=(4,0))
-            tk.Label(fc,text=" 继电器接常闭: 传送带开=继电器off / 传送带关=继电器on",font=("Arial",8),fg="gray").pack(pady=(6,0))
+            tk.Label(fc,text=" STM32 串口协议 115200bps | 命令: S/P/F/R",font=("Arial",8),fg="gray").pack(pady=(6,0))
             # ── 自动分拣控制 ──
             fas=tk.LabelFrame(self.right_frame,text=" 自动分拣",padx=10,pady=10); fas.pack(fill="x",pady=5)
             self.auto_sort_state_var=tk.StringVar(value="[IDLE] 未运行")
@@ -580,13 +646,30 @@ def main():
 
                     img=PImg.open(io.BytesIO(latest))
                     img.thumbnail((self._canvas_w,self._canvas_h),PImg.LANCZOS)
-                    photo=ImageTk.PhotoImage(img)
 
-                    # 永久保留旧 PhotoImage 阻止 GC →
-                    # Python 永远不会调 __del__ → 永远不会有 Tcl_Release 双重释放
-                    self._photos.append(photo)
-                    while len(self._photos)>60:
-                        self._photos.pop(0)
+                    # ⚠️ Tcl_Release 防护: 固定池循环复用 PhotoImage, 永不创建/销毁 Tcl 对象。
+                    # 背景: 每次 itemconfig(image=新PhotoImage) 替换后, 旧 image 在 Tcl 侧被释放,
+                    # 若 Python 侧旧 PhotoImage 再被 GC (pop 或截断) → __del__ → Tcl delete 已释放
+                    # 对象 → "Tcl_Release couldn't find reference" → SIGABRT 核心转储。
+                    # 方案: 预创建固定数量同尺寸 PhotoImage, 用 paste() 更新内容循环复用,
+                    # 对象集合恒定 → GC 永远不触发 __del__。
+                    if not hasattr(self, '_photo_pool'):
+                        self._photo_pool = []
+                        self._photo_pool_idx = 0
+                    try:
+                        # 固定尺寸 (与创建池时一致), 保证 paste() 不会因尺寸不符报错
+                        fixed = img.resize((self._canvas_w, self._canvas_h), PImg.LANCZOS)
+                        if len(self._photo_pool) < 8:
+                            self._photo_pool.append(ImageTk.PhotoImage(fixed))
+                            photo = self._photo_pool[-1]
+                        else:
+                            photo = self._photo_pool[self._photo_pool_idx]
+                            photo.paste(fixed)
+                            self._photo_pool_idx = (self._photo_pool_idx + 1) % len(self._photo_pool)
+                    except Exception:
+                        # paste 异常回退: 保留引用不主动释放, 避免 __del__ 触发 Tcl_Release
+                        photo = ImageTk.PhotoImage(img)
+                        self._photos.append(photo)
 
                     self.camera_canvas.itemconfig(self._canvas_img_id,image=photo,state='normal')
                     self.camera_canvas.itemconfig(self._canvas_text_id,state='hidden')
@@ -1213,32 +1296,21 @@ def main():
             if messagebox.askyesno("确认","让服务端回到待机位、关闭夹爪并结束程序。确定？"):
                 self.cmd_queue.put({"cmd":"quit"}); self.after(500,self.destroy)
 
-        # ── 传送带控制 ──
-        # 实现说明：继电器脚本调用委托给 ROS worker 子进程执行。
-        # 原因：主进程有 Tcl/Tk 事件循环，直接调用 subprocess.Popen/fork 会与
-        # auto_start_pipeline 线程的 fork 竞争，破坏 Tcl 内部引用计数 →
-        # "Tcl_Release couldn't find reference for 0x..." 核心转储。
-        # ROS worker 是独立进程(无 Tcl)，可安全调用 subprocess.run。
-        # GUI 只通过 cmd_queue 发命令、通过 conveyor_queue 收结果，全程主线程操作。
+        # ── 传送带控制 (STM32 串口协议 115200-8N1) ──
+        # 命令: 'S'=启动, 'P'=停止, 'F'=正转, 'R'=反转
+        # 状态帧: V:速度,O:物体检测,M1:电机,M2:方向 (每 100ms)
+        # 命令委托给 ROS worker 进程执行 (避免主进程 fork 与 Tcl 冲突)
         def _conveyor_set(self, run):
-            """设置传送带运行/停止。
-
-            ⚠️ 关键反转逻辑（继电器接常闭 NC 接口）：
-                传送带开(run=True)  → 传送带需通电 → 继电器须断电(NC闭合) → relay off
-                传送带关(run=False) → 传送带需断电 → 继电器须通电(NC断开) → relay on
-            即：传送带意图与继电器命令是反相的。
-            """
+            """设置传送带运行/停止。"""
             if self._conveyor_busy:
-                return
-            if not os.path.exists(_RELAY_SCRIPT):
-                messagebox.showerror("错误", f"继电器控制脚本不存在:\n{_RELAY_SCRIPT}")
                 return
             self._conveyor_busy=True
             self.conveyor_on_btn.config(state=tk.DISABLED)
             self.conveyor_off_btn.config(state=tk.DISABLED)
             self.conveyor_state_var.set("传送带状态: 切换中...")
             self.conveyor_state_label.config(fg="orange")
-            relay_action='off' if run else 'on'   # ← 关键反转点：传送带开=relay off, 传送带关=relay on
+            # STM32: run=True=启动(S), run=False=停止(P)
+            relay_action='on' if run else 'off'
             try:
                 self._conveyor_run=run
                 self._conveyor_start_time=time.time()
@@ -1249,21 +1321,35 @@ def main():
                 self._conveyor_done(run, False, str(e))
 
         def _conveyor_poll(self):
-            """主线程轮询 conveyor_queue 是否有继电器结果。不阻塞 GUI，不跨线程访问 Tkinter。"""
+            """主线程轮询 conveyor_queue 是否有命令结果 (cmd_result)。不阻塞 GUI。"""
             try:
-                result=self.conveyor_queue.get_nowait()
-            except queue.Empty:
-                # 超时检查 (12秒, 继电器脚本内部 timeout=10s + 队列传输余量)
-                if time.time()-self._conveyor_start_time > 12.0:
-                    run=self._conveyor_run
-                    self._conveyor_run=None
-                    self._conveyor_done(run, False, "继电器通信超时 (ROS worker 无响应)")
+                while True:
+                    try:
+                        result = self.conveyor_queue.get_nowait()
+                    except queue.Empty:
+                        result = None
+                        break
+                    except Exception:
+                        # worker 进程崩溃时队列可能抛 BrokenPipe 等, 视为无结果
+                        result = None
+                        break
+                    # 只处理 cmd_result 类型; 其他类型跳过 (理论不应出现, status 走独立队列)
+                    if result.get('type') == 'cmd_result':
+                        break
+                if result and result.get('type') == 'cmd_result':
+                    run = self._conveyor_run
+                    self._conveyor_run = None
+                    self._conveyor_done(run, result.get('ok', False), result.get('err', ''))
                     return
-                self.after(50, self._conveyor_poll)   # 还没结果, 继续等
+            except Exception:
+                pass
+            # 超时检查 (8秒, STM32 应答通常 <1s)
+            if self._conveyor_run is not None and time.time() - self._conveyor_start_time > 8.0:
+                run = self._conveyor_run
+                self._conveyor_run = None
+                self._conveyor_done(run, False, "STM32 通信超时 (ROS worker 无响应)")
                 return
-            run=self._conveyor_run
-            self._conveyor_run=None
-            self._conveyor_done(run, result.get('ok',False), result.get('err',''))
+            self.after(50, self._conveyor_poll)   # 还没结果, 继续等
 
         def _conveyor_done(self, run, ok, err):
             self._conveyor_busy=False
@@ -1283,10 +1369,51 @@ def main():
                 self.conveyor_state=None
                 self.conveyor_state_var.set("传送带状态: 切换失败")
                 self.conveyor_state_label.config(fg="gray")
-                if self.auto_sort_running:
-                    self._auto_sort_log(f"传送带切换失败: {err}")
-                else:
-                    messagebox.showerror("传送带控制失败", f"继电器通信失败:\n{err}")
+                # ⚠️ 不弹模态 messagebox: 模态框嵌套事件循环会让 _update_camera_loop
+                # 等 after 回调继续跑, 与 Tcl 对象操作竞争 (曾导致 Tcl_Release 崩溃)。
+                # 改用非阻塞状态栏 + 日志提示。
+                msg = f"传送带切换失败: {err}"
+                try:
+                    self._auto_sort_log(msg)
+                except Exception:
+                    pass
+                try:
+                    self.status_var.set("当前服务器状态: " + msg)
+                except Exception:
+                    pass
+
+        # ── 传送带状态轮询 (速度、物体检测) ──
+        # 由 ROS worker 后台线程每 250ms 推送一次状态到 conveyor_status_queue
+        def _conveyor_status_poll(self):
+            """轮询 conveyor_status_queue 中的 status 消息，更新速度/物体检测显示。"""
+            updated = False
+            while True:
+                try:
+                    result = self.conveyor_status_queue.get_nowait()
+                except queue.Empty:
+                    break
+                except Exception:
+                    # worker 进程崩溃时队列可能抛 BrokenPipe 等, 停止本轮轮询
+                    break
+                try:
+                    if result.get('type') == 'status':
+                        speed = result.get('speed', 0.0)
+                        obj = result.get('object_detected', False)
+                        motor = result.get('motor_running', False)
+                        self._conveyor_speed_var.set(f"速度: {speed:.2f} m/s")
+                        obj_text = "有物体" if obj else "无物体"
+                        self._conveyor_obj_var.set(f"物体: {obj_text}")
+                        self._conveyor_obj_label.config(fg="green" if obj else "gray")
+                        updated = True
+                    elif result.get('type') == 'cmd_result':
+                        # cmd_result 由 _conveyor_poll 处理，这里不会出现
+                        pass
+                except Exception:
+                    pass
+            if updated:
+                self.after(200, self._conveyor_status_poll)
+            else:
+                self.after(300, self._conveyor_status_poll)
 
         def _update_status_loop(self):
             while not self.status_queue.empty():

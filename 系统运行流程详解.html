@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>机械臂分拣系统运行流程详解</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  :root{
+    --bg:#0d1117; --card:#161b22; --border:#30363d; --fg:#c9d1d9;
+    --muted:#8b949e; --accent:#58a6ff; --green:#3fb950; --yellow:#d29922;
+    --red:#f85149; --purple:#bc8cff; --orange:#ff9800; --teal:#39d2c0;
+  }
+  *{box-sizing:border-box}
+  body{background:var(--bg);color:var(--fg);font-family:-apple-system,"PingFang SC","Microsoft YaHei",Segoe UI,sans-serif;line-height:1.65;margin:0;padding:0}
+  .wrap{max-width:1280px;margin:0 auto;padding:32px 24px 80px}
+  h1{font-size:2.1em;color:var(--accent);border-bottom:2px solid var(--border);padding-bottom:12px;margin-top:1.5em}
+  h2{font-size:1.55em;color:var(--green);margin-top:2.2em;border-left:5px solid var(--green);padding-left:12px}
+  h3{font-size:1.2em;color:var(--yellow);margin-top:1.6em}
+  h4{color:var(--purple);margin-top:1.3em}
+  p{color:var(--fg)}
+  code{background:#21262d;padding:2px 7px;border-radius:5px;font-family:"JetBrains Mono",Consolas,Monaco,monospace;font-size:.88em;color:var(--teal)}
+  pre{background:#010409;border:1px solid var(--border);border-radius:8px;padding:16px;overflow-x:auto;font-family:"JetBrains Mono",Consolas,Monaco,monospace;font-size:.85em;line-height:1.55}
+  pre code{background:transparent;padding:0;color:var(--fg)}
+  .kw{color:#ff7b72}
+  .str{color:#a5d6ff}
+  .num{color:#79c0ff}
+  .com{color:#8b949e;font-style:italic}
+  .fn{color:#d2a8ff}
+  .op{color:#ff7b72}
+  table{border-collapse:collapse;width:100%;margin:14px 0;background:var(--card)}
+  th,td{border:1px solid var(--border);padding:9px 12px;text-align:left;font-size:.92em}
+  th{background:#21262d;color:var(--accent);font-weight:600}
+  tr:nth-child(even){background:#181c22}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px 20px;margin:14px 0}
+  .card.title{font-weight:600;color:var(--accent);border-left:4px solid var(--accent)}
+  .warn{background:#2a1a0d;border:1px solid var(--yellow);border-radius:8px;padding:12px 16px;margin:14px 0;color:#ffd98a}
+  .warn::before{content:"⚠️ 纠正记忆 ";font-weight:700;color:var(--yellow)}
+  .tip{background:#0d1f17;border:1px solid var(--green);border-radius:8px;padding:12px 16px;margin:14px 0;color:#9be8b0}
+  .tip::before{content:"💡 ";color:var(--green)}
+  .file{display:inline-block;background:#1f6feb22;border:1px solid var(--accent);color:var(--accent);padding:2px 9px;border-radius:5px;font-family:monospace;font-size:.85em;text-decoration:none}
+  .stage{display:inline-block;width:30px;height:30px;line-height:30px;text-align:center;border-radius:50%;background:var(--accent);color:#000;font-weight:700;margin-right:8px}
+  .mermaid{background:#fff;border-radius:8px;padding:12px;margin:14px 0;text-align:center}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin:14px 0}
+  .stat{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:14px}
+  .stat .n{font-size:1.8em;color:var(--orange);font-weight:700}
+  .stat .l{color:var(--muted);font-size:.88em;margin-top:4px}
+  hr{border:none;border-top:1px solid var(--border);margin:2.5em 0}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:18px 24px;margin:20px 0}
+  .toc a{color:var(--accent);text-decoration:none;display:block;padding:3px 0}
+  .toc a:hover{text-decoration:underline}
+  .pill{display:inline-block;padding:1px 8px;border-radius:11px;font-size:.78em;font-weight:600}
+  .pill.green{background:#1a4d2e;color:var(--green)}
+  .pill.red{background:#4d1a1a;color:var(--red)}
+  .pill.gray{background:#2a2a2a;color:var(--muted)}
+  .pill.orange{background:#4d3a1a;color:var(--orange)}
+  .badge{background:var(--red);color:#fff;border-radius:4px;padding:1px 6px;font-size:.78em;margin-left:6px}
+  details{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:8px 14px;margin:10px 0}
+  summary{cursor:pointer;color:var(--accent);font-weight:600}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>🤖 机械臂分拣系统运行流程详解</h1>
+<p style="color:var(--muted)">基于 <code>D455 相机 + GraspNet-1Billion + YOLOv8 + MoveIt2 + Pinocchio IK</code> 的传送带自动分拣系统 — 从相机像素到机械臂关节转动的完整数据流拆解。</p>
+
+<div class="grid">
+  <div class="stat"><div class="n">7</div><div class="l">协同终端</div></div>
+  <div class="stat"><div class="n">5</div><div class="l">核心算法</div></div>
+  <div class="stat"><div class="n">3002</div><div class="l">auto_sorting_action.py 行数</div></div>
+  <div class="stat"><div class="n">0.015m</div><div class="l">IK 位置阈值</div></div>
+</div>
+
+<div class="toc">
+  <strong style="color:var(--green)">📑 目录</strong>
+  <a href="#arch">系统架构总览</a>
+  <a href="#terminals">7 个终端职责</a>
+  <a href="#flow">完整数据流</a>
+  <a href="#s1">阶段①：相机算 3D 坐标</a>
+  <a href="#s2">阶段②：GraspNet 6DoF 位姿</a>
+  <a href="#s3">阶段③：IK 求解</a>
+  <a href="#s4">阶段④：MoveIt 运动规划</a>
+  <a href="#s5">阶段⑤：夹爪 + 碰撞管理</a>
+  <a href="#s6">阶段⑥：抓取重试 + 状态广播</a>
+  <a href="#summary">底层算法位置汇总</a>
+</div>
+
+<!-- ============================================================ -->
+<h1 id="arch">系统架构总览</h1>
+
+<div class="mermaid">
+graph TB
+    subgraph 硬件
+      A[D455 相机<br/>固定在传送带上方]
+      B[AgileX Piper 机械臂<br/>6 DOF + 夹爪]
+      C[STM32 传送带<br/>串口 115200]
+      D[CH340 继电器]
+    end
+
+    subgraph T1[T1 MoveIt2 + 臂控]
+      M[move_group<br/>规划服务]
+      A1[/move_action action/]
+      A2[/compute_cartesian_path srv/]
+    end
+
+    subgraph T2[T2/T2b 相机]
+      R[realsense2_camera<br/>RGB + aligned_depth]
+      TF[static TF publisher<br/>base_link→camera]
+    end
+
+    subgraph T3[T3 视觉]
+      Y[YOLOv8 检测<br/>+ D455 深度]
+      CV[针孔反投影<br/>+ 手眼标定变换]
+    end
+
+    subgraph T4[T4 GraspNet]
+      G[GraspNet-1Billion<br/>6DoF 抓取位姿]
+    end
+
+    subgraph T5[T5 分拣动作]
+      IK[Pinocchio IK<br/>内嵌副本]
+      PLAN[MoveIt 规划<br/>关节/笛卡尔]
+      EXEC[轨迹执行<br/>+ 夹爪控制]
+      COLL[碰撞检测开关]
+    end
+
+    subgraph T6[T6 GUI]
+      GUI[Tkinter 面板]
+      FSM[自动分拣状态机]
+      CONV[STM32 传送带控制]
+    end
+
+    A --> R --> Y --> CV --> IK
+    A --> G --> IK
+    TF -.-> Y
+    TF -.-> G
+    IK --> PLAN --> EXEC --> B
+    COLL -.-> PLAN
+    M --> A1 --> EXEC
+    M --> A2 --> EXEC
+    GUI --> FSM
+    GUI --> CONV --> C
+    GUI -->|/sorting_cmds| EXEC
+
+    style A fill:#1a4d4d,stroke:#39d2c0
+    style B fill:#4d1a4d,stroke:#bc8cff
+    style T5 fill:#161b22,stroke:#58a6ff
+    style T6 fill:#2a1a0d,stroke:#d29922
+</div>
+
+<p>核心数据流向：<b style="color:var(--accent)">相机像素 → 针孔反投影 → 手眼标定矩阵 → 基坐标系坐标 → IK 求解关节角 → MoveIt RRT 规划 → 轨迹执行 → 真机</b>。</p>
+
+<!-- ============================================================ -->
+<h1 id="terminals">7 个终端职责</h1>
+
+<table>
+<tr><th>终端</th><th>节点</th><th>核心职责</th><th>关键依赖</th><th>启动顺序</th></tr>
+<tr><td><b style="color:var(--accent)">T1</b></td><td>MoveIt2 + 臂控节点</td><td>提供 <code>/move_action</code> 规划服务，读 <code>/control/joint_states</code> 驱动真机</td><td>CAN 激活、机械臂使能</td><td>1️⃣</td></tr>
+<tr><td><b style="color:var(--accent)">T2</b></td><td>realsense2_camera</td><td>发布 RGB + aligned_depth + camera_info</td><td>D455 USB3.0</td><td>2️⃣</td></tr>
+<tr><td><b style="color:var(--accent)">T2b</b></td><td>static_transform_publisher</td><td>发布 <code>base_link→camera_color_optical_frame</code> 静态 TF</td><td>手眼标定数据</td><td>3️⃣</td></tr>
+<tr><td><b style="color:var(--accent)">T3</b></td><td>realsense_yolo_node</td><td>YOLO 检测 + D455 深度 → 物体 3D 坐标</td><td>T2 图像、T2b TF</td><td>4️⃣</td></tr>
+<tr><td><b style="color:var(--accent)">T4</b></td><td>graspnet_service_node</td><td>GraspNet-1Billion 推理 6DoF 抓取位姿</td><td>T2 深度+RGB、T2b TF</td><td>5️⃣</td></tr>
+<tr><td><b style="color:var(--accent)">T5</b></td><td>auto_sorting_action</td><td>IK 求解 + MoveIt 规划 + 执行 + 夹爪控制</td><td>T1/T3/T4 全部</td><td>6️⃣</td></tr>
+<tr><td><b style="color:var(--accent)">T6</b></td><td>sorting_gui_client</td><td>GUI 面板 + STM32 传送带控制 + 状态机</td><td>T5</td><td>7️⃣</td></tr>
+</table>
+
+<div class="warn">启动顺序 T1→T2→T2b→T3→T4→T5→T6 不可乱：T3 要 T2b 的 TF 才能做坐标变换，T4 要 T2 的深度图才能推理，T5 要 T3/T4 就绪才能响应命令。</div>
+
+<!-- ============================================================ -->
+<h1 id="flow">完整数据流</h1>
+
+<div class="mermaid">
+sequenceDiagram
+    autonumber
+    participant GUI as T6 GUI
+    participant ACT as T5 auto_sorting_action
+    participant YOLO as T3 YOLO+深度
+    participant GN as T4 GraspNet
+    participant MOVE as T1 MoveIt
+    participant ARM as 机械臂
+
+    GUI->>ACT: /sorting_cmds (sort_graspnet)
+    ACT->>ACT: 回待机位 + 开夹爪
+    ACT->>GN: /graspnet/req (pick_x/y/z)
+    Note over GN: 从D455深度反投影点云<br/>RANSAC去桌面+DBSCAN聚类<br/>GraspNet推理候选grasp
+    GN-->>ACT: /graspnet/result (translation+quat+width)
+    ACT->>ACT: 覆盖 POSE_PICK<br/>z = max(gn_z, 0.045) + 0.064
+    ACT->>ACT: Pinocchio IK 求解 6关节角<br/>(位置<15mm 且 Z轴<30°)
+    alt IK 失败
+        ACT-->>GUI: 跳过本轮 (无fallback)
+    else IK 成功
+        ACT->>MOVE: /move_action (关节目标 POSE_PICK_UP)
+        MOVE-->>ACT: 轨迹
+        ACT->>ACT: FK 校验终点末端Z轴<br/>(z分量 > -0.5 拒绝)
+        ACT->>MOVE: ExecuteTrajectory action
+        MOVE->>ARM: /control/joint_states
+        ARM-->>ACT: /joint_states 反馈
+        ACT->>MOVE: GetCartesianPath (下降抓取)<br/>avoid_collisions=False
+        MOVE-->>ACT: 笛卡尔轨迹
+        ACT->>ARM: ExecuteTrajectory
+        ACT->>ARM: 夹爪闭合 (三级fallback)
+        ACT->>MOVE: 抬起 + 料框放置 (关节空间)
+        ACT->>ACT: 回待机位
+        ACT-->>GUI: /sorting/robot_status (success)
+    end
+</div>
+
+<!-- ============================================================ -->
+<h1 id="s1"><span class="stage">1</span>相机如何算出物体三维坐标</h1>
+<p>文件：<a class="file" href="file:///home/lxf/orange_dataset/realsense_yolo_node.py">realsense_yolo_node.py</a>　|　节点名：<code>/object_detector</code>　|　输出话题：<code>/detection_info</code></p>
+
+<h3>1.1 处理流水线</h3>
+<div class="mermaid">
+flowchart LR
+    A[RGB 图像] --> B[YOLOv8 推理<br/>每100ms]
+    B --> C[bbox: x1,y1,x2,y2<br/>+ conf + class]
+    C --> D[D455 深度图]
+    D --> E[bbox中心5×5<br/>取中位数 = depth_m]
+    E --> F[针孔反投影<br/>u,v → Xc,Yc,Zc]
+    F --> G[手眼标定矩阵<br/>T_cam_to_base]
+    G --> H[+ x/y/z 补偿<br/>base 系坐标]
+    H --> I[/detection_info JSON/]
+    style B fill:#3a1a4d,stroke:#bc8cff
+    style E fill:#1a3a4d,stroke:#79c0ff
+    style F fill:#1a4d3a,stroke:#3fb950
+    style G fill:#4d3a1a,stroke:#d29922
+</div>
+
+<h3>1.2 YOLO 检测</h3>
+<p>定时器每 100ms 触发 <code>detect_and_publish</code>（L327 注册，L924 推理）：</p>
+<pre><code><span class="com"># L924</span>
+results = self.model(self.latest_rgb, conf=self.CONF_THRESHOLD, verbose=False)
+<span class="com"># L962-966: 解析 bbox</span>
+<span class="kw">for</span> idx, box <span class="kw">in</span> enumerate(boxes_sorted):
+    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()  <span class="com"># 像素坐标</span>
+    conf = float(box.conf[0].cpu().numpy())
+    class_name = self.model.names[cls_id]</code></pre>
+<p>主物体 = 置信度最高的那个（<code>boxes_sorted[0]</code>，L934-938 预排序）。</p>
+
+<h3>1.3 从 D455 深度图取表面深度</h3>
+<p><code>depth_from_camera</code>（L644-702）：bbox 中心 5×5 像素的<b>中位数</b>采样：</p>
+<pre><code><span class="com"># L662-678</span>
+cx = (x1 + x2) // 2;  cy = (y1 + y2) // 2
+x_start = max(0, cx - 2); x_end = min(w, cx + 3)  <span class="com"># 5x5 区域</span>
+y_start = max(0, cy - 2); y_end = min(h, cy + 3)
+region = self.latest_depth[y_start:y_end, x_start:x_end]
+valid = region[region &gt; 0]
+<span class="kw">if</span> len(valid) &lt; 3: <span class="kw">return</span> <span class="kw">None</span>
+depth_mm = float(np.median(valid))   <span class="com"># ← 中位数抗噪</span>
+depth_m = depth_mm / 1000.0          <span class="com"># mm → m</span></code></pre>
+
+<div class="warn">你记忆里写"D455 用 25% 百分位计算 centroid z"——这混淆了两件事。<b>深度获取</b>用 5×5 中位数（L677）；<b>25% 百分位</b>出现在 PCA 朝向函数里（L867）估算物体层 z 底部算质心高度，目的是防质心过低撞台面。两者不是一回事。</div>
+
+<h3>1.4 像素 → 相机坐标系（针孔反投影）</h3>
+<p>标准针孔模型反投影（L704-713）：</p>
+<pre><code><span class="kw">def</span> <span class="fn">monocular_pixel_to_camera_coords</span>(self, u, v, depth):
+    x = (u - self.cx) * depth / self.fx
+    y = (v - self.cy) * depth / self.fy
+    z = depth
+    <span class="kw">return</span> np.array([x, y, z])</code></pre>
+<p>内参来源（两套）：</p>
+<ul>
+<li><b>硬编码 fallback</b>（L124-127）：fx=378.39, fy=379.37, cx=330.14, cy=246.10</li>
+<li><b>camera_info 实时覆盖</b>（L289-294 订阅，L781-790 回调）：从 <code>/camera/camera/color/camera_info</code> 取真实内参覆盖。注释（L146-150）说明硬编码与实际差 1.7%，0.5m 处产生 8.5mm 误差。</li>
+</ul>
+
+<h3>1.5 相机系 → 基坐标系（眼在手外核心）</h3>
+<p><b>T_cam_to_base 是硬编码常量</b>（L156-191），不是运行时从 JSON 读取——JSON 路径只在注释里记录来源：</p>
+<pre><code><span class="com"># L152-168: 来源 /home/lxf/handeye/result/2026-07-26_16-17-46_calibration.json</span>
+self.camera_to_base_translation = np.array([<span class="num">0.6733</span>, <span class="num">0.0107</span>, <span class="num">0.5971</span>])  <span class="com"># 米</span>
+self.camera_to_base_quat = np.array([-<span class="num">0.6934</span>, -<span class="num">0.7119</span>, <span class="num">0.0885</span>, <span class="num">0.0673</span>])
+<span class="com"># L188-191: 构建 4x4 齐次矩阵</span>
+self.transform_cam_to_base = np.eye(4)
+self.transform_cam_to_base[:3, :3] = self.rotation_matrix_cam_to_base
+self.transform_cam_to_base[:3, 3] = self.camera_to_base_translation</code></pre>
+<p>变换在 <code>transform_camera_to_base</code>（L579-593），<b>先矩阵变换再叠加补偿</b>：</p>
+<pre><code><span class="com"># L587-592</span>
+point_homogeneous = np.append(camera_coords, 1)
+base_coords = self.transform_cam_to_base @ point_homogeneous   <span class="com"># ① 矩阵变换</span>
+base_coords[0] += self.x_offset_m   <span class="com"># ② X 补偿 (默认 -0.045)</span>
+base_coords[1] += self.y_offset_m   <span class="com"># ③ Y 补偿 (默认 -0.010)</span>
+base_coords[2] += self.z_offset_m   <span class="com"># ④ Z 补偿 (默认 +0.030, 防撞台面)</span></code></pre>
+
+<div class="warn">你记忆里写 <code>x_offset_m=-0.025, y_offset_m=0.005</code>，但代码实际默认值是 <code>x_offset_m=-0.045, y_offset_m=-0.010</code>（L251-252）。z_offset_m=0.030 一致。</div>
+
+<h3>1.6 朝向估计（grasp_orientation）</h3>
+<p>函数 <code>_compute_grasp_orientation</code>（L803-913），用 <b>D455 深度点云 PCA 短轴对齐</b>：</p>
+<div class="mermaid">
+flowchart LR
+    A[bbox内点云] --> B[变换到base系]
+    B --> C[高度带通滤波<br/>保留物体层点]
+    C --> D[对XY分量做PCA<br/>numpy eigh]
+    D --> E[短轴 = 最小特征值<br/>对应特征向量]
+    E --> F[构造夹爪朝向 R<br/>X=短轴,Y=Z×X,Z=朝下]
+    F --> G[转四元数输出]
+    style D fill:#3a1a4d,stroke:#bc8cff
+</div>
+<pre><code><span class="com"># L879-906: 核心代码</span>
+pts_xy = np.stack([bx, by], axis=0)
+cov = np.cov(centered)
+eigvals, eigvecs = np.linalg.eigh(cov)  <span class="com"># 升序</span>
+short_axis_2d = eigvecs[:, 0]            <span class="com"># 短轴 = 最小特征值</span>
+<span class="com"># 构造夹爪朝向 R = [X|Y|Z]</span>
+z_axis = [0, 0, -1]                       <span class="com"># 接近方向朝下</span>
+x_axis = [short_axis_2d[0], short_axis_2d[1], 0]  <span class="com"># 开合方向=物体短轴</span>
+y_axis = np.cross(z_axis, x_axis)         <span class="com"># 手指长度方向</span></code></pre>
+<p>物理意义：让夹爪两根手指从物体两条<b>长边</b>合拢，夹住物体<b>窄腰</b>。当物体近圆形（<code>elongation_ratio &lt; 1.5</code>，L888）时返回 None，调用方用径向朝下姿态。</p>
+
+<h3>1.7 /detection_info 输出消息</h3>
+<table>
+<tr><th>字段</th><th>含义</th><th>单位</th></tr>
+<tr><td><code>base_position_m</code></td><td>基坐标系坐标 {x,y,z}</td><td>米</td></tr>
+<tr><td><code>grasp_orientation</code></td><td>[qx,qy,qz,qw] PCA 短轴朝向</td><td>四元数</td></tr>
+<tr><td><code>estimated_diameter_m</code></td><td>直径 = bbox平均像素×深度/fx</td><td>米</td></tr>
+<tr><td><code>centroid_base_z</code></td><td>质心 z（base 系）</td><td>米</td></tr>
+<tr><td><code>confidence</code></td><td>YOLO 置信度</td><td>0-1</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h1 id="s2"><span class="stage">2</span>GraspNet 6DoF 抓取位姿</h1>
+<p>文件：<a class="file" href="file:///home/lxf/agx_arm_ws/graspnet_service_node.py">graspnet_service_node.py</a>　|　虚拟环境：<code>orange_dataset/.venv</code>　|　仅在 <code>sort_graspnet</code> 命令触发</p>
+
+<h3>2.1 请求与响应</h3>
+<pre><code><span class="com"># L367-374: 订阅 /graspnet/req, 发布 /graspnet/result</span>
+<span class="com"># 请求 JSON (L405-410): cmd="get_grasp", pick_x/y/z (YOLO 检测位置)</span>
+<span class="com"># 响应 JSON (L574-581): success, translation[3], quaternion[4], width, score, n_candidates</span></code></pre>
+
+<h3>2.2 处理流水线</h3>
+<div class="mermaid">
+flowchart TB
+    A[/aligned_depth_to_color/] --> B[反投影成点云<br/>depth_to_pointcloud]
+    B --> C[RANSAC 去桌面平面]
+    C --> D[深度过滤 z&lt;0.8m]
+    D --> E[DBSCAN 聚类<br/>保留最大簇]
+    E --> F[GraspNet-1Billion 推理<br/>300 views, 12 angles, 4 depths]
+    F --> G[候选 grasp 列表<br/>translation+R+width+score]
+    G --> H[5项加权评分]
+    H --> I[三级邻近过滤<br/>4cm→6cm→8cm]
+    I --> J[变换到base_link<br/>+列重排]
+    J --> K[/graspnet/result/]
+    style F fill:#4d1a3a,stroke:#f85149
+    style H fill:#3a4d1a,stroke:#d29922
+</div>
+
+<h3>2.3 评分函数（L293-342）</h3>
+<p>5 项加权打分，权重总和 1.0：</p>
+<table>
+<tr><th>项</th><th>权重</th><th>公式</th><th>含义</th></tr>
+<tr><td>短轴对齐</td><td><b style="color:var(--orange)">0.30</b></td><td><code>|closing_xy · short_xy|</code></td><td>夹爪闭合方向对齐物体短轴</td></tr>
+<tr><td>垂直度</td><td><b style="color:var(--orange)">0.25</b></td><td><code>|approach_z|</code></td><td>1.0 = 正下方接近</td></tr>
+<tr><td>质心</td><td><b style="color:var(--orange)">0.20</b></td><td><code>exp(-dist/size×3.0)</code></td><td>距 XY 质心距离</td></tr>
+<tr><td>proximity</td><td><b style="color:var(--orange)">0.15</b></td><td><code>exp(-dist/0.04)</code></td><td>距 YOLO 检测点（4cm 衰减到 e⁻¹）</td></tr>
+<tr><td>score</td><td><b style="color:var(--orange)">0.10</b></td><td><code>|score|/max_score</code></td><td>GraspNet 自带评分</td></tr>
+</table>
+
+<h3>2.4 三级邻近过滤（L477-479）</h3>
+<pre><code><span class="kw">for</span> _prox_thresh, _label <span class="kw">in</span> [(<span class="num">0.04</span>, <span class="str">"严格4cm"</span>), (<span class="num">0.06</span>, <span class="str">"放宽6cm"</span>), (<span class="num">0.08</span>, <span class="str">"兜底8cm"</span>)]:
+    keep_prox = [i <span class="kw">for</span> i,d <span class="kw">in</span> enumerate(all_dists) <span class="kw">if</span> d &lt; _prox_thresh]
+    <span class="kw">if</span> keep_prox: <span class="kw">break</span></code></pre>
+<p>作用：确保候选在 YOLO 检测点附近（XY 距离），过滤掉 GraspNet 偶尔给出的深度 2-8m 的无效远距离解。</p>
+
+<h3>2.5 列重排（L544-555）</h3>
+<pre><code>T_base_grasp = T_cam_to_base @ T_cam_grasp
+<span class="com"># GraspNet 列序 [approach, closing, ortho] → 机器人列序 [opening, ortho, approach]</span>
+robot_R = np.column_stack([R_base[:,1], R_base[:,2], R_base[:,0]])</code></pre>
+
+<!-- ============================================================ -->
+<h1 id="s3"><span class="stage">3</span>IK 求解（最关键）</h1>
+
+<h3>3.1 ⚠️ 重大澄清：唯一的 IK 实现</h3>
+<div class="warn"><b>2026-08-11 更新：</b>独立节点 <code>pinocchio_ik_node.py</code> <b>已从代码库移除</b>。当前唯一实现是 <code>auto_sorting_action.py</code> 中的内嵌副本 <code>PinocchioIKSolver</code>（L78-246），直接在同一进程内调用，不涉及 ROS2 消息通信。</div>
+
+<table>
+<tr><th>文件</th><th>算法</th><th>阈值</th><th>状态</th></tr>
+<tr>
+  <td><a class="file" href="file:///home/lxf/agx_arm_ws/auto_sorting_action.py">auto_sorting_action.py L78-246</a><br/><b>（内嵌副本）</b></td>
+  <td><b>500 次随机采样 + 随机游走</b><br/>DLS 仅作 fallback</td>
+  <td>位置&lt;15mm 且 Z轴&lt;30°(0.52rad)</td>
+  <td><span class="pill green">✅ 实际使用</span></td>
+</tr>
+</table>
+
+<h3>3.2 核心难点：model.nq=8 但只解 6 个 DOF</h3>
+<p>URDF 里有 8 个关节（joint1-6 + gripper_joint1/2），但 IK 只解 6 个机械臂关节。所以需要 <code>joint_q_indices</code>（L77-86）记录每个机械臂关节在 8 维配置向量中的起始下标：</p>
+<pre><code><span class="com"># L121: 先取 neutral 8 维向量，再用 6 维 initial_guess 覆盖 joint1-6</span>
+q = pin.neutral(self.model)   <span class="com"># 8 维</span>
+<span class="kw">for</span> i, idx <span class="kw">in</span> enumerate(self.joint_q_indices):
+    q[idx] = float(initial_guess[i])   <span class="com"># 只填 joint1-6, gripper 保持 neutral</span></code></pre>
+<p>这样 <code>forwardKinematics</code> 收到的 q 长度才匹配 <code>model.nq=8</code>，否则报 "wrong argument size"。</p>
+
+<h3>3.3 IK 成功判定（L230-237）——三重安全约束</h3>
+<pre><code>_, final_pe, final_ze, _ = _combined_error(q)
+<span class="com"># final_pe = 位置误差(米)</span>
+<span class="com"># final_ze = 末端Z轴与目标Z轴夹角(弧度)</span>
+success = bool(final_pe &lt; <span class="num">0.015</span> <span class="kw">and</span> final_ze &lt; <span class="num">0.52</span>)
+<span class="com"># 0.015m = 15mm 位置阈值</span>
+<span class="com"># 0.52rad ≈ 30° Z轴方向约束</span></code></pre>
+
+<div class="mermaid">
+flowchart LR
+    A[IK 候选解 q] --> B{位置误差 < 15mm?}
+    B -- 否 --> X[❌ 拒绝]
+    B -- 是 --> C{Z轴夹角 < 30°?}
+    C -- 否 --> Y[❌ 拒绝朝上解<br/>危险!]
+    C -- 是 --> Z[✅ IK 成功]
+    style X fill:#4d1a1a,stroke:#f85149
+    style Y fill:#4d3a1a,stroke:#d29922
+    style Z fill:#1a4d2e,stroke:#3fb950
+</div>
+
+<div class="tip">为什么需要 Z 轴约束？当物体超出工作空间时，IK 可能返回"位置准但末端朝上"的解——只判位置会接受这种危险解，机械臂会朝上抓。加 <code>final_ze &lt; 0.52</code> 强制拒绝，让 IK 返回失败而非危险解。</div>
+
+<h3>3.4 FK 安全检查（L1297-1318）——轨迹终点的硬防线</h3>
+<p>IK 成功还不够，规划出轨迹后还要用 FK 验证<b>轨迹终点</b>的末端 Z 轴真的朝下：</p>
+<pre><code><span class="com"># L1297-1318</span>
+q_full = _pin.neutral(self.ik_solver.model)   <span class="com"># 8 维</span>
+<span class="kw">for</span> i, idx <span class="kw">in</span> enumerate(self.ik_solver.joint_q_indices):
+    q_full[idx] = jm.get(f<span class="str">'joint{i}'</span>, 0.0)     <span class="com"># 用轨迹终点关节角填 joint1-6</span>
+_pin.forwardKinematics(self.ik_solver.model, self.ik_solver.data, q_full)
+_pin.updateFramePlacements(self.ik_solver.model, self.ik_solver.data)
+ee_z = self.ik_solver.data.oMf[self.ik_solver.ee_frame_id].rotation[:, 2]
+<span class="kw">if</span> float(ee_z[2]) &gt; -<span class="num">0.5</span>:   <span class="com"># 末端Z轴的z分量 > -0.5 (倾斜>60°) → 拒绝</span>
+    self.get_logger().error(f<span class="str">"⛔ 安全拒绝: 轨迹终点末端 Z 轴朝上 ..."</span>)
+    <span class="kw">continue</span></code></pre>
+<p><code>ee_z = rotation[:, 2]</code> 是旋转矩阵第 3 列（末端 Z 轴方向），<code>ee_z[2]</code> 是它的 z 分量。<code>&gt; -0.5</code> 表示末端 Z 轴与世界上轴夹角 &lt; 60°（朝上或接近水平），直接拒绝该 profile。</p>
+
+<!-- ============================================================ -->
+<h1 id="s4"><span class="stage">4</span>MoveIt 运动规划</h1>
+
+<h3>4.1 MoveGroup 不是 C++ MoveGroupInterface</h3>
+<p>T5 用的是 ROS2 Python <code>ActionClient(self, MoveGroup, '/move_action')</code>（L280），关键参数：</p>
+<table>
+<tr><th>参数</th><th>值</th><th>说明</th></tr>
+<tr><td>group_name</td><td><code>'arm'</code></td><td>L658, L989, L1256</td></tr>
+<tr><td>planning_frame</td><td><code>'base_link'</code></td><td>L656, L937</td></tr>
+<tr><td>end_effector_link</td><td><code>'link6'</code></td><td>L937, L959</td></tr>
+<tr><td>max_velocity_scaling_factor</td><td><b style="color:var(--orange)">0.65</b></td><td>L684 ← 速度限制</td></tr>
+<tr><td>max_acceleration_scaling_factor</td><td><b style="color:var(--orange)">0.65</b></td><td>L685</td></tr>
+</table>
+
+<h3>4.2 两种规划路径对比</h3>
+<div class="grid">
+<div class="card">
+<h4 style="color:var(--green)">A. 关节空间规划</h4>
+<p style="color:var(--muted);font-size:.88em">点到点（待机↔料框）</p>
+<p><b>函数</b>：<code>move_arm_joint → send_goal</code>（L645-722）</p>
+<pre><code>goal_msg.request.group_name = 'arm'
+goal_msg.request.max_velocity_scaling_factor = 0.65
+goal_msg.request.goal_constraints = [joint_constraint]
+<span class="com"># plan_only=False → 既规划又执行</span></code></pre>
+<p><span class="pill green">用 RRTConnect</span></p>
+</div>
+<div class="card">
+<h4 style="color:var(--accent)">B. 笛卡尔空间规划</h4>
+<p style="color:var(--muted);font-size:.88em">直线运动（下降抓取）</p>
+<p><b>函数</b>：<code>execute_cartesian_path</code>（L980-1059）</p>
+<pre><code>req = GetCartesianPath.Request()
+req.waypoints = waypoints
+req.max_step = 0.005  <span class="com"># 5mm</span>
+req.jump_threshold = 1.6
+req.avoid_collisions = False  <span class="com"># ← 关键</span></code></pre>
+<p><span class="pill orange">用 GetCartesianPath service</span></p>
+</div>
+</div>
+
+<div class="tip">为什么 <code>avoid_collisions=False</code>？下降抓取时夹爪末端在传送带台面附近，碰撞模型偏保守会把合法位姿判为碰撞。GetCartesianPath 只做笛卡尔插补不做 RRT，配合此参数绕过端点检查。</div>
+
+<h3>4.3 速度是如何控制的</h3>
+<p><b>不是手动改 time_from_start</b>，而是通过 MoveIt 的 scaling factor（L684-685, L1270-1271）：</p>
+<pre><code>max_velocity_scaling_factor = 0.65      <span class="com"># 最大速度 65%</span>
+max_acceleration_scaling_factor = 0.65  <span class="com"># 最大加速度 65%</span></code></pre>
+<p>MoveIt 规划器内部会根据这个因子调整轨迹的 <code>time_from_start</code> 和关节速度。<code>execute_cartesian_path</code> 不设此参数（GetCartesianPath service 不接受），速度由轨迹时间戳决定。</p>
+
+<h3>4.4 起步防抖（防 -4 错误，L1028-1040）</h3>
+<pre><code><span class="com"># 时间戳置零 = 立刻执行, 避免被认定"过期轨迹"</span>
+res.solution.joint_trajectory.header.stamp.sec = 0
+res.solution.joint_trajectory.header.stamp.nanosec = 0
+<span class="com"># 起点覆盖为当前真实关节角 + 速度清零, 防止起点跳变</span>
+pt0 = res.solution.joint_trajectory.points[0]
+pt0.velocities = [0.0] * len(pt0.velocities)
+pt0.positions[i] = self.current_joints[jname]   <span class="com"># 用真实当前角覆盖</span></code></pre>
+
+<h3>4.5 关键位姿定义</h3>
+<div class="card">
+<h4 style="color:var(--purple)">关节空间（6 个关节角，弧度）</h4>
+<p style="color:var(--muted);font-size:.88em">用于点到点移动（L2312-2338）</p>
+<pre><code>JOINT_STANDBY  = [0, 0, 0, 0, 0, 0]                    <span class="com"># 待机位</span>
+JOINT_OBSERVE  = [0, 1.067, -1.164, 0, 1.218, 0]       <span class="com"># 观察位</span>
+JOINT_BIN1_ABOVE = [1.820, 1.797, -1.094, 0.079, 0.845, 0.104]  <span class="com"># 料框1上方</span>
+JOINT_BIN1_PLACE = [1.881, 2.642, -1.199, 0.236, 0.165, 0.061]  <span class="com"># 料框1放置</span>
+JOINT_BIN2_ABOVE = [-1.981, 1.983, -1.065, -0.079, 0.629, 0]     <span class="com"># 料框2上方</span>
+JOINT_BIN2_PLACE = [-1.981, 2.621, -1.280, 0, 0.319, 0]         <span class="com"># 料框2放置</span></code></pre>
+</div>
+<div class="card">
+<h4 style="color:var(--purple)">笛卡尔空间（xyz + quaternion）</h4>
+<p style="color:var(--muted);font-size:.88em">运行时动态计算（L2488-2518）</p>
+<pre><code>POSE_PICK['z'] = clamping_z + GRIPPER_PICK_Z_OFFSET   <span class="com"># L2514</span>
+<span class="com"># clamping_z 来自 centroid_base_z (检测质心), 下限 MIN_GRASP_Z=0.045</span>
+<span class="com"># GRIPPER_PICK_Z_OFFSET = 0.064 (link6 到夹持点 Z 距离)</span>
+POSE_PICK_UP['z'] = POSE_PICK['z'] + 0.13              <span class="com"># L2516 抬起 13cm</span>
+POSE_LIFT_SOFT['z'] = POSE_PICK['z'] + 0.035           <span class="com"># L2518 软抬起 3.5cm</span></code></pre>
+</div>
+
+<!-- ============================================================ -->
+<h1 id="s5"><span class="stage">5</span>夹爪控制 + 碰撞管理</h1>
+
+<h3>5.1 夹爪三级 fallback</h3>
+<p><code>operate_gripper</code> 函数（L1426-1455），三级降级：</p>
+<div class="mermaid">
+flowchart TB
+    A[operate_gripper width] --> B{一级: gripper_controller<br/>/follow_joint_trajectory}
+    B -- 成功 --> OK[✅ 完成]
+    B -- 失败/超时0.8s --> C{二级: joint7<br/>Gazebo仿真}
+    C -- 成功 --> OK
+    C -- 失败/超时0.4s --> D[三级: /control/joint_states<br/>真机/仿真桥]
+    D --> OK
+    style B fill:#1a4d3a,stroke:#3fb950
+    style C fill:#4d3a1a,stroke:#d29922
+    style D fill:#4d1a3a,stroke:#bc8cff
+</div>
+<pre><code><span class="com"># 一级 (L1432-1439): gripper_controller/follow_joint_trajectory</span>
+self._try_gripper_action([<span class="str">'gripper_joint1'</span>, <span class="str">'gripper_joint2'</span>],
+                         [target_pos*0.5, -target_pos*0.5], timeout_sec=0.8)
+<span class="com"># 二级 (L1442-1449): joint7 (Gazebo 仿真)</span>
+self._try_gripper_action([<span class="str">'joint7'</span>], [target_pos*0.5], timeout_sec=0.4)
+<span class="com"># 三级 (L1452-1454): /control/joint_states 发布 (真机)</span>
+self._publish_gripper_joint_state(target_pos)</code></pre>
+<p><b>开口宽度计算</b>（<code>compute_gripper_targets</code> L2376-2388）：</p>
+<pre><code>open_target  = max(0.060, min(0.095, d + 0.020))   <span class="com"># 张开 = 直径+2cm</span>
+close_target = max(0.020, min(0.080, d - 0.020))   <span class="com"># 闭合 = 直径-2cm (最小2cm)</span></code></pre>
+
+<h3>5.2 碰撞检测管理</h3>
+<p><code>_set_bin_collision_allowed</code>（L537-630）管理 12 个传送带碰撞体：</p>
+<pre><code>obj_ids = [<span class="str">'belt_deck'</span>, <span class="str">'rail_py'</span>, <span class="str">'rail_ny'</span>, <span class="str">'leg_fr'</span>, <span class="str">'leg_fl'</span>,
+           <span class="str">'leg_br'</span>, <span class="str">'leg_bl'</span>, <span class="str">'platform'</span>, <span class="str">'control_box'</span>,         <span class="com"># 场景物体</span>
+           <span class="str">'conveyor_structure'</span>, <span class="str">'conveyor_belt_col'</span>, <span class="str">'conveyor_control_box'</span>]  <span class="com"># URDF连杆</span></code></pre>
+<div class="warn">为什么要禁用？料框放置位和下降抓取位有多个碰撞体与机械臂干涉（move_group 日志确认：control_box↔link5, rail_ny↔gripper_link2, conveyor_control_box↔gripper_link1）。物理上物体在台面上方 7cm，夹爪不会真撞台面，仅碰撞模型偏保守。禁用后 RRTConnect 才能在目标状态采样成功。</div>
+<p><b>关键设计</b>（L568-616）：先调 <code>/get_planning_scene</code> 取当前 ACM，<b>只修改 obj_ids 相关条目</b>，保留原有碰撞对（包括夹爪自碰撞对），避免 diff 替换整个 ACM 破坏自碰撞检测。发布后 <code>time.sleep(0.15)</code>（L625）给 move_group 合并 diff 的时间。</p>
+
+<div class="mermaid">
+sequenceDiagram
+    participant ACT as auto_sorting_action
+    participant PS as /planning_scene
+    participant MG as move_group
+    ACT->>PS: get_planning_scene
+    PS-->>ACT: 当前 ACM
+    ACT->>ACT: 只改 obj_ids 条目<br/>保留夹爪自碰撞对
+    ACT->>PS: publish PlanningScene diff
+    Note over ACT: sleep(0.15) 等合并
+    MG->>MG: 应用新 ACM
+    ACT->>MG: 规划 (RRTConnect)
+</div>
+
+<!-- ============================================================ -->
+<h1 id="s6"><span class="stage">6</span>抓取重试 + 状态广播</h1>
+
+<h3>6.1 sort_graspnet 完整流程</h3>
+<div class="mermaid">
+flowchart TB
+    A[/sorting_cmds sort_graspnet/] --> B[回待机位 + 开夹爪]
+    B --> C[/graspnet/req 发布<br/>等 /graspnet/result<br/>15s 超时]
+    C --> D{GraspNet 成功?}
+    D -- 否 --> E[立即跳过<br/>无 fallback]
+    D -- 是 --> F[覆盖 POSE_PICK<br/>z = max gn_z 0.045 + 0.064]
+    F --> G[graspnet_quat 作为<br/>active_ori]
+    G --> H[复用标准 sort 序列]
+    H --> I[step1: 移到 POSE_PICK_UP]
+    I --> J[step2-4: 下降抓取<br/>IK 用 active_ori]
+    J --> K[step5: 闭合夹爪]
+    K --> L[step6-7: 抬起]
+    L --> M[step8: 料框放置]
+    M --> N[step9: 回待机位]
+    N --> O[/sorting/robot_status/]
+    style E fill:#4d1a1a,stroke:#f85149
+    style O fill:#1a4d2e,stroke:#3fb950
+</div>
+
+<h3>6.2 抓取失败重试</h3>
+<pre><code>MAX_GRASP_RETRIES = <span class="num">3</span>   <span class="com"># L2344, 最多 3 次</span>
+<span class="kw">for</span> retry <span class="kw">in</span> range(MAX_GRASP_RETRIES):
+    <span class="kw">if</span> retry &gt; 0:   <span class="com"># L2670-2680 重试前刷新</span>
+        开夹爪 → 回观察位 → _get_fresh_detection 重新检测 → 重新规划姿态
+    下降抓取 → 闭合 → 抬起 → 检测
+    <span class="kw">if</span> grasp_ok: <span class="kw">break</span>
+<span class="com"># 3 次全失败 → 跳过本轮 (L2801-2809)</span></code></pre>
+<div class="warn">你记忆里写"一次重试，重试失败跳过"——实际是 <b>3 次重试</b>（MAX_GRASP_RETRIES=3）。重试前会回观察位重新检测，不是简单重试。</div>
+
+<h3>6.3 状态广播（/sorting/robot_status）</h3>
+<p><code>_publish_robot_status</code>（L1488-1534）：</p>
+<pre><code>action = <span class="str">"sort_complete"</span> <span class="kw">if</span> success <span class="kw">else</span> <span class="str">"sort_failed"</span>   <span class="com"># L1501</span>
+payload = {
+    <span class="str">"action"</span>: action, <span class="str">"cargo_type"</span>: ..., <span class="str">"confidence"</span>: ...,
+    <span class="str">"source_position"</span>: <span class="str">"(x,y,z)"</span>, <span class="str">"target_position"</span>: <span class="str">"(料框FK坐标)"</span>,
+    <span class="str">"actual_position"</span>: target_position <span class="kw">if</span> success <span class="kw">else</span> <span class="str">"NONE"</span>,
+    <span class="str">"grasp_success"</span>: grasp_ok,
+    <span class="str">"joint_angles"</span>: [6个关节角度],   <span class="com"># 度</span>
+    <span class="str">"tcp_position"</span>: [x,y,z],          <span class="com"># 毫米, TF lookup link6</span>
+    <span class="str">"error_code"</span>: 0 <span class="kw">if</span> success <span class="kw">else</span> 99,
+}</code></pre>
+<div class="warn">你记忆里写 error_code 有 1/2/3/4 细分——代码实际<b>只有 0（成功）和 99（失败）</b>两种，没有 1=抓取失败/2=放置失败/3=IK失败/4=超时 的区分。如果需要细分错误码，这是个可改进的点。</div>
+
+<!-- ============================================================ -->
+<h1 id="summary">底层算法实现位置汇总</h1>
+
+<table>
+<tr><th>算法</th><th>实现位置</th><th>备注</th></tr>
+<tr><td>YOLO 推理</td><td><a class="file" href="file:///home/lxf/orange_dataset/realsense_yolo_node.py">realsense_yolo_node.py L924</a></td><td>ultralytics 库</td></tr>
+<tr><td>针孔模型反投影</td><td>realsense_yolo_node.py L704-713</td><td>手写公式</td></tr>
+<tr><td>手眼标定变换</td><td>realsense_yolo_node.py L188-191, L587-588</td><td>硬编码 4x4 矩阵</td></tr>
+<tr><td>PCA 短轴朝向</td><td>realsense_yolo_node.py L879-906</td><td>numpy eigh</td></tr>
+<tr><td>GraspNet 推理</td><td><a class="file" href="file:///home/lxf/agx_arm_ws/graspnet_service_node.py">graspnet_service_node.py L170-188</a></td><td>GraspNet-1Billion 模型</td></tr>
+<tr><td>GraspNet 评分</td><td>graspnet_service_node.py L293-342</td><td>5 项加权</td></tr>
+<tr><td><b>Pinocchio IK</b></td><td><b><a class="file" href="file:///home/lxf/agx_arm_ws/auto_sorting_action.py">auto_sorting_action.py L78-246（内嵌副本）</a></b></td><td>500次随机采样+DLS</td></tr>
+<tr><td>Pinocchio FK 校验</td><td>auto_sorting_action.py L1297-1318</td><td>轨迹终点 Z 轴检查</td></tr>
+<tr><td>MoveIt 规划</td><td>auto_sorting_action.py L645-722 (关节) / L980-1059 (笛卡尔)</td><td>Python ActionClient</td></tr>
+<tr><td>轨迹执行</td><td>auto_sorting_action.py L1042-1054</td><td>ExecuteTrajectory action</td></tr>
+<tr><td>夹爪控制</td><td>auto_sorting_action.py L1426-1455</td><td>三级 fallback</td></tr>
+<tr><td>碰撞检测管理</td><td>auto_sorting_action.py L537-630</td><td>PlanningScene diff</td></tr>
+<tr><td>自动分拣状态机</td><td><a class="file" href="file:///home/lxf/agx_arm_ws/sorting_gui_client.py">sorting_gui_client.py L1480-1660</a></td><td>IDLE/CHECK_RIGHT/CONVEYOR_WAIT/...</td></tr>
+<tr><td>Pinocchio IK（内嵌副本，唯一实现）</td><td><a class="file" href="file:///home/lxf/agx_arm_ws/auto_sorting_action.py">auto_sorting_action.py L78-246</a></td><td>500次随机采样+随机游走<br/>独立节点 pinocchio_ik_node.py 已移除</td></tr>
+</table>
+
+<hr>
+
+<h2>🎯 一句话总结</h2>
+<div class="card title">
+<p style="font-size:1.05em;line-height:1.8">
+相机像素 <span style="color:var(--teal)">→(针孔反投影)→</span>
+相机系 3D <span style="color:var(--teal)">→(手眼标定矩阵)→</span>
+基坐标系 <span style="color:var(--teal)">→(+xyz补偿)→</span>
+检测坐标 <span style="color:var(--teal)">→(可选:GraspNet 6DoF)→</span>
+抓取位姿 <span style="color:var(--teal)">→(Pinocchio IK, 6关节角)→</span>
+关节目标 <span style="color:var(--teal)">→(MoveIt RRT规划)→</span>
+轨迹 <span style="color:var(--teal)">→(ExecuteTrajectory action)→</span>
+<code>/control/joint_states</code> <span style="color:var(--teal)">→</span> 真机执行
+</p>
+<p style="margin-top:12px;color:var(--muted)">速度由 <code>max_velocity_scaling_factor=0.65</code> 限制；安全由 <b style="color:var(--yellow)">IK 的 Z 轴约束 &lt;30°</b> + <b style="color:var(--yellow)">FK 末端朝向检查 z&gt;-0.5</b> + <b style="color:var(--yellow)">碰撞检测开关</b> 三重保障。</p>
+</div>
+
+<p style="text-align:center;color:var(--muted);margin-top:40px;font-size:.88em">
+📄 文档生成于 2026-08-10 ｜ 基于 auto_sorting_action.py (3002行) 实际代码分析
+</p>
+
+</div>
+
+<script>
+mermaid.initialize({
+  startOnLoad: true,
+  theme: 'dark',
+  themeVariables: {
+    primaryColor: '#1f6feb',
+    primaryTextColor: '#c9d1d9',
+    primaryBorderColor: '#58a6ff',
+    lineColor: '#8b949e',
+    secondaryColor: '#21262d',
+    tertiaryColor: '#161b22',
+    fontFamily: '-apple-system, "PingFang SC", sans-serif'
+  },
+  flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis' },
+  sequence: { useMaxWidth: true, mirrorActors: false, actorMargin: 50 }
+});
+</script>
+</body>
+</html>

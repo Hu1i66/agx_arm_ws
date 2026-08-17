@@ -53,7 +53,7 @@ import numpy as np
 import traceback
 from typing import Tuple, Optional
 
-# ---- Pinocchio IKSolver (inlined to avoid ROS2 msg dependency in pinocchio_ik_node) ----
+# ---- Pinocchio IKSolver (内嵌副本, 独立节点 pinocchio_ik_node.py 已移除) ----
 
 # State variables for lazy-loading
 _PINOCCHIO_AVAILABLE = False

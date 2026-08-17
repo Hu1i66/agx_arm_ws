@@ -2,189 +2,103 @@
 
 ## 概述
 
-本工作项添加了一个基于 Pinocchio + CasADi 的 IK（逆向运动学）求解器，可作为 MoveIt2 规划器的可选分支或补充方案。
+本工作项添加了一个基于 Pinocchio + CasADi 的 IK（逆向运动学）求解器，内嵌在 `auto_sorting_action.py` 中，作为 MoveIt2 规划器的关节空间求解方案。
 
-## 新增文件
+> ⚠️ **架构说明（2026-08 更新）**：独立节点 `pinocchio_ik_node.py` 已移除。当前唯一实现是 `auto_sorting_action.py` 中的内嵌副本 `PinocchioIKSolver`（第 78~246 行）。不再使用 ROS2 消息通信，直接在同一进程内调用。
 
-### 1. **消息定义** (`agx_arm_msgs/msg/`)
-- **PoseCmd.msg** - IK 求解器输入
-  - 目标位置: x, y, z
-  - 目标姿态: qx, qy, qz, qw（四元数）
-  - 夹爪目标: gripper_target（0.0~1.0）
+## 实现位置
 
-- **IKSolution.msg** - IK 求解器输出
-  - success: 求解是否成功
-  - joint1~joint6: 关节角度（弧度）
-  - error: 优化误差
-  - computation_time: 计算耗时（秒）
+### `PinocchioIKSolver` 类（`auto_sorting_action.py` 第 78~246 行）
 
-### 2. **IK 求解节点** (`pinocchio_ik_node.py`)
-ROS2 节点，提供以下功能：
-- 使用 Pinocchio 加载机器人 URDF
-- 处理 `/pose_cmd` 消息，发送 IK 请求
-- 发布 `/ik_solution` 消息，返回关节解
-- 支持 CasADi IPOPT 优化求解器
+- 使用 Pinocchio 加载机器人 URDF（`test2.urdf`）
+- 求解 6 个关节角（joint1~joint6），末端 frame = `link6`
+- 不依赖 ROS2 消息，直接函数调用
 
-**启动命令**（需要先安装依赖）：
-```bash
-# 安装依赖
-pip install pinocchio casadi numpy
-
-# 启动 IK 节点
-python3 /home/lxf/agx_arm_ws/pinocchio_ik_node.py
-```
-
-### 3. **修改 auto_sorting_action.py**
-在分拣循环的关键位置添加了可开关的 IK 分支：
-
-- **第二步（下降抓取）**
-  - 当 `enable_ik=True` 时，先尝试 Pinocchio IK 求解
-  - 若成功，直接执行关节空间轨迹
-  - 若失败，自动回退到 MoveIt2 笛卡尔规划器
-
-- **第五点五步（连贯微降到放置位）**
-  - 同样的 IK 优先 + MoveIt2 回退机制
-
-## 使用方法
-
-### 启用 IK 分支
-
-编辑 `auto_sorting_action.py` 的 `main()` 函数：
+**调用入口**（`auto_sorting_action.py` 第 116 行）：
 
 ```python
-def main():
-    rclpy.init()
-    node = MoveItActionClient()
-    # ...
-    
-    # 修改此行为 True 来启用 IK 分支
-    enable_ik_solver = True  # <-- 改为 True
-    node.enable_ik = enable_ik_solver
+def get_ik_solution(
+    target_pos,       # [x, y, z] 目标位置（米）
+    target_quat,      # [qx, qy, qz, qw] 目标姿态四元数
+    initial_guess,    # 6 维关节角初始猜测（当前关节状态）
+    max_iter=500,
+    tol=1e-4
+) -> (success: bool, q_sol: np.ndarray, error: float, time: float)
 ```
 
-### 工作流程
+## 工作流程
 
-1. **默认模式**（`enable_ik=False`）
-   - 使用经典 MoveIt2 笛卡尔规划器
-   - 无需额外依赖（pinocchio/casadi）
+`auto_sorting_action.py` 的分拣步骤中，机械臂移动优先使用内嵌 IK：
 
-2. **IK 增强模式**（`enable_ik=True`）
-   - 启动 `pinocchio_ik_node.py`
-   - auto_sorting_action.py 在下降和放置步骤尝试 IK 求解
-   - 最多等待 2.0 秒获取 IK 解
-   - IK 成功 → 关节空间直接执行（通常更快）
-   - IK 失败/超时 → 自动回退到 MoveIt2
+1. **IK 求解**：给定抓取/放置位姿，`PinocchioIKSolver` 求解 6 关节角
+2. **成功** → 关节空间目标直接交给 MoveIt2 规划执行（`move_arm_joint`）
+3. **失败** → 回退到姿态约束 + MoveIt2 规划（`move_arm_cartesian`）
 
-## 性能特性
+IK 与 MoveIt2 的分工：
 
-### IK 求解优势
-- **更快**：关节空间执行避免笛卡尔插补的多次 FK 验证
-- **更稳健**：CasADi/IPOPT 优化器对复杂约束的处理能力
-- **更准确**：精确的机器人运动学模型（从 URDF 解析）
+- **Pinocchio IK**：计算"末端到目标位姿时 6 个关节各转多少度"（静态解）
+- **MoveIt2**：从当前关节角规划到目标关节角的时序轨迹（避障、限速、平滑）
 
-### IK 求解劣势
-- **依赖重**：需要安装 pinocchio, casadi 等库
-- **计算成本**：IPOPT 优化通常需要 100~500ms
-- **初值敏感**：IK 质量依赖当前关节状态的初值
+## IK 算法说明
 
-## 集成示例
+`get_ik_solution` 采用**随机采样 + 随机游走**策略（非 CasADi IPOPT）：
 
-### 在 sort 流程中的位置
+| 阶段 | 说明 |
+|------|------|
+| Phase 1 随机采样 | 500 次，70% 在初始猜测附近高斯采样（σ 0.15→0.30 rad），30% 全局均匀采样 |
+| Phase 2 随机游走 | 6000 次，σ 随当前误差自适应（`max(0.003, err×6.0)`） |
+| 提前终止 | `pe<0.005 且 ze<0.15 且 yaw_err<0.25` 时提前退出 |
+
+**误差函数** `_combined_error`（第 141~169 行）：
+
+```
+total = 位置误差 + 0.06×Z轴夹角误差 + 0.05×偏航误差 + 0.01×joint6 偏差
+```
+
+- 位置误差 `pe`：末端平移与目标的欧氏距离
+- Z 轴夹角 `ze`：末端 Z 轴与目标 Z 轴的夹角（0=对齐，π=相反）
+- 偏航误差 `yaw_err`：末端 X 轴与目标 X 轴的夹角（取绝对值）
+- joint6 偏差：只惩罚腕关节，避免冗余关节翻转 90° 的解
+
+## 安全约束
+
+IK 成功判定（第 237 行）：
 
 ```python
-# 【第二步】 下降抓取
-if node.enable_ik:
-    # 尝试 IK 求解
-    ik_ok, ik_joints = node.move_arm_via_ik(POSE_PICK, [qx, qy, qz, qw], "下降抓取")
-    if ik_ok:
-        # IK 成功，关节空间执行
-        node.move_arm_joint(ik_joints, "下降抓取 (IK 方案)")
-    else:
-        # IK 失败，回退到 MoveIt2
-        node.move_arm_cartesian(POSE_PICK, "下降抓取 (MoveIt2)")
-else:
-    # 跳过 IK，直接用 MoveIt2
-    node.move_arm_cartesian(POSE_PICK, "下降抓取 (MoveIt2)")
+success = bool(final_pe < 0.015 and final_ze < 0.52)
 ```
+
+- **位置误差 < 15mm**（`final_pe < 0.015`）
+- **Z 轴方向误差 < 30°**（`final_ze < 0.52 rad`）
+
+> ⚠️ Z 轴约束的意义：当物体超出工作空间时，只有末端朝上的构型可达（位置准但 Z 轴朝上）。若只判位置会接受该解 → 机械臂朝上抓（危险）。加 `final_ze` 约束强制拒绝朝上解，物体超出工作空间时 IK 返回失败而非危险解。
+
+## 辅助方法
+
+### `get_frame_position(q_joints, frame_name)`（第 248~273 行）
+
+用 FK 计算指定 frame（如 `link6`, `gripper_link1`）在 base 坐标系中的位置，用于料框坐标计算和抓取验证。
 
 ## 故障排除
 
-### 问题：IK 节点启动失败 "pinocchio not found"
+### 问题：启动报错 "Pinocchio not available"
+
 ```bash
-pip install pinocchio
-# 如果上述失败，尝试从 conda
-conda install -c conda-forge pinocchio
+pip install pinocchio casadi numpy
 ```
 
-### 问题：IK 求解超时
-- 增加 `move_arm_via_ik()` 中的等待时间（默认 2.0s）
-- 检查 pinocchio_ik_node.py 的 IPOPT 优化器参数
-- 验证 URDF 路径正确
+### 问题：IK 求解超时 / 无解
 
-### 问题：IK 精度不足 (error > 0.1)
-- 调整 `move_arm_via_ik()` 中的成功条件
-- 增加 IPOPT max_iter 的迭代次数
+- 检查 `initial_guess` 是否传入当前关节状态（好的初值显著提高成功率）
+- 增加采样次数（第 186 行 `n_samples`）或随机游走次数（第 214 行 `n_walk`）
+- 验证 URDF 路径正确（`test2.urdf`）
+- 确认目标位置在工作空间内（超出工作空间时 IK 返回失败是安全行为）
+
+### 问题：IK 精度不足 (error > 0.015)
+
+- 检查目标四元数是否归一化
 - 使用更好的初值猜测（当前关节状态）
-
-## 消息序列图
-
-```
-auto_sorting_action.py       pinocchio_ik_node.py
-        |                            |
-        |   /pose_cmd (PoseCmd)      |
-        |------------------------------>
-        |                            | (运行 IPOPT 优化)
-        |    /ik_solution (IKSolution)|
-        |<------------------------------
-        |                            |
-        | (检查 solution.success)     |
-        | (执行关节解或回退MoveIt2)    |
-```
-
-## API 参考
-
-### MoveItActionClient.move_arm_via_ik()
-
-```python
-def move_arm_via_ik(
-    self, 
-    pose_dict,           # {'x': float, 'y': float, 'z': float}
-    orientation_quat,    # [qx, qy, qz, qw]
-    desc                 # 动作描述字符串
-) -> Tuple[bool, Optional[List[float]]]:
-    """
-    通过 IK 求解获取目标姿态的关节解
-    
-    返回: (success, joint_angles) 
-          success=True 时返回 6 个关节角 (joint1~joint6)
-          success=False 时返回 None
-    """
-```
-
-## 性能测试结果（参考）
-
-假设使用 Piper 6 DOF 机械臂：
-
-| 操作 | MoveIt2 笛卡尔 | IK + 关节空间 | 加速比 |
-|------|-----------------|-----------------|---------|
-| 下降 3cm | 1.2s | 0.8s | 1.5x |
-| 放置 3cm | 1.1s | 0.7s | 1.6x |
-| 完整循环 | 8.5s | 5.2s | 1.6x |
-
-*实际性能取决于环境约束和 IPOPT 收敛情况*
-
-## 配置调整
-
-在 `pinocchio_ik_node.py` 的 `PinocchioIKSolver.get_ik_solution()` 中：
-
-```python
-# IPOPT 优化器参数
-solver = casadi.nlpsol('solver', 'ipopt', nlp, {
-    'ipopt.max_iter': 100,        # 最大迭代次数（增加=更精确但更慢）
-    'ipopt.tol': 1e-5,            # 收敛容差（减小=更精确但更慢）
-    'ipopt.print_level': 0,       # 0=无输出，1-12=详细调试
-})
-```
+- 调整成功阈值（第 237 行）——注意降低阈值会削弱安全约束
 
 ## 下一步改进
 
@@ -196,5 +110,4 @@ solver = casadi.nlpsol('solver', 'ipopt', nlp, {
 
 ---
 
-**作者**: AI Assistant  
-**最后更新**: 2026-04-22
+**最后更新**: 2026-08-11
