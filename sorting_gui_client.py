@@ -73,6 +73,12 @@ def ros_process_worker(cmd_q, st_q, pose_q, img_q, det_q, conv_q, conv_status_q,
             try:
                 if _conv_ok:
                     s = _conv.get_status()
+                    status_msg = {'type': 'conveyor_status',
+                                  'speed': s['speed'],
+                                  'object_detected': s['object_detected'],
+                                  'motor_running': s['motor_running'],
+                                  'motor_direction': s.get('motor_direction', 1),
+                                  'connected': True}
                     try:
                         conv_status_q.put_nowait({'type': 'status', 'speed': s['speed'],
                                        'object_detected': s['object_detected'],
@@ -80,14 +86,22 @@ def ros_process_worker(cmd_q, st_q, pose_q, img_q, det_q, conv_q, conv_status_q,
                     except Exception:
                         pass
                 else:
+                    status_msg = {'type': 'conveyor_status', 'speed': 0.0,
+                                  'object_detected': False, 'motor_running': False,
+                                  'motor_direction': 1, 'connected': False}
                     try:
                         conv_status_q.put_nowait({'type': 'status', 'speed': 0.0,
                                        'object_detected': False, 'motor_running': False})
                     except Exception:
                         pass
+                try:
+                    sm = String(); sm.data = json.dumps(status_msg)
+                    node._conv_status_pub.publish(sm)
+                except Exception:
+                    pass
             except Exception:
                 pass
-            time.sleep(0.25)
+            time.sleep(0.1)
     threading.Thread(target=_conv_monitor, daemon=True).start()
 
     # ═════════ 模式切换 (水果 YOLO ↔ 蓝方块检测) ═════════
@@ -142,6 +156,8 @@ def ros_process_worker(cmd_q, st_q, pose_q, img_q, det_q, conv_q, conv_status_q,
             self._exp_pub = self.create_publisher(String, '/camera/exposure_ctrl', 10)
             # 急停/返回待机位 命令发布器 (auto_sorting_action.py 订阅 /emergency_stop)
             self._emergency_pub = self.create_publisher(String, '/emergency_stop', 10)
+            # 传送带实时状态发布 (auto_sorting_action.py sort_dynamic 订阅): 速度/物体/电机
+            self._conv_status_pub = self.create_publisher(String, '/conveyor_status', 10)
             self.create_subscription(String, '/sorting_status', self._on_st, 10)
             self._tf_buf = tf2_ros.Buffer()
             self._tf_lis = tf2_ros.TransformListener(self._tf_buf, self)
