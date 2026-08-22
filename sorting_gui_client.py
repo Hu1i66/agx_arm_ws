@@ -403,6 +403,16 @@ def main():
             self._auto_error_seen=False        # SORTING 中是否看到 error
             self._auto_sort_stop_requested=False  # 停止请求标志
             self._auto_sort_line_u=260         # 分界线 u 坐标 (向左偏移, 物体从左向右移动, 越线后进入抓取区)
+            # ── 动态抓取模式 (传送带持续运行, 移动拦截) ──
+            self.dynamic_mode = False
+            self._dynamic_state = 'OFF'      # OFF/RUNNING/MISS_STOP/STOPPING
+            self._dynamic_trigger_line_u = 200   # 上游触发线: 物体越线进入跟踪区
+            self._dynamic_miss_line_u = 560      # 下游漏抓分界线 (可调): 越线即漏抓
+            self._dynamic_busy = False
+            self._dyn_trig_line_id = None        # 上游触发线 canvas 线对象
+            self._dyn_trig_label_id = None       # 上游触发线 canvas 文本对象
+            self._dyn_miss_line_id = None        # 下游漏抓分界线 canvas 线对象
+            self._dyn_miss_label_id = None       # 下游漏抓分界线 canvas 文本对象
             self._auto_sort_tick_id=None       # after 句柄
             self._conv_stop_retry=0            # 传送带停止重试计数
             self._conv_stopped_ts=0            # 传送带停止完成时间戳 (用于观察 1s 等物体静止)
@@ -623,6 +633,17 @@ def main():
             self.auto_sort_stop_btn.pack(side=tk.LEFT,expand=True,fill="x",padx=(4,0))
             tk.Label(fas,text=" 分界线 u=260 (物体左→右) | 苹果/草莓/橙→框1 | 柠檬/桃/梨→框2 | 失败重试1次",
                      font=("Arial",8),fg="gray").pack(pady=(6,0))
+            # ── 动态抓取模式按钮 ──
+            fdyn=tk.LabelFrame(self.right_frame, text=" 动态抓取", padx=10, pady=10); fdyn.pack(fill="x", pady=5)
+            bdyn=tk.Frame(fdyn); bdyn.pack(fill="x")
+            self.dyn_start_btn=tk.Button(bdyn,text=" 动态抓取 ",command=self._dynamic_start,
+                                         font=("Arial",12,"bold"),bg="#9C27B0",fg="white")
+            self.dyn_start_btn.pack(side=tk.LEFT,expand=True,fill="x",padx=(0,4))
+            self.dyn_stop_btn=tk.Button(bdyn,text=" 停止动态抓取 ",command=self._dynamic_stop,
+                                        font=("Arial",12,"bold"),bg="#FF9800",fg="white",state=tk.DISABLED)
+            self.dyn_stop_btn.pack(side=tk.LEFT,expand=True,fill="x",padx=(4,0))
+            tk.Label(fdyn,text=" 上游触发线 u=200 | 下游漏抓线 u=560 (可调) | 越线即停带静态兜底",
+                     font=("Arial",8),fg="gray").pack(pady=(6,0))
             fa=tk.Frame(self.right_frame); fa.pack(pady=10)
             tk.Button(fa,text="🛑 急停 (EMERGENCY STOP)",command=self._on_emergency_stop,
                       font=("Arial",14,"bold"),bg="#FF0000",fg="white",
@@ -729,8 +750,8 @@ def main():
                     # 默认主物体显示 (顶层字段, 保持向后兼容)
                     if d.get('detected'):
                         self.det_status_var.set(f" 已检测到物体 (共 {len(objects)} 个)")
-                        # 自动分拣运行时保持手动按钮禁用
-                        if not self.auto_sort_running:
+                        # 自动分拣/动态抓取运行时保持手动按钮禁用
+                        if not (self.auto_sort_running or self.dynamic_mode):
                             self.pick_btn.config(state=tk.NORMAL,bg="#4CAF50")
                             # 两阶段精定位在 eye-to-hand 下无效 (相机固定, 移动机械臂不改变视角), 永久禁用
                             self.pick_graspnet_btn.config(state=tk.NORMAL,bg="#FF9800")
@@ -1177,7 +1198,7 @@ def main():
                 self.det_dist.set("尺寸: --")
             # 启用蓝方块抓取按钮 (仅在非切换状态且 base_coords 有效时)
             if not self._mode_switching and bc and all(k in bc for k in ('x', 'y', 'z')):
-                if not self.auto_sort_running:
+                if not (self.auto_sort_running or self.dynamic_mode):
                     self.pick_blue_block_btn.config(state=tk.NORMAL, bg="#33CAE8")
 
         # ── 原有功能 ──
@@ -1369,8 +1390,8 @@ def main():
 
         def _conveyor_done(self, run, ok, err):
             self._conveyor_busy=False
-            # 自动分拣运行时保持手动按钮禁用
-            if not self.auto_sort_running:
+            # 自动分拣/动态抓取运行时保持手动按钮禁用
+            if not (self.auto_sort_running or self.dynamic_mode):
                 self.conveyor_on_btn.config(state=tk.NORMAL)
                 self.conveyor_off_btn.config(state=tk.NORMAL)
             if ok:
@@ -1448,9 +1469,9 @@ def main():
             if s=='idle':
                 self.status_var.set("当前服务器状态: 空闲 (Idle)"); self.status_label.configure(fg="green")
                 self.error_notified=False
-                # ⚠️ 自动分拣运行时禁止弹出排队任务: 状态机自己通过 _dispatch_sort_cmd 直接
+                # ⚠️ 自动分拣/动态抓取运行时禁止弹出排队任务: 状态机自己通过 _dispatch_sort_cmd 直接
                 # 下发 sort_verify, 排队队列的 cmd_queue.put 会与服务端正在处理的指令冲突。
-                if not self.auto_sort_running and getattr(self,'queue_running',False):
+                if not (self.auto_sort_running or self.dynamic_mode) and getattr(self,'queue_running',False):
                     if self.task_queue and (time.time()-self.last_dispatch_time>1.5):
                         self.cmd_queue.put(self.task_queue.pop(0)); self.refresh_queue_listbox()
                         self.last_dispatch_time=time.time()
@@ -1460,8 +1481,8 @@ def main():
             elif s=='busy': self.status_var.set("当前服务器状态: 忙碌 (Busy)"); self.status_label.configure(fg="red")
             elif s=='error':
                 self.status_var.set("当前服务器状态: 异常 (Error)"); self.status_label.configure(fg="orange")
-                if self.auto_sort_running:
-                    pass  # 自动分拣运行时, 状态机自行处理 error, 不弹窗
+                if self.auto_sort_running or self.dynamic_mode:
+                    pass  # 自动分拣/动态抓取运行时, 状态机自行处理 error, 不弹窗
                 elif not getattr(self,'error_notified',False):
                     self.error_notified=True; self.clear_queue()
                     messagebox.showwarning("规划失败","机械臂执行失败。任务队列已清空。")
@@ -1485,32 +1506,152 @@ def main():
                 if k in n: return 2
             return 1  # 未知默认料框1
 
-        def _pick_object_right_of_line(self):
+        def _pick_object_right_of_line(self, line_u=None, require_base=True):
             """筛选 x2 ≥ 分界线 且有 base_position_m 的物体, 返回 center_u 最大的 (最右侧, 最远离分界线)。
 
             物体从左向右移动, 越过左侧分界线后进入抓取区 (分界线右侧).
+            自动分拣用 self._auto_sort_line_u (默认), 动态模式用传入 line_u.
+            require_base=False 时仅按像素分界线筛选 (不要求 base_position_m).
             选 center_u 最大的 = 最右侧 = 最远离分界线的物体 (先抓最远的, 避免机械臂遮挡后续物体).
             """
+            line_u = self._auto_sort_line_u if line_u is None else line_u
             d = self.latest_detection
             if not d or not d.get('detected'): return None
             objects = d.get('objects', []) or []
             candidates = []
             for obj in objects:
-                bp = obj.get('base_position_m')
-                if not bp or not all(k in bp for k in ('x','y','z')): continue
+                if require_base:
+                    bp = obj.get('base_position_m')
+                    if not bp or not all(k in bp for k in ('x','y','z')): continue
                 bbox = obj.get('bbox_pixel', {})
                 x1 = bbox.get('x1'); x2 = bbox.get('x2')
                 if x1 is None or x2 is None: continue
-                if x2 >= self._auto_sort_line_u:
+                if x2 >= line_u:
                     center_u = (x1 + x2) / 2.0
                     candidates.append((center_u, obj))
             if not candidates: return None
             candidates.sort(key=lambda t: t[0], reverse=True)  # center_u 降序 (最大=最右侧, 最远离分界线)
             return candidates[0][1]
 
-        def _dispatch_sort_cmd(self, obj, retry=False):
-            """构造分拣命令并发送: 使用 sort (单次检测, eye-to-hand 下无需两阶段精定位)。"""
-            bp = obj['base_position_m']
+        # ═══════════════════════ 动态抓取模式 ═══════════════════════
+
+        def _dynamic_start(self):
+            """启动动态抓取: 开启传送带并进入 RUNNING 状态."""
+            if self._dynamic_state != 'OFF':
+                return
+            self.dynamic_mode = True
+            self._dynamic_state = 'RUNNING'
+            self.dyn_start_btn.config(state=tk.DISABLED)
+            self.dyn_stop_btn.config(state=tk.NORMAL)
+            self._set_manual_buttons_state(tk.DISABLED)
+            # 显示上游触发线与下游漏抓分界线
+            for cid in (self._dyn_trig_line_id, self._dyn_trig_label_id,
+                        self._dyn_miss_line_id, self._dyn_miss_label_id):
+                if cid is not None:
+                    self.camera_canvas.itemconfig(cid, state='normal')
+            self._auto_sort_log(f"动态抓取启动: 传送带持续运行, 移动拦截物体")
+            if self.conveyor_state != True and not self._conveyor_busy:
+                self._conveyor_set(True)
+            self.after(300, self._dynamic_tick)
+
+        def _dynamic_stop(self):
+            """停止动态抓取: 完成当前任务后停带并复位."""
+            if self._dynamic_state == 'OFF':
+                return
+            self._dynamic_state = 'STOPPING'
+            self.dyn_stop_btn.config(state=tk.DISABLED)
+            self._auto_sort_log("动态抓取停止请求: 完成当前任务后停带")
+            self.after(200, self._dynamic_tick)
+
+        def _dynamic_tick(self):
+            """动态抓取状态机主循环 (GUI 主线程, 复用 _dispatch_sort_cmd)."""
+            if not self.dynamic_mode:
+                return
+            st = self._dynamic_state
+
+            if st == 'STOPPING':
+                if self.current_status == 'busy':
+                    self.after(200, self._dynamic_tick)
+                    return
+                if self.conveyor_state != False and not self._conveyor_busy:
+                    self._conveyor_set(False)
+                    self.after(200, self._dynamic_tick)
+                    return
+                if self._conveyor_busy:
+                    self.after(200, self._dynamic_tick)
+                    return
+                self.dynamic_mode = False
+                self._dynamic_state = 'OFF'
+                self._dynamic_busy = False
+                self.dyn_start_btn.config(state=tk.NORMAL)
+                self.dyn_stop_btn.config(state=tk.DISABLED)
+                self._restore_manual_buttons()
+                # 隐藏上游触发线与下游漏抓分界线
+                for cid in (self._dyn_trig_line_id, self._dyn_trig_label_id,
+                            self._dyn_miss_line_id, self._dyn_miss_label_id):
+                    if cid is not None:
+                        self.camera_canvas.itemconfig(cid, state='hidden')
+                self._auto_sort_log("动态抓取已停止")
+                return
+
+            if self.current_status == 'busy':
+                # 机械臂忙碌(正在执行 sort_dynamic / sort), 等待完成
+                self.after(200, self._dynamic_tick)
+                return
+
+            # ── idle: 检查漏抓分界线 (优先) 与上游触发线 ──
+            # 1) 下游漏抓: 分界线右侧有物体 → 停带静态兜底 (仅在 RUNNING 下进入, 避免重复停带)
+            miss_obj = self._pick_object_right_of_line(
+                line_u=self._dynamic_miss_line_u, require_base=True)
+            if st != 'MISS_STOP' and miss_obj is not None and self.conveyor_state == True:
+                self._dynamic_state = 'MISS_STOP'
+                self._auto_sort_log(f"漏抓检测: 物体越过下游分界线 u={self._dynamic_miss_line_u}, 停带静态抓取")
+                self._conveyor_set(False)
+                self.after(300, self._dynamic_tick)
+                return
+
+            # 2) 漏抓静态兜底: 等传送带停稳后对下游物体执行静态 sort
+            if st == 'MISS_STOP':
+                if self.conveyor_state != False:
+                    self.after(200, self._dynamic_tick)
+                    return
+                # 传送带已停: 对下游物体执行静态 sort
+                self._dispatch_sort_cmd(miss_obj, static_mode=True)
+                self._dynamic_state = 'RUNNING'  # 等待 busy→idle 后重启带
+                self.after(200, self._dynamic_tick)
+                return
+
+            # 3) 兜底后恢复: 传送带已停且无任务 → 重启带 (漏抓静态 sort 完成后自动恢复)
+            if self.conveyor_state != True and not self._conveyor_busy:
+                self._conveyor_set(True)
+
+            # 4) 上游触发: 触发线右侧有物体且传送带运行中 → 下发 sort_dynamic
+            trig_obj = self._pick_object_right_of_line(
+                line_u=self._dynamic_trigger_line_u, require_base=True)
+            if trig_obj is not None and self.conveyor_state == True:
+                self._dynamic_state = 'RUNNING'
+                self._auto_sort_log(f"动态: 目标 {trig_obj.get('object_name','?')} 进入跟踪区, 下发 sort_dynamic")
+                self._dispatch_sort_cmd(trig_obj, static_mode=False)
+                self.after(300, self._dynamic_tick)
+                return
+
+            self.after(200, self._dynamic_tick)
+
+        def _restore_manual_buttons(self):
+            """恢复手动按钮可用状态 (退出动态模式时调用)."""
+            self._set_manual_buttons_state(tk.NORMAL)
+
+        def _dispatch_sort_cmd(self, obj, retry=False, static_mode=True):
+            """构造分拣命令并发送.
+
+            static_mode=True:  下发 sort (静态兜底/自动分拣, 传送带已停, 物体静止抓取).
+            static_mode=False: 下发 sort_dynamic (动态抓取, 传送带持续运行, 移动拦截).
+            自动分拣沿用 retry 逻辑 (sort 单次检测, eye-to-hand 下无需两阶段精定位)。
+            """
+            bp = obj.get('base_position_m')
+            if not bp or not all(k in bp for k in ('x','y','z')):
+                self._auto_sort_log("⚠️ 物体缺少 base_position_m, 跳过")
+                return
             try:
                 r = float(self.default_grasp_roll.get())
                 p = float(self.default_grasp_pitch.get())
@@ -1524,11 +1665,16 @@ def main():
             bin_num = self._bin_for_object(name)
             # 优先用 D455 估计直径, fallback 预设尺寸
             dia = obj.get('estimated_diameter_m') or obj.get('size_m', {}).get('diameter')
-            cmd = {"cmd": "sort", "pick": pick, "bin": bin_num,
+            cmd = {"cmd": "sort" if static_mode else "sort_dynamic",
+                   "pick": pick, "bin": bin_num,
                    "pick_name": f"{name} (auto-sort{'-retry' if retry else ''})",
                    "place_name": f"料框{bin_num}"}
-            method_tag = "single"
+            method_tag = "single" if static_mode else "dynamic"
             if dia: cmd["object_diameter_m"] = round(float(dia), 3)
+            if not static_mode:
+                # 动态抓取命令带唯一 cycle_id, 便于服务端区分单次拦截任务
+                cmd["cycle_id"] = f"dyn-{int(time.time())}"
+                self._dynamic_busy = True
             self.last_dispatch_time = time.time()
             self.cmd_queue.put(cmd)
             self._auto_sort_log(f"分拣[{method_tag}]: {name}→料框{bin_num} {'[重试]' if retry else ''}")
@@ -1555,6 +1701,22 @@ def main():
                     x_line + 5, 12, text=f"分界线 u={self._auto_sort_line_u}", fill='yellow', anchor=tk.NW, font=("Arial", 9, "bold"))
                 self.camera_canvas.itemconfig(self._div_line_id, state='hidden')
                 self.camera_canvas.itemconfig(self._div_label_id, state='hidden')
+                # 动态抓取: 上游触发线 (绿色虚线) 与下游漏抓分界线 (蓝色虚线), 默认隐藏, 动态模式启动时显示
+                x_trig = int(self._canvas_w * self._dynamic_trigger_line_u / 640)
+                self._dyn_trig_line_id = self.camera_canvas.create_line(
+                    x_trig, 0, x_trig, self._canvas_h, fill='green', dash=(4, 4), width=2)
+                self._dyn_trig_label_id = self.camera_canvas.create_text(
+                    x_trig + 5, 38, text=f"触发线 u={self._dynamic_trigger_line_u}",
+                    fill='green', anchor=tk.NW, font=("Arial", 9, "bold"))
+                x_miss = int(self._canvas_w * self._dynamic_miss_line_u / 640)
+                self._dyn_miss_line_id = self.camera_canvas.create_line(
+                    x_miss, 0, x_miss, self._canvas_h, fill='blue', dash=(6, 4), width=2)
+                self._dyn_miss_label_id = self.camera_canvas.create_text(
+                    x_miss + 5, 26, text=f"漏抓线 u={self._dynamic_miss_line_u}",
+                    fill='blue', anchor=tk.NW, font=("Arial", 9, "bold"))
+                for cid in (self._dyn_trig_line_id, self._dyn_trig_label_id,
+                            self._dyn_miss_line_id, self._dyn_miss_label_id):
+                    self.camera_canvas.itemconfig(cid, state='hidden')
             except Exception as e:
                 _log(f"画分界线失败: {e}")
 
