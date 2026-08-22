@@ -1,0 +1,2270 @@
+diff --git a/.gitignore b/.gitignore
+index 31d5f021..71e333aa 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -21,3 +21,6 @@ third_party/python/**/__pycache__/
+ 
+ # Temporary files
+ /tmp/
++
++# Third-party nested git repos (cloned, not part of this project)
++src/trac_ik/
+diff --git a/.trae/specs/dynamic-grasping/task6-brief.md b/.trae/specs/dynamic-grasping/task6-brief.md
+new file mode 100644
+index 00000000..767c2e05
+--- /dev/null
++++ b/.trae/specs/dynamic-grasping/task6-brief.md
+@@ -0,0 +1,266 @@
++# Task 6 Brief: GUI 动态抓取模式 + 下游漏抓分界线
++
++> 本文件是 Task 6 的完整任务描述，摘自 `/home/lxf/agx_arm_ws/.trae/specs/dynamic-grasping/plan.md`。工作目录：`/home/lxf/agx_arm_ws`。
++
++## 任务目标
++
++在 GUI（`sorting_gui_client.py`）中新增动态抓取模式：传送带持续运行、机械臂移动拦截物体；并在相机画面下游（右侧）绘制一条可调"漏抓分界线"，物体越过分界线立即停带 → 静态兜底抓取 → 重启带。
++
++## 全局约束（本任务相关，逐字摘自 plan.md）
++
++- 传送带线速度范围 0.02–0.15 m/s，来自 STM32 串口（真实值，无需二次校正），保留滑动窗口滤波
++- 动态抓取中所有手动按钮禁用、弹窗屏蔽（沿用现有约定）
++- 现有 `sort` / `sort_graspnet` / `sort_verify` / `sort_blue_block` 命令全部原样保留
++- 所有代码注释使用中文，与现有代码风格一致
++- GUI 有紫色 '开始自动分拣' 和橙色 '停止自动分拣' 按钮的配色约定
++- 自动分拣状态机约定：`auto_sort_running` 为 True 时禁用手动按钮、屏蔽 messagebox
++
++## 修改文件
++
++- Modify: `/home/lxf/agx_arm_ws/sorting_gui_client.py`
++
++## 接口（Produces）
++
++- GUI 字段：`self.dynamic_mode`（bool）、`self._dynamic_state`（'OFF'/'RUNNING'/'MISS_STOP'/'STOPPING'）、`self._dynamic_trigger_line_u`（int，默认 200）、`self._dynamic_miss_line_u`（int，默认 560，可调）
++- 按钮："动态抓取"（紫色 #9C27B0）与"停止动态抓取"（橙色 #FF9800）
++- 方法：`_dynamic_start`、`_dynamic_stop`、`_dynamic_tick`（状态机主循环）、`_dispatch_sort_cmd(obj, static_mode)`、`_restore_manual_buttons()`
++- 修改 `_pick_object_right_of_line` 签名支持 `line_u` 参数
++
++## 设计说明
++
++动态模式状态机（GUI 主线程，复用现有 `_dispatch_sort_cmd` 模式）：
++
++- `OFF`：默认。点"动态抓取"→ 若传送带未运行则 `_conveyor_set(True)` → `RUNNING`
++- `RUNNING`：传送带持续运行。每轮检查（`status==idle` 时）：
++  1. 下游漏抓分界线右侧有物体（`_pick_object_right_of_line` 用 `_dynamic_miss_line_u`）→ `MISS_STOP`
++  2. 否则上游触发线右侧有物体（用 `_dynamic_trigger_line_u`）→ 下发 `sort_dynamic`
++  3. 否则等待
++- `MISS_STOP`：`_conveyor_set(False)` → 等传送带停 → 下发静态 `sort` → 等 `idle` → `_conveyor_set(True)` → `RUNNING`
++- `STOPPING`：点"停止动态抓取"→ 若忙则等完成 → `_conveyor_set(False)` → 回待机位 → `OFF`，恢复按钮
++- 动态模式下：禁用手动按钮、屏蔽 messagebox（沿用 `auto_sort_running` 逻辑，扩展为 `dynamic_mode or auto_sort_running`）
++
++## 实施步骤
++
++### Step 1: 添加状态字段
++
++在 `self._auto_sort_line_u=260`（第 389 行附近）之后添加：
++
++```python
++            # ── 动态抓取模式 (传送带持续运行, 移动拦截) ──
++            self.dynamic_mode = False
++            self._dynamic_state = 'OFF'      # OFF/RUNNING/MISS_STOP/STOPPING
++            self._dynamic_trigger_line_u = 200   # 上游触发线: 物体越线进入跟踪区
++            self._dynamic_miss_line_u = 560      # 下游漏抓分界线 (可调): 越线即漏抓
++            self._dynamic_busy = False
++```
++
++### Step 2: 添加按钮
++
++在自动分拣按钮区域（"开始自动分拣"/"停止自动分拣"附近）添加：
++
++```python
++            # ── 动态抓取模式按钮 ──
++            dyn_f = tk.Frame(ctrl_frame)
++            dyn_f.pack(fill=tk.X, padx=8, pady=4)
++            self.dyn_start_btn = tk.Button(
++                dyn_f, text=" 动态抓取 ", command=self._dynamic_start,
++                bg="#9C27B0", fg="white", font=("Arial", 12, "bold"), width=12)
++            self.dyn_start_btn.pack(side=tk.LEFT, padx=4)
++            self.dyn_stop_btn = tk.Button(
++                dyn_f, text=" 停止动态抓取 ", command=self._dynamic_stop,
++                bg="#FF9800", fg="white", font=("Arial", 12, "bold"), width=12,
++                state=tk.DISABLED)
++            self.dyn_stop_btn.pack(side=tk.LEFT, padx=4)
++```
++
++注意：若 GUI 使用 ttk 或自定义 Button 工厂，请遵循现有按钮创建模式，确保 `command`、`state=tk.DISABLED` 语义一致。
++
++### Step 3: 添加状态机方法
++
++在 `_pick_object_right_of_line`（第 1478 行附近）之后添加：
++
++```python
++        # ═══════════════════════ 动态抓取模式 ═══════════════════════
++
++        def _dynamic_start(self):
++            """启动动态抓取: 开启传送带并进入 RUNNING 状态."""
++            if self._dynamic_state != 'OFF':
++                return
++            self.dynamic_mode = True
++            self._dynamic_state = 'RUNNING'
++            self.dyn_start_btn.config(state=tk.DISABLED)
++            self.dyn_stop_btn.config(state=tk.NORMAL)
++            self._auto_sort_log(f"动态抓取启动: 传送带持续运行, 移动拦截物体")
++            if self.conveyor_state != True and not self._conveyor_busy:
++                self._conveyor_set(True)
++            self.after(300, self._dynamic_tick)
++
++        def _dynamic_stop(self):
++            """停止动态抓取: 完成当前任务后停带并复位."""
++            if self._dynamic_state == 'OFF':
++                return
++            self._dynamic_state = 'STOPPING'
++            self.dyn_stop_btn.config(state=tk.DISABLED)
++            self._auto_sort_log("动态抓取停止请求: 完成当前任务后停带")
++            self.after(200, self._dynamic_tick)
++
++        def _dynamic_tick(self):
++            """动态抓取状态机主循环 (GUI 主线程, 复用 _dispatch_sort_cmd)."""
++            if not self.dynamic_mode:
++                return
++            st = self._dynamic_state
++
++            if st == 'STOPPING':
++                if self.current_status == 'busy':
++                    self.after(200, self._dynamic_tick)
++                    return
++                if self.conveyor_state != False and not self._conveyor_busy:
++                    self._conveyor_set(False)
++                    self.after(200, self._dynamic_tick)
++                    return
++                self.dynamic_mode = False
++                self._dynamic_state = 'OFF'
++                self.dyn_start_btn.config(state=tk.NORMAL)
++                self.dyn_stop_btn.config(state=tk.DISABLED)
++                self._restore_manual_buttons()
++                self._auto_sort_log("动态抓取已停止")
++                return
++
++            if self.current_status == 'busy':
++                # 机械臂忙碌(正在执行 sort_dynamic / sort), 等待完成
++                self.after(200, self._dynamic_tick)
++                return
++
++            # ── idle: 检查漏抓分界线 (优先) 与上游触发线 ──
++            # 1) 下游漏抓: 分界线右侧有物体 → 停带静态兜底
++            miss_obj = self._pick_object_right_of_line(
++                line_u=self._dynamic_miss_line_u, require_base=True)
++            if miss_obj is not None and self.conveyor_state == True:
++                self._dynamic_state = 'MISS_STOP'
++                self._auto_sort_log(f"漏抓检测: 物体越过下游分界线 u={self._dynamic_miss_line_u}, 停带静态抓取")
++                self._conveyor_set(False)
++                self.after(300, self._dynamic_tick)
++                return
++
++            # 2) 上游触发: 触发线右侧有物体 → 下发 sort_dynamic
++            if st == 'MISS_STOP':
++                if self.conveyor_state != False:
++                    self.after(200, self._dynamic_tick)
++                    return
++                # 传送带已停: 对下游物体执行静态 sort
++                self._dispatch_sort_cmd(miss_obj, static_mode=True)
++                self._dynamic_state = 'RUNNING'  # 等待 busy→idle 后重启带
++                self.after(200, self._dynamic_tick)
++                return
++
++            trig_obj = self._pick_object_right_of_line(
++                line_u=self._dynamic_trigger_line_u, require_base=True)
++            if trig_obj is not None:
++                self._dynamic_state = 'RUNNING'
++                self._auto_sort_log(f"动态: 目标 {trig_obj.get('object_name','?')} 进入跟踪区, 下发 sort_dynamic")
++                self._dispatch_sort_cmd(trig_obj, static_mode=False)
++                self.after(300, self._dynamic_tick)
++                return
++
++            self.after(200, self._dynamic_tick)
++
++        def _dispatch_sort_cmd(self, obj, static_mode):
++            """下发 sort_dynamic (动态) 或 sort (静态兜底) 命令."""
++            d = self.latest_detection or {}
++            bin_num = self._bin_for_object(obj.get('object_name', ''))
++            diameter = obj.get('estimated_diameter_m') or (obj.get('size_m') or {}).get('diameter', 0.06)
++            pick = obj.get('base_position_m') or {}
++            if not pick or 'x' not in pick:
++                self._auto_sort_log("⚠️ 物体缺少 base_position_m, 跳过")
++                return
++            cmd = {
++                'cmd': 'sort' if static_mode else 'sort_dynamic',
++                'pick': {'x': pick['x'], 'y': pick['y'], 'z': pick['z']},
++                'pick_name': obj.get('object_name', 'object'),
++                'bin': bin_num,
++                'object_diameter_m': diameter,
++                'cycle_id': f'dyn-{int(time.time())}',
++            }
++            self.cmd_queue.put(cmd)
++            self._dynamic_busy = True
++            self._auto_sort_log(f"下发 {'静态兜底' if static_mode else '动态抓取'}: {obj.get('object_name','?')} → 料框{bin_num}")
++
++        def _restore_manual_buttons(self):
++            """恢复手动按钮可用状态 (退出动态模式时调用)."""
++            for b in (self.conveyor_on_btn, self.conveyor_off_btn,
++                      self.single_btn, self.verify_btn):
++                try: b.config(state=tk.NORMAL)
++                except Exception: pass
++```
++
++**重要**：方法名如 `_conveyor_set`、`_bin_for_object`、`_auto_sort_log`、`cmd_queue`、`conveyor_state`、`current_status` 等必须先确认在现有代码中的真实名称，如有差异以现有代码为准，并在报告中说明。
++
++### Step 3b: 改造 `_pick_object_right_of_line` 支持 `line_u` 参数
++
++修改现有 `_pick_object_right_of_line`（第 1472-1479 行附近）签名与内部引用：
++
++```python
++        def _pick_object_right_of_line(self, line_u=None, require_base=True):
++            """筛选 x2 ≥ 分界线 且有 base_position_m 的物体, 返回 center_u 最大的.
++
++            自动分拣用 self._auto_sort_line_u (默认), 动态模式用传入 line_u.
++            """
++            line_u = self._auto_sort_line_u if line_u is None else line_u
++            d = self.latest_detection
++            if not d or not d.get('detected'): return None
++```
++
++将该函数后续对 `self._auto_sort_line_u` 的引用改为 `line_u`（如 `if x2 >= self._auto_sort_line_u:` → `if x2 >= line_u:`）。`require_base` 为 True 时，跳过无 `base_position_m` 的物体（即该物体没有 `base_position_m` 或其中无 `x` 键则跳过）。
++
++### Step 4: 绘制下游漏抓分界线
++
++在 `_draw_auto_sort_line`（第 1532 行附近）方法中，在绘制自动分拣黄线之后追加（仅动态模式时显示蓝色虚线）：
++
++```python
++            if self.dynamic_mode:
++                x_miss = int(self._canvas_w * self._dynamic_miss_line_u / 640)
++                self.canvas.create_line(
++                    x_miss, 0, x_miss, self._canvas_h, fill='blue', dash=(6, 4))
++                self.canvas.create_text(
++                    x_miss + 5, 26, text=f"漏抓线 u={self._dynamic_miss_line_u}",
++                    fill='blue', anchor=tk.NW, font=("Arial", 9, "bold"))
++```
++
++注意：画布变量名（`self.canvas`、`self._canvas_w`、`self._canvas_h`）以现有代码为准。同时检查动态模式下是否也需要绘制上游触发线（可用绿色虚线，如果现有绘制逻辑容易扩展）。
++
++### Step 5: 同步手动按钮禁用与弹窗屏蔽
++
++在现有 `_conveyor_done`（第 1357 行）与 `_update_status_loop`（第 1437/1447 行）中，把 `if not self.auto_sort_running:` 扩展为 `if not (self.auto_sort_running or self.dynamic_mode):`，确保动态模式运行时手动按钮保持禁用、错误不弹窗。
++
++### Step 6: 语法检查与符号验证
++
++```bash
++cd /home/lxf/agx_arm_ws && python3 -m py_compile sorting_gui_client.py
++```
++
++```bash
++cd /home/lxf/agx_arm_ws && python3 - <<'EOF'
++import ast
++src = open('sorting_gui_client.py').read()
++for token in ('_dynamic_start', '_dynamic_stop', '_dynamic_tick',
++              '_dynamic_trigger_line_u', '_dynamic_miss_line_u',
++              'sort_dynamic', 'line_u=None'):
++    assert token in src, f'缺失符号: {token}'
++print('OK: 动态抓取 GUI 符号齐全')
++EOF
++```
++
++期望输出 `OK: 动态抓取 GUI 符号齐全`。
++
++### Step 7: 提交
++
++```bash
++cd /home/lxf/agx_arm_ws && git add sorting_gui_client.py && git commit -m "feat: add dynamic grasping mode and downstream miss-line fallback to GUI"
++```
++
++## 注意事项
++
++- `sorting_gui_client.py` 是大文件（约 104KB），包含 GUI 主类 `SortingGUI` 的多个方法。请先用 Grep/Read 精确定位每个锚点（`_auto_sort_line_u`、`_pick_object_right_of_line`、`_draw_auto_sort_line`、`_conveyor_done`、`_update_status_loop`、按钮区域、`_auto_sort_log`、`_bin_for_object`、`_conveyor_set`、`current_status`、`conveyor_state`）再修改。
++- 所有新增/修改代码注释用中文。
++- 不要重构本任务之外的既有代码。
++- TDD：本任务是 GUI 集成任务，若无法单元测试，至少完成 py_compile 与符号断言验证。
+diff --git a/.trae/specs/dynamic-grasping/task6-fix-brief.md b/.trae/specs/dynamic-grasping/task6-fix-brief.md
+new file mode 100644
+index 00000000..fbdf07ed
+--- /dev/null
++++ b/.trae/specs/dynamic-grasping/task6-fix-brief.md
+@@ -0,0 +1,55 @@
++# Task 6 修复 Brief: 修复评审发现的 2 个 Important 问题
++
++> 工作目录：`/home/lxf/agx_arm_ws`。修改文件：`sorting_gui_client.py`（当前 HEAD 6117a854，不要回退提交）。
++
++## 背景
++
++Task 6（GUI 动态抓取模式）已实现并提交（6117a854），评审发现 2 个 Important 问题，直接影响 MISS_STOP 静态兜底核心功能。请修复后运行验证并提交新 commit（不要 amend）。
++
++## 修复 ①: 漏抓静态 sort 下发后传送带可能过早重启（竞态）
++
++**问题**：`_dynamic_tick` 的 MISS_STOP 分支在 `_dispatch_sort_cmd(miss_obj, static_mode=True)` 之后置 `_dynamic_state='RUNNING'` 并 200ms 后重排。但 `current_status` 由 `_update_status_loop` 每 500ms 轮询刷新，200ms 时服务端往往还没把状态翻成 `busy`，导致 `current_status=='idle'` 仍成立，于是"重启传送带"守卫提前通过 → 在静态 sort 真正执行前重启了传送带 → 兜底抓取坐标陈旧 → 空夹/失败 → 反复震荡。
++
++**修复方案**（利用现有 `_dynamic_busy` 字段作为"sort 在途"门控，同时消除 Minor ④ 死字段）：
++1. MISS_STOP 分支下发静态 sort 时：`self._dynamic_busy = True`。
++2. 状态机中所有"等待 busy→idle 转换"逻辑以 `_dynamic_busy` 为门控：tick 中先检查 `if self._dynamic_busy:` → 若 `current_status == 'idle'` 则清零 `_dynamic_busy`（表示上一次 sort_dynamic/sort 已完成），否则等待重排。
++3. "重启传送带"步骤的守卫改为 `not self._dynamic_busy`（即上次兜底 sort 确认完成后才重启带）。
++4. 保留/完善 `_dispatch_sort_cmd` 内已有的 `self._dynamic_busy = True` 设置。
++
++## 修复 ②: MISS_STOP 分支 miss_obj 为 None 导致状态机冻结
++
++**问题**：`miss_obj` 每次 tick 重新计算（`require_base=True`）；停带窗口内若某帧 `base_position_m` 缺失或检测抖动，branch 2 会以 `miss_obj=None` 调用 `_dispatch_sort_cmd`，其内部 `obj.get('base_position_m')` 对 None 抛 `AttributeError`。`_dynamic_tick` 无 try/except，异常发生在 after 回调中导致重排不再执行 → 动态模式静默冻结（带停、按钮禁用），只能点"停止动态抓取"恢复。
++
++**修复方案**：
++1. MISS_STOP 的静态 sort 派发前加 `if miss_obj is not None:` 守卫；若为 None（物体短暂丢失），不做派发，直接走"重启传送带"路径回到 RUNNING（物体已在分界线右侧，若仍在检测区下一轮会重新命中 MISS_STOP）。
++2. 给 `_dynamic_tick` 主体加 `try/except`（捕获 Exception，log 错误后 `self.after(200, self._dynamic_tick)` 续排），防止任何异常导致状态机冻结。参照现有 `_auto_sort_tick` 的 try/except 续排写法。
++
++## Minor（一并修复，低成本）
++
++- ④ 上述修复后 `_dynamic_busy` 成为有读取字段，确认其语义一致（派发时 True、busy→idle 转换时清零、STOPPING 退出时清零）。
++- ③ STOPPING 下对在途 sort_dynamic 的停带竞态：STOPPING 分支若 `_dynamic_busy` 为 True 且 `current_status != 'busy'`（指令在途未确认），先等待（重排）而不是立即停带。若实现复杂可只做最小守卫。
++
++## 验证（必须执行并贴出结果）
++
++```bash
++cd /home/lxf/agx_arm_ws && python3 -m py_compile sorting_gui_client.py
++cd /home/lxf/agx_arm_ws && python3 - <<'EOF'
++import ast
++src = open('sorting_gui_client.py').read()
++for token in ('_dynamic_start', '_dynamic_stop', '_dynamic_tick',
++              '_dynamic_trigger_line_u', '_dynamic_miss_line_u',
++              'sort_dynamic', 'line_u=None', '_dynamic_busy'):
++    assert token in src, f'缺失符号: {token}'
++print('OK: 动态抓取 GUI 符号齐全')
++EOF
++```
++
++## 提交
++
++```bash
++cd /home/lxf/agx_arm_ws && git add sorting_gui_client.py && git commit -m "fix: gate belt restart on sort completion and guard miss_obj None in dynamic mode"
++```
++
++## 报告
++
++将修复说明写入 /home/lxf/agx_arm_ws/.trae/specs/dynamic-grasping/task6-fix-report.md（改了什么、怎么验证、结果）。所有注释中文，不改动本任务之外代码。
+diff --git a/.trae/specs/dynamic-grasping/task6-fix-report.md b/.trae/specs/dynamic-grasping/task6-fix-report.md
+new file mode 100644
+index 00000000..fbda2539
+--- /dev/null
++++ b/.trae/specs/dynamic-grasping/task6-fix-report.md
+@@ -0,0 +1,80 @@
++# Task 6 修复报告: 动态抓取模式 2 个 Important 问题
++
++> 工作目录：`/home/lxf/agx_arm_ws`。修改文件：`sorting_gui_client.py`
++> 基于提交：`6117a854`（未回退、未 amend）
++> 新提交：`b01e32c8` — `fix: gate belt restart on sort completion and guard miss_obj None in dynamic mode`
++
++## 修复内容
++
++### ① 竞态: 漏抓静态 sort 下发后传送带过早重启
++
++**问题**：`_dynamic_tick` 的 MISS_STOP 分支下发静态 `sort` 后即回到 RUNNING，而
++`current_status` 由 `_update_status_loop` 每 500ms 轮询刷新、tick 每 200ms 重排，
++200ms 时服务端往往还没把状态翻成 `busy`，导致"重启传送带"守卫提前通过，在静态
++sort 真正执行前重启了传送带 → 兜底抓取坐标陈旧 → 空夹/失败 → 反复震荡。
++
++**修复**：
++- 新增 `_dynamic_wait_inflight()` 门控方法：以 `self._dynamic_busy` 作为
++  "sort_dynamic / 静态兜底 sort 在途"标记。派发时置 `True`；仅当观察到 `busy→idle`
++  转换后才清零。由于状态刷新滞后，下发后短时间内的 `idle` 可能是派发前的陈旧值，
++  故通过 `time.time() - self.last_dispatch_time < 1.0`（覆盖 500ms 轮询周期两轮）
++  区分"指令在途未确认"与"任务已完成"，未确认前持续等待重排，不提前清零。
++- MISS_STOP 分支下发静态 sort 时显式置 `self._dynamic_busy = True`（静态走
++  `_dispatch_sort_cmd(..., static_mode=True)`，原有"已有设置"仅在
++  `not static_mode` 分支内，故在此补置）。
++- "重启传送带"步骤守卫改为 `not self._dynamic_busy`，即上次兜底 sort 确认完成后
++  才重启带。
++- 顺带修复动态触发路径的潜在重复下发：sort_dynamic 在途期间（`_dynamic_busy=True`）
++  状态机只等待，不会因陈旧 idle 再次命中触发线重复下发。
++
++### ② 冻结: MISS_STOP 分支 miss_obj 为 None 导致状态机静默冻结
++
++**问题**：`miss_obj` 每次 tick 重新计算（`require_base=True`）；停带窗口内某帧
++`base_position_m` 缺失或检测抖动时，会以 `None` 调用 `_dispatch_sort_cmd`，其内部
++`obj.get('base_position_m')` 抛 `AttributeError`；原 `_dynamic_tick` 无 try/except，
++异常发生在 after 回调中导致重排不再执行 → 动态模式静默冻结。
++
++**修复**：
++- MISS_STOP 静态 sort 派发前加 `if miss_obj is not None:` 守卫；为 None（物体短暂
++  丢失）时不派发，直接走"重启传送带"路径回到 RUNNING，下一轮若物体仍在检测区会
++  重新命中 MISS_STOP。
++- `_dynamic_tick` 主体用 `try/except` 包裹，捕获 `Exception` 后记录
++  `_auto_sort_log("动态抓取 tick 异常: ...")`，并统一 `self.after(200, self._dynamic_tick)`
++  续排（参照 `_auto_sort_tick` 的续排写法），任何异常都不会让状态机冻结。
++  （原内部 300ms 重排统一改为 200ms 续排，语义一致。）
++
++### Minor: _dynamic_busy 死字段修复 + STOPPING 最小守卫
++
++- `_dynamic_busy` 现已成为真正的读取字段（在途门控、重启带守卫、STOPPING 守卫均读取），
++  语义一致：派发时 `True`、观察到 busy→idle 转换时清零、STOPPING 退出时清零。
++- STOPPING 分支最前新增 `if self._dynamic_wait_inflight(): return`（在途任务未确认
++  完成前不立即停带），解决在途 sort_dynamic 未确认 busy 时过早停带的竞态。
++
++## 验证结果
++
++```bash
++cd /home/lxf/agx_arm_ws && python3 -m py_compile sorting_gui_client.py
++# → PY_COMPILE_OK (退出码 0)
++
++cd /home/lxf/agx_arm_ws && python3 - <<'EOF'
++import ast
++src = open('sorting_gui_client.py').read()
++for token in ('_dynamic_start', '_dynamic_stop', '_dynamic_tick',
++              '_dynamic_trigger_line_u', '_dynamic_miss_line_u',
++              'sort_dynamic', 'line_u=None', '_dynamic_busy'):
++    assert token in src, f'缺失符号: {token}'
++print('OK: 动态抓取 GUI 符号齐全')
++EOF
++# → OK: 动态抓取 GUI 符号齐全
++```
++
++两项验证均通过。
++
++## 提交
++
++```
++b01e32c8 fix: gate belt restart on sort completion and guard miss_obj None in dynamic mode
++```
++
++仅提交 `sorting_gui_client.py`（1 file changed, 92 insertions(+), 60 deletions(-)），
++未改动本任务之外代码。
+diff --git a/.trae/specs/dynamic-grasping/task6-fix.diff b/.trae/specs/dynamic-grasping/task6-fix.diff
+new file mode 100644
+index 00000000..f3e17df4
+--- /dev/null
++++ b/.trae/specs/dynamic-grasping/task6-fix.diff
+@@ -0,0 +1,175 @@
++diff --git a/sorting_gui_client.py b/sorting_gui_client.py
++index fd3bccc6..714360d1 100644
++--- a/sorting_gui_client.py
+++++ b/sorting_gui_client.py
++@@ -1563,78 +1563,110 @@ def main():
++             self._auto_sort_log("动态抓取停止请求: 完成当前任务后停带")
++             self.after(200, self._dynamic_tick)
++ 
+++        def _dynamic_wait_inflight(self):
+++            """在途 sort_dynamic / 静态兜底 sort 门控: 等机械臂 busy→idle 确认完成.
+++
+++            派发命令时置 _dynamic_busy=True, 仅当观察到 busy→idle 转换后才清零;
+++            未清零前禁止重启传送带, 避免漏抓静态 sort 下发后传送带过早重启
+++            (current_status 每 500ms 轮询刷新, 而 tick 每 200ms 重排, 下发后短期内
+++            看到的 idle 可能是派发前的陈旧状态)。
+++            返回 True 表示在途任务未完成 (调用方应等待重排), False 表示已清除在途标记。
+++            """
+++            if not self._dynamic_busy:
+++                return False
+++            if self.current_status == 'busy':
+++                return True  # 已观察到 busy: 机械臂正在执行, 等待任务完成
+++            if self.current_status == 'idle':
+++                # 下发后可能尚未轮询到 busy (状态刷新滞后), 距上次派发 <1s 视为
+++                # 指令在途未确认, 继续等待; 超过 1s 仍为 idle 则说明该次任务已完成
+++                if time.time() - self.last_dispatch_time < 1.0:
+++                    return True
+++                self._dynamic_busy = False  # 上次 sort_dynamic/sort 已完成 (busy→idle)
+++                return False
+++            return True  # 状态未知/error: 继续等待服务端恢复
+++
++         def _dynamic_tick(self):
++-            """动态抓取状态机主循环 (GUI 主线程, 复用 _dispatch_sort_cmd)."""
+++            """动态抓取状态机主循环 (GUI 主线程, 复用 _dispatch_sort_cmd).
+++
+++            主体用 try/except 包裹并始终重排, 任何异常都不会让状态机静默冻结
+++            (参照 _auto_sort_tick 的续排写法)。
+++            """
++             if not self.dynamic_mode:
++                 return
++-            st = self._dynamic_state
+++            try:
+++                st = self._dynamic_state
++ 
++-            if st == 'STOPPING':
++-                if self.current_status == 'busy':
++-                    self.after(200, self._dynamic_tick)
++-                    return
++-                if self.conveyor_state != False and not self._conveyor_busy:
++-                    self._conveyor_set(False)
++-                    self.after(200, self._dynamic_tick)
++-                    return
++-                if self._conveyor_busy:
++-                    self.after(200, self._dynamic_tick)
+++                if st == 'STOPPING':
+++                    if self._dynamic_wait_inflight():
+++                        # 在途 sort_dynamic / 静态兜底 sort 尚未完成: 先等待, 不立即停带
+++                        return
+++                    if self.current_status == 'busy':
+++                        return  # 机械臂正在执行其它任务, 等待完成
+++                    if self.conveyor_state != False and not self._conveyor_busy:
+++                        self._conveyor_set(False)
+++                        return
+++                    if self._conveyor_busy:
+++                        return
+++                    self.dynamic_mode = False
+++                    self._dynamic_state = 'OFF'
+++                    self._dynamic_busy = False
+++                    self.dyn_start_btn.config(state=tk.NORMAL)
+++                    self.dyn_stop_btn.config(state=tk.DISABLED)
+++                    self._restore_manual_buttons()
+++                    # 隐藏上游触发线与下游漏抓分界线
+++                    for cid in (self._dyn_trig_line_id, self._dyn_trig_label_id,
+++                                self._dyn_miss_line_id, self._dyn_miss_label_id):
+++                        if cid is not None:
+++                            self.camera_canvas.itemconfig(cid, state='hidden')
+++                    self._auto_sort_log("动态抓取已停止")
++                     return
++-                self.dynamic_mode = False
++-                self._dynamic_state = 'OFF'
++-                self._dynamic_busy = False
++-                self.dyn_start_btn.config(state=tk.NORMAL)
++-                self.dyn_stop_btn.config(state=tk.DISABLED)
++-                self._restore_manual_buttons()
++-                # 隐藏上游触发线与下游漏抓分界线
++-                for cid in (self._dyn_trig_line_id, self._dyn_trig_label_id,
++-                            self._dyn_miss_line_id, self._dyn_miss_label_id):
++-                    if cid is not None:
++-                        self.camera_canvas.itemconfig(cid, state='hidden')
++-                self._auto_sort_log("动态抓取已停止")
++-                return
++ 
++-            if self.current_status == 'busy':
++-                # 机械臂忙碌(正在执行 sort_dynamic / sort), 等待完成
++-                self.after(200, self._dynamic_tick)
++-                return
+++                # 在途 sort_dynamic / 静态兜底 sort: 等待 busy→idle 确认完成后再继续
+++                if self._dynamic_wait_inflight():
+++                    return
++ 
++-            # ── idle: 检查漏抓分界线 (优先) 与上游触发线 ──
++-            # 1) 下游漏抓: 分界线右侧有物体 → 停带静态兜底 (仅在 RUNNING 下进入, 避免重复停带)
++-            miss_obj = self._pick_object_right_of_line(
++-                line_u=self._dynamic_miss_line_u, require_base=True)
++-            if st != 'MISS_STOP' and miss_obj is not None and self.conveyor_state == True:
++-                self._dynamic_state = 'MISS_STOP'
++-                self._auto_sort_log(f"漏抓检测: 物体越过下游分界线 u={self._dynamic_miss_line_u}, 停带静态抓取")
++-                self._conveyor_set(False)
++-                self.after(300, self._dynamic_tick)
++-                return
+++                if self.current_status == 'busy':
+++                    # 机械臂忙碌(未置 _dynamic_busy 的其它任务), 等待完成
+++                    return
++ 
++-            # 2) 漏抓静态兜底: 等传送带停稳后对下游物体执行静态 sort
++-            if st == 'MISS_STOP':
++-                if self.conveyor_state != False:
++-                    self.after(200, self._dynamic_tick)
+++                # ── idle: 检查漏抓分界线 (优先) 与上游触发线 ──
+++                # 1) 下游漏抓: 分界线右侧有物体 → 停带静态兜底 (仅在 RUNNING 下进入, 避免重复停带)
+++                miss_obj = self._pick_object_right_of_line(
+++                    line_u=self._dynamic_miss_line_u, require_base=True)
+++                if st != 'MISS_STOP' and miss_obj is not None and self.conveyor_state == True:
+++                    self._dynamic_state = 'MISS_STOP'
+++                    self._auto_sort_log(f"漏抓检测: 物体越过下游分界线 u={self._dynamic_miss_line_u}, 停带静态抓取")
+++                    self._conveyor_set(False)
++                     return
++-                # 传送带已停: 对下游物体执行静态 sort
++-                self._dispatch_sort_cmd(miss_obj, static_mode=True)
++-                self._dynamic_state = 'RUNNING'  # 等待 busy→idle 后重启带
++-                self.after(200, self._dynamic_tick)
++-                return
++ 
++-            # 3) 兜底后恢复: 传送带已停且无任务 → 重启带 (漏抓静态 sort 完成后自动恢复)
++-            if self.conveyor_state != True and not self._conveyor_busy:
++-                self._conveyor_set(True)
+++                # 2) 漏抓静态兜底: 等传送带停稳后对下游物体执行静态 sort
+++                if st == 'MISS_STOP':
+++                    if self.conveyor_state != False:
+++                        return  # 传送带尚未停稳, 继续等待
+++                    # 传送带已停: 对下游物体执行静态 sort (miss_obj 可能因检测抖动为 None,
+++                    # 此时不派发, 直接走重启带路径回到 RUNNING, 下轮若仍在检测区会重新命中)
+++                    if miss_obj is not None:
+++                        self._dispatch_sort_cmd(miss_obj, static_mode=True)
+++                        self._dynamic_busy = True  # 标记静态兜底 sort 在途
+++                        self._auto_sort_log("漏抓兜底: 对下游物体执行静态 sort, 完成后重启传送带")
+++                    self._dynamic_state = 'RUNNING'  # 等待 busy→idle 后重启带
+++                    return
++ 
++-            # 4) 上游触发: 触发线右侧有物体且传送带运行中 → 下发 sort_dynamic
++-            trig_obj = self._pick_object_right_of_line(
++-                line_u=self._dynamic_trigger_line_u, require_base=True)
++-            if trig_obj is not None and self.conveyor_state == True:
++-                self._dynamic_state = 'RUNNING'
++-                self._auto_sort_log(f"动态: 目标 {trig_obj.get('object_name','?')} 进入跟踪区, 下发 sort_dynamic")
++-                self._dispatch_sort_cmd(trig_obj, static_mode=False)
++-                self.after(300, self._dynamic_tick)
++-                return
+++                # 3) 兜底后恢复: 上次兜底 sort 已确认完成 (not _dynamic_busy) 且传送带已停 → 重启带
+++                if not self._dynamic_busy and self.conveyor_state != True and not self._conveyor_busy:
+++                    self._conveyor_set(True)
++ 
+++                # 4) 上游触发: 触发线右侧有物体且传送带运行中 → 下发 sort_dynamic
+++                trig_obj = self._pick_object_right_of_line(
+++                    line_u=self._dynamic_trigger_line_u, require_base=True)
+++                if trig_obj is not None and self.conveyor_state == True:
+++                    self._dynamic_state = 'RUNNING'
+++                    self._auto_sort_log(f"动态: 目标 {trig_obj.get('object_name','?')} 进入跟踪区, 下发 sort_dynamic")
+++                    self._dispatch_sort_cmd(trig_obj, static_mode=False)
+++                    return
+++            except Exception as e:
+++                # 任何异常都不能让状态机冻结: 记录错误后继续重排
+++                self._auto_sort_log(f"动态抓取 tick 异常: {e}")
++             self.after(200, self._dynamic_tick)
++ 
++         def _restore_manual_buttons(self):
+diff --git a/.trae/specs/dynamic-grasping/task6-fix2-brief.md b/.trae/specs/dynamic-grasping/task6-fix2-brief.md
+new file mode 100644
+index 00000000..ae7873e4
+--- /dev/null
++++ b/.trae/specs/dynamic-grasping/task6-fix2-brief.md
+@@ -0,0 +1,57 @@
++# Task 6 二次修复 Brief: 修复 C1 状态机续排回归 + I1 error 无界等待
++
++> 工作目录：`/home/lxf/agx_arm_ws`。修改文件：`sorting_gui_client.py`（当前 HEAD b01e32c8，不要回退提交，不要 amend，新建 commit）。
++
++## 背景
++
++第一次修复（b01e32c8）解决了门控与 None 守卫问题，但复审发现一个 Critical 回归和 1 个 Important，需修复。
++
++## Critical C1: 状态机在首个动作分支后永久停机（续排被误删）
++
++**问题**：当前 `_dynamic_tick` 把所有分支改成了裸 `return`，而唯一的 `self.after(200, self._dynamic_tick)` 在函数尾部，**只有"什么都不做"的 fall-through 路径能到达**。任何走分支的 tick 都直接退出函数，再无续排。后果：
++- 派发 sort_dynamic 后 → 循环死亡，不再检测 MISS_STOP、不再管理传送带；
++- 进入 MISS_STOP → 带能停但静态 sort 永远不派发；
++- STOPPING → 停止流程永不完成，dynamic_mode 卡死为 True。
++
++**参照**：现有 `_auto_sort_tick`（约 1810-1822 行）的模式是——分支只改状态/发指令然后 **fall-through 到尾部唯一的 `self.after(...)`**，每轮必执行。
++
++**修复**：重写 `_dynamic_tick`，保证**每个可能路径最终都会重新调度**。推荐两种方式（选一，保持简洁）：
++1. 仿照 `_auto_sort_tick`：分支内不 return，只设置状态/发指令，走到尾部统一的 `self.after(200, self._dynamic_tick)`；
++2. 或每个 `return` 前都显式 `self.after(200, self._dynamic_tick)`。
++
++要求：用状态机推演验证每个路径——STOPPING 等 busy / STOPPING 停带 / STOPPING 完成退出（此路径是唯一可以不再续排的）/ busy 等待 / MISS_STOP 进入 / MISS_STOP 等带停 / MISS_STOP 静态派发 / RUNNING 触发派发 / 无事等待——每一条都必须有续排（除 STOPPING 完成退出）。
++
++## Important I1: `_dynamic_wait_inflight` 在 current_status == 'error' 时永久等待
++
++**问题**：`_dynamic_wait_inflight()` 约 1586 行 `return True  # 状态未知/error`。若在途 sort/sort_dynamic 失败、服务端报 error 而 `_dynamic_busy` 为 True，门控永远返回 True → 传送带永不重启、动态模式永久卡死。'error' 是真实状态（见 `_update_status_loop` 约 1482 行）。
++
++**修复**：'error' 状态同样走超时宽限（复用现有 1s 空闲宽限逻辑）后清 `_dynamic_busy` 并记录日志（`_auto_sort_log`），避免无界等待，让状态机自我恢复。
++
++## Minor（若顺手可处理，否则留注释说明）
++
++- 静态兜底分支的 `_dynamic_busy=True` 置位若发生在 `_dispatch_sort_cmd` 因缺 base_position_m 提前 return 之后，会造成"已置位但未实际派发"的偶发耦合。建议把置位逻辑收进 `_dispatch_sort_cmd` 内部（仅实际派发时才置 True），消除偶然耦合。
++
++## 验证（必须执行并贴出结果）
++
++```bash
++cd /home/lxf/agx_arm_ws && python3 -m py_compile sorting_gui_client.py
++cd /home/lxf/agx_arm_ws && python3 - <<'EOF'
++import ast
++src = open('sorting_gui_client.py').read()
++for token in ('_dynamic_start', '_dynamic_stop', '_dynamic_tick',
++              '_dynamic_trigger_line_u', '_dynamic_miss_line_u',
++              'sort_dynamic', 'line_u=None', '_dynamic_busy'):
++    assert token in src, f'缺失符号: {token}'
++print('OK: 动态抓取 GUI 符号齐全')
++EOF
++```
++
++## 提交
++
++```bash
++cd /home/lxf/agx_arm_ws && git add sorting_gui_client.py && git commit -m "fix: restore dynamic state machine rescheduling and error timeout"
++```
++
++## 报告
++
++将修复说明写入 /home/lxf/agx_arm_ws/.trae/specs/dynamic-grasping/task6-fix2-report.md（改了什么、状态机路径推演、验证结果）。所有注释中文，不改动本任务之外代码。
+diff --git a/.trae/specs/dynamic-grasping/task6-fix2-report.md b/.trae/specs/dynamic-grasping/task6-fix2-report.md
+new file mode 100644
+index 00000000..16481db0
+--- /dev/null
++++ b/.trae/specs/dynamic-grasping/task6-fix2-report.md
+@@ -0,0 +1,63 @@
++# Task 6 二次修复报告
++
++- 提交: `814063ce` "fix: restore dynamic state machine rescheduling and error timeout" (基于 HEAD b01e32c8, 未回退、未 amend)
++- 修改文件: `sorting_gui_client.py` (仅此一个文件, 共 71 增 69 删)
++- 验证: `python3 -m py_compile` 通过 + 符号断言脚本通过 (`OK: 动态抓取 GUI 符号齐全`)
++
++## 改动内容
++
++### C1 (Critical): 恢复 `_dynamic_tick` 全路径续排
++
++**根因**: 原 `_dynamic_tick` 把所有"有动作"的分支改成裸 `return`, 而唯一的 `self.after(200, self._dynamic_tick)` 在函数尾部, 只有 fall-through 的"无事等待"路径能到达。任何真实动作(派发 sort_dynamic、进入 MISS_STOP、停带、STOPPING 等待)都会在首轮动作后退出, 状态机永久停机。
++
++**修复**: 仿照 `_auto_sort_tick` 的续排模式, 重写 `_dynamic_tick`。分支只改状态/发指令, 不再 `return`, 所有路径最终汇到函数尾部唯一的 `self.after(200, self._dynamic_tick)`。仅两处允许不续排退出:
++1. 函数开头 `if not self.dynamic_mode: return` (动态模式已退出, 仅 STOPPING 完成后可达);
++2. STOPPING 完成分支(`dynamic_mode=False` 置位后 `return`)。
++
++### I1 (Important): `_dynamic_wait_inflight` 对 error 状态增加超时宽限
++
++**根因**: 原 `current_status == 'error'` 走 `return True` 无界等待。若在途 sort/sort_dynamic 失败、服务端报 error 且 `_dynamic_busy` 为 True, 门控永远返回 True → 传送带永不重启、动态模式死锁。
++
++**修复**: `'error'` 与 `'idle'` 一起走 1s 空闲宽限逻辑; 超过 1s 仍为 error 时, 通过 `_auto_sort_log` 记录日志后清除 `_dynamic_busy`, 返回 False, 状态机自我恢复(重启带、进入下一次派发)。
++
++### Minor: `_dynamic_busy=True` 收进 `_dispatch_sort_cmd`
++
++原 `_dynamic_tick` 的 MISS_STOP 静态兜底分支在 `_dispatch_sort_cmd` 返回后才 `self._dynamic_busy = True`; 若 `_dispatch_sort_cmd` 因缺 `base_position_m` 提前 return, 会出现"已置位但未派发"的偶发耦合。现改为: 仅在 `_dispatch_sort_cmd` 实际派发处(缺 base_position_m 提前 return 之后)、且 `self.dynamic_mode` 为 True 时才置 `_dynamic_busy = True`; 删除 `_dynamic_tick` 中冗余的置位行。
++
++## 状态机路径推演 (每条路径是否续排)
++
++| # | 路径 | 动作 | 续排 |
++|---|------|------|------|
++| 1 | STOPPING + 在途任务未完成 (wait_inflight) | 等待, pass | ✅ 尾部 after(200) |
++| 2 | STOPPING + 机械臂 busy (未置 busy 的其它任务) | 等待, pass | ✅ 尾部 after(200) |
++| 3 | STOPPING + 带未停且无切换在途 | `_conveyor_set(False)` 停带 | ✅ 尾部 after(200) |
++| 4 | STOPPING + 停带指令在途 (`_conveyor_busy`) | 等待, pass | ✅ 尾部 after(200) |
++| 5 | STOPPING 完成 (带已停稳、无在途) | 复位并置 `dynamic_mode=False` | ❌ 唯一不续排 (状态机退出) |
++| 6 | 非 STOPPING + 在途任务未完成 (wait_inflight) | 等待, pass | ✅ 尾部 after(200) |
++| 7 | 非 STOPPING + 机械臂 busy | 等待, pass | ✅ 尾部 after(200) |
++| 8 | RUNNING + 漏抓检测命中 | 进入 MISS_STOP + 停带 | ✅ 尾部 after(200) |
++| 9 | MISS_STOP + 带尚未停稳 | 等待, pass | ✅ 尾部 after(200) |
++| 10 | MISS_STOP + 带已停 | 派发静态兜底 sort, 回 RUNNING | ✅ 尾部 after(200) |
++| 11 | RUNNING 兜底后恢复 | `_conveyor_set(True)` 重启带 | ✅ 尾部 after(200) |
++| 12 | RUNNING + 上游触发命中 | 派发 sort_dynamic, 回 RUNNING | ✅ 尾部 after(200) |
++| 13 | 无事等待 (无任何动作) | 无 | ✅ 尾部 after(200) |
++| 14 | 任一分支抛出异常 | 记录日志 | ✅ except 后尾部 after(200) |
++| 15 | 动态模式已退出 (顶部守卫) | 无 | ❌ 不续排 (仅 STOPPING 完成后可达, 机器已停) |
++
++结论: 除路径 5 (STOPPING 完成) 与路径 15 (机器已停止的顶部守卫, 即 STOPPING 完成后的兜底) 外, 全部路径均续排。
++
++## 验证结果
++
++```bash
++$ python3 -m py_compile sorting_gui_client.py      # 通过, 退出码 0
++$ python3 - <<'EOF'
++import ast
++src = open('sorting_gui_client.py').read()
++for token in ('_dynamic_start', '_dynamic_stop', '_dynamic_tick',
++              '_dynamic_trigger_line_u', '_dynamic_miss_line_u',
++              'sort_dynamic', 'line_u=None', '_dynamic_busy'):
++    assert token in src, f'缺失符号: {token}'
++print('OK: 动态抓取 GUI 符号齐全')
++EOF
++OK: 动态抓取 GUI 符号齐全
++```
+diff --git a/.trae/specs/dynamic-grasping/task6-fix2.diff b/.trae/specs/dynamic-grasping/task6-fix2.diff
+new file mode 100644
+index 00000000..ed35ad58
+--- /dev/null
++++ b/.trae/specs/dynamic-grasping/task6-fix2.diff
+@@ -0,0 +1,176 @@
++diff --git a/sorting_gui_client.py b/sorting_gui_client.py
++index 714360d1..6c017ed4 100644
++--- a/sorting_gui_client.py
+++++ b/sorting_gui_client.py
++@@ -1576,14 +1576,19 @@ def main():
++                 return False
++             if self.current_status == 'busy':
++                 return True  # 已观察到 busy: 机械臂正在执行, 等待任务完成
++-            if self.current_status == 'idle':
+++            if self.current_status in ('idle', 'error'):
++                 # 下发后可能尚未轮询到 busy (状态刷新滞后), 距上次派发 <1s 视为
++-                # 指令在途未确认, 继续等待; 超过 1s 仍为 idle 则说明该次任务已完成
+++                # 指令在途未确认, 继续等待; 超过 1s 仍为 idle/error 则说明该次任务
+++                # 已完成或已失败 (error 是真实状态, 不能无限等待), 清除在途标记
+++                # 让状态机自我恢复 (传送带重启、进入下一次派发)。
++                 if time.time() - self.last_dispatch_time < 1.0:
++                     return True
++-                self._dynamic_busy = False  # 上次 sort_dynamic/sort 已完成 (busy→idle)
+++                if self.current_status == 'error':
+++                    # 服务端报错: 记录日志后清除在途标记, 避免动态模式永久卡死
+++                    self._auto_sort_log("在途分拣任务异常 (error), 已清除在途标记, 动态状态机继续运行")
+++                self._dynamic_busy = False  # 上次 sort_dynamic/sort 已结束 (busy→idle/error)
++                 return False
++-            return True  # 状态未知/error: 继续等待服务端恢复
+++            return True  # 状态未知: 继续等待服务端恢复
++ 
++         def _dynamic_tick(self):
++             """动态抓取状态机主循环 (GUI 主线程, 复用 _dispatch_sort_cmd).
++@@ -1592,78 +1597,72 @@ def main():
++             (参照 _auto_sort_tick 的续排写法)。
++             """
++             if not self.dynamic_mode:
++-                return
+++                return  # 动态模式已退出 (STOPPING 完成): 唯一允许不再续排的路径
++             try:
++                 st = self._dynamic_state
++ 
++                 if st == 'STOPPING':
++                     if self._dynamic_wait_inflight():
++                         # 在途 sort_dynamic / 静态兜底 sort 尚未完成: 先等待, 不立即停带
++-                        return
++-                    if self.current_status == 'busy':
++-                        return  # 机械臂正在执行其它任务, 等待完成
++-                    if self.conveyor_state != False and not self._conveyor_busy:
+++                        pass
+++                    elif self.current_status == 'busy':
+++                        pass  # 机械臂正在执行其它任务, 等待完成
+++                    elif self.conveyor_state != False and not self._conveyor_busy:
++                         self._conveyor_set(False)
++-                        return
++-                    if self._conveyor_busy:
++-                        return
++-                    self.dynamic_mode = False
++-                    self._dynamic_state = 'OFF'
++-                    self._dynamic_busy = False
++-                    self.dyn_start_btn.config(state=tk.NORMAL)
++-                    self.dyn_stop_btn.config(state=tk.DISABLED)
++-                    self._restore_manual_buttons()
++-                    # 隐藏上游触发线与下游漏抓分界线
++-                    for cid in (self._dyn_trig_line_id, self._dyn_trig_label_id,
++-                                self._dyn_miss_line_id, self._dyn_miss_label_id):
++-                        if cid is not None:
++-                            self.camera_canvas.itemconfig(cid, state='hidden')
++-                    self._auto_sort_log("动态抓取已停止")
++-                    return
++-
++-                # 在途 sort_dynamic / 静态兜底 sort: 等待 busy→idle 确认完成后再继续
++-                if self._dynamic_wait_inflight():
++-                    return
++-
++-                if self.current_status == 'busy':
++-                    # 机械臂忙碌(未置 _dynamic_busy 的其它任务), 等待完成
++-                    return
++-
++-                # ── idle: 检查漏抓分界线 (优先) 与上游触发线 ──
++-                # 1) 下游漏抓: 分界线右侧有物体 → 停带静态兜底 (仅在 RUNNING 下进入, 避免重复停带)
++-                miss_obj = self._pick_object_right_of_line(
++-                    line_u=self._dynamic_miss_line_u, require_base=True)
++-                if st != 'MISS_STOP' and miss_obj is not None and self.conveyor_state == True:
++-                    self._dynamic_state = 'MISS_STOP'
++-                    self._auto_sort_log(f"漏抓检测: 物体越过下游分界线 u={self._dynamic_miss_line_u}, 停带静态抓取")
++-                    self._conveyor_set(False)
++-                    return
++-
++-                # 2) 漏抓静态兜底: 等传送带停稳后对下游物体执行静态 sort
++-                if st == 'MISS_STOP':
++-                    if self.conveyor_state != False:
++-                        return  # 传送带尚未停稳, 继续等待
++-                    # 传送带已停: 对下游物体执行静态 sort (miss_obj 可能因检测抖动为 None,
++-                    # 此时不派发, 直接走重启带路径回到 RUNNING, 下轮若仍在检测区会重新命中)
++-                    if miss_obj is not None:
++-                        self._dispatch_sort_cmd(miss_obj, static_mode=True)
++-                        self._dynamic_busy = True  # 标记静态兜底 sort 在途
++-                        self._auto_sort_log("漏抓兜底: 对下游物体执行静态 sort, 完成后重启传送带")
++-                    self._dynamic_state = 'RUNNING'  # 等待 busy→idle 后重启带
++-                    return
++-
++-                # 3) 兜底后恢复: 上次兜底 sort 已确认完成 (not _dynamic_busy) 且传送带已停 → 重启带
++-                if not self._dynamic_busy and self.conveyor_state != True and not self._conveyor_busy:
++-                    self._conveyor_set(True)
++-
++-                # 4) 上游触发: 触发线右侧有物体且传送带运行中 → 下发 sort_dynamic
++-                trig_obj = self._pick_object_right_of_line(
++-                    line_u=self._dynamic_trigger_line_u, require_base=True)
++-                if trig_obj is not None and self.conveyor_state == True:
++-                    self._dynamic_state = 'RUNNING'
++-                    self._auto_sort_log(f"动态: 目标 {trig_obj.get('object_name','?')} 进入跟踪区, 下发 sort_dynamic")
++-                    self._dispatch_sort_cmd(trig_obj, static_mode=False)
++-                    return
+++                    elif self._conveyor_busy:
+++                        pass  # 传送带停止指令在途, 等待停稳
+++                    else:
+++                        # 传送带已停稳: 完成停止流程, 退出动态模式
+++                        self.dynamic_mode = False
+++                        self._dynamic_state = 'OFF'
+++                        self._dynamic_busy = False
+++                        self.dyn_start_btn.config(state=tk.NORMAL)
+++                        self.dyn_stop_btn.config(state=tk.DISABLED)
+++                        self._restore_manual_buttons()
+++                        # 隐藏上游触发线与下游漏抓分界线
+++                        for cid in (self._dyn_trig_line_id, self._dyn_trig_label_id,
+++                                    self._dyn_miss_line_id, self._dyn_miss_label_id):
+++                            if cid is not None:
+++                                self.camera_canvas.itemconfig(cid, state='hidden')
+++                        self._auto_sort_log("动态抓取已停止")
+++                        return  # STOPPING 完成: 状态机退出, 不再续排
+++                else:
+++                    # 在途 sort_dynamic / 静态兜底 sort: 等待 busy→idle 确认完成后再继续
+++                    if self._dynamic_wait_inflight():
+++                        pass
+++                    elif self.current_status == 'busy':
+++                        pass  # 机械臂忙碌(未置 _dynamic_busy 的其它任务), 等待完成
+++                    else:
+++                        # ── idle: 检查漏抓分界线 (优先) 与上游触发线 ──
+++                        # 1) 下游漏抓: 分界线右侧有物体 → 停带静态兜底 (仅在 RUNNING 下进入, 避免重复停带)
+++                        miss_obj = self._pick_object_right_of_line(
+++                            line_u=self._dynamic_miss_line_u, require_base=True)
+++                        if st != 'MISS_STOP' and miss_obj is not None and self.conveyor_state == True:
+++                            self._dynamic_state = 'MISS_STOP'
+++                            self._auto_sort_log(f"漏抓检测: 物体越过下游分界线 u={self._dynamic_miss_line_u}, 停带静态抓取")
+++                            self._conveyor_set(False)
+++                        elif st == 'MISS_STOP':
+++                            # 2) 漏抓静态兜底: 等传送带停稳后对下游物体执行静态 sort
+++                            if self.conveyor_state != False:
+++                                pass  # 传送带尚未停稳, 继续等待
+++                            else:
+++                                # 传送带已停: 对下游物体执行静态 sort (miss_obj 可能因检测抖动为 None,
+++                                # 此时不派发, 直接走重启带路径回到 RUNNING, 下轮若仍在检测区会重新命中)
+++                                if miss_obj is not None:
+++                                    self._dispatch_sort_cmd(miss_obj, static_mode=True)
+++                                    self._auto_sort_log("漏抓兜底: 对下游物体执行静态 sort, 完成后重启传送带")
+++                                self._dynamic_state = 'RUNNING'  # 等待 busy→idle 后重启带
+++                        else:
+++                            # 3) 兜底后恢复: 上次兜底 sort 已确认完成 (not _dynamic_busy) 且传送带已停 → 重启带
+++                            if not self._dynamic_busy and self.conveyor_state != True and not self._conveyor_busy:
+++                                self._conveyor_set(True)
+++                            # 4) 上游触发: 触发线右侧有物体且传送带运行中 → 下发 sort_dynamic
+++                            trig_obj = self._pick_object_right_of_line(
+++                                line_u=self._dynamic_trigger_line_u, require_base=True)
+++                            if trig_obj is not None and self.conveyor_state == True:
+++                                self._dynamic_state = 'RUNNING'
+++                                self._auto_sort_log(f"动态: 目标 {trig_obj.get('object_name','?')} 进入跟踪区, 下发 sort_dynamic")
+++                                self._dispatch_sort_cmd(trig_obj, static_mode=False)
++             except Exception as e:
++                 # 任何异常都不能让状态机冻结: 记录错误后继续重排
++                 self._auto_sort_log(f"动态抓取 tick 异常: {e}")
++@@ -1706,6 +1705,9 @@ def main():
++             if not static_mode:
++                 # 动态抓取命令带唯一 cycle_id, 便于服务端区分单次拦截任务
++                 cmd["cycle_id"] = f"dyn-{int(time.time())}"
+++            # 仅在动态抓取模式下标记在途任务: 移到派发内部, 只有实际派发才置位,
+++            # 避免缺 base_position_m 提前 return 造成"已置位但未派发"的偶发耦合
+++            if self.dynamic_mode:
++                 self._dynamic_busy = True
++             self.last_dispatch_time = time.time()
++             self.cmd_queue.put(cmd)
+diff --git a/.trae/specs/dynamic-grasping/task6-report.md b/.trae/specs/dynamic-grasping/task6-report.md
+new file mode 100644
+index 00000000..ae924be6
+--- /dev/null
++++ b/.trae/specs/dynamic-grasping/task6-report.md
+@@ -0,0 +1,46 @@
++# Task 6 报告: GUI 动态抓取模式 + 下游漏抓分界线
++
++## 状态
++
++DONE
++
++## 提交
++
++- `6117a854` feat: add dynamic grasping mode and downstream miss-line fallback to GUI
++  （仅修改并提交 `sorting_gui_client.py`，1 file changed, 180 insertions(+), 18 deletions(-)）
++
++## 验证
++
++- `python3 -m py_compile sorting_gui_client.py` → 通过
++- 符号断言脚本 → 输出 `OK: 动态抓取 GUI 符号齐全`
++
++## 实现内容（按 brief 步骤）
++
++- Step 1: 新增状态字段 `dynamic_mode` / `_dynamic_state`（OFF/RUNNING/MISS_STOP/STOPPING）/ `_dynamic_trigger_line_u=200` / `_dynamic_miss_line_u=560` / `_dynamic_busy`，另加 4 个 canvas 对象 ID（`_dyn_trig_line_id/_dyn_trig_label_id/_dyn_miss_line_id/_dyn_miss_label_id`）用于分界线显隐管理。
++- Step 2: 在自动分拣 LabelFrame 之后新增"动态抓取"LabelFrame，含紫色 `dyn_start_btn`（#9C27B0）与橙色 `dyn_stop_btn`（#FF9800，初始 DISABLED）。因 brief 中的 `ctrl_frame` 不存在，遵循现有 `tk.LabelFrame + tk.Button` 模式实现。
++- Step 3: 新增 `_dynamic_start` / `_dynamic_stop` / `_dynamic_tick`（状态机主循环）/ `_restore_manual_buttons`。
++- Step 3b: `_pick_object_right_of_line` 签名改为 `(self, line_u=None, require_base=True)`，内部引用改用 `line_u`，`require_base=False` 时不做 base_position_m 过滤；默认参数保持自动分拣原行为不变。
++- Step 4: 在 `_draw_dividing_line`（实际方法名，brief 写 `_draw_auto_sort_line`）中绘制蓝色虚线漏抓线；另按 brief 可选说明补画了绿色虚线上游触发线。两线均创建一次、默认隐藏，动态模式启动/停止时显隐。
++- Step 5: 手动按钮禁用/弹窗屏蔽条件由 `auto_sort_running` 扩展为 `(auto_sort_running or dynamic_mode)`，涉及 5 处：`_update_detection_loop`(pick_btn/pick_graspnet_btn 处)、`_update_detection_loop`(pick_blue_block_btn 处)、`_conveyor_done`、`_update_status_loop`(idle 排队任务)、`_update_status_loop`(error 不弹窗)。
++- Step 6: py_compile 与符号断言均通过。
++- Step 7: 已提交（见上）。
++
++## 与 brief 的偏差（均已用实际代码为准）
++
++1. **`_dispatch_sort_cmd` 采用扩展既有方法而非新增同名方法**：文件中原已存在 `_dispatch_sort_cmd(self, obj, retry=False)`（自动分拣使用）。brief 要求新增 `_dispatch_sort_cmd(obj, static_mode)` 会与之重名冲突。改为在既有方法上追加 `static_mode=True` 参数：
++   - `static_mode=True`（默认）→ `cmd: "sort"`（自动分拣与漏抓静态兜底共用，保持原自动分拣行为不变）；
++   - `static_mode=False` → `cmd: "sort_dynamic"` 并附带 `cycle_id: "dyn-<ts>"`（动态拦截）。
++   - 同时保留既有 `retry` 参数与 `place_name` 字段、`object_diameter_m` 条件写入逻辑（与既有 auto-sort 派发模式一致）。
++2. **`_restore_manual_buttons` 复用 `_set_manual_buttons_state`**：brief 中该方法引用 `conveyor_on_btn/conveyor_off_btn/single_btn/verify_btn`，其中 `single_btn`/`verify_btn` 不存在，实际手动按钮集合由既有 `_set_manual_buttons_state` 管理。改为在 `_restore_manual_buttons` 内调用 `_set_manual_buttons_state(tk.NORMAL)`。对应地，`_dynamic_start` 中调用 `_set_manual_buttons_state(tk.DISABLED)` 保持"动态抓取中手动按钮禁用"约定。
++3. **状态机补全了 brief 遗漏的"漏抓兜底后重启传送带"逻辑**：brief 的 `_dynamic_tick` 在 MISS_STOP 静态 sort 派发后置 `RUNNING` 但从未重启传送带（与设计说明"等 idle → 重启带 → RUNNING"矛盾），会导致漏抓兜底后传送带永久停止。新增第 3 步：idle 且传送带停稳时自动 `_conveyor_set(True)` 恢复。
++4. **进入 MISS_STOP 增加 `st != 'MISS_STOP'` 守卫**：避免停带过程中每 tick 重复命中漏抓分支、重复停带与重复日志。
++5. **STOPPING 增加 `if self._conveyor_busy: return`**：修复 brief 中"停带命令在途但 conveyor_state 仍为旧值时会直接完成退出"的竞态。
++6. **上游触发派发增加 `self.conveyor_state == True` 条件**：避免在传送带尚未重启完成（兜底恢复窗口期）时对静止带下发 `sort_dynamic`。
++7. **漏抓线绘制采用"创建一次 + 显隐切换"**：brief 的 snippet 在 `_draw_dividing_line` 内 `if self.dynamic_mode: create_line(...)`，但该方法仅在初始化时调用一次，动态模式启动时不可能为 True，无法显示。改为在 `_draw_dividing_line` 中创建线对象并默认隐藏，`_dynamic_start` 显示、STOPPING 完成时隐藏。画布变量用实际名 `self.camera_canvas`。
++8. **新增绿色上游触发线**：按 brief 可选说明（"检查动态模式下是否也需要绘制上游触发线，可用绿色虚线"）实现，因显隐机制已存在、扩展成本低。
++
++## 备注
++
++- 未修改其他文件；自动分拣的 `_dispatch_sort_cmd` 调用（`retry=False/True`）行为完全保持（默认 `static_mode=True` → `sort`）。
++- `_auto_sort_tick` 与 `stop_auto_sort` 中的 `if not self.auto_sort_running: return` 属自动分拣自身守卫，未改动。
++- 未新增对"自动分拣与动态抓取同时运行"的互斥校验（brief 未要求，维持最小改动）。
+diff --git a/.trae/specs/dynamic-grasping/task6.diff b/.trae/specs/dynamic-grasping/task6.diff
+new file mode 100644
+index 00000000..119b2e8c
+--- /dev/null
++++ b/.trae/specs/dynamic-grasping/task6.diff
+@@ -0,0 +1,295 @@
++diff --git a/sorting_gui_client.py b/sorting_gui_client.py
++index d9ce98a3..fd3bccc6 100644
++--- a/sorting_gui_client.py
+++++ b/sorting_gui_client.py
++@@ -403,6 +403,16 @@ def main():
++             self._auto_error_seen=False        # SORTING 中是否看到 error
++             self._auto_sort_stop_requested=False  # 停止请求标志
++             self._auto_sort_line_u=260         # 分界线 u 坐标 (向左偏移, 物体从左向右移动, 越线后进入抓取区)
+++            # ── 动态抓取模式 (传送带持续运行, 移动拦截) ──
+++            self.dynamic_mode = False
+++            self._dynamic_state = 'OFF'      # OFF/RUNNING/MISS_STOP/STOPPING
+++            self._dynamic_trigger_line_u = 200   # 上游触发线: 物体越线进入跟踪区
+++            self._dynamic_miss_line_u = 560      # 下游漏抓分界线 (可调): 越线即漏抓
+++            self._dynamic_busy = False
+++            self._dyn_trig_line_id = None        # 上游触发线 canvas 线对象
+++            self._dyn_trig_label_id = None       # 上游触发线 canvas 文本对象
+++            self._dyn_miss_line_id = None        # 下游漏抓分界线 canvas 线对象
+++            self._dyn_miss_label_id = None       # 下游漏抓分界线 canvas 文本对象
++             self._auto_sort_tick_id=None       # after 句柄
++             self._conv_stop_retry=0            # 传送带停止重试计数
++             self._conv_stopped_ts=0            # 传送带停止完成时间戳 (用于观察 1s 等物体静止)
++@@ -623,6 +633,17 @@ def main():
++             self.auto_sort_stop_btn.pack(side=tk.LEFT,expand=True,fill="x",padx=(4,0))
++             tk.Label(fas,text=" 分界线 u=260 (物体左→右) | 苹果/草莓/橙→框1 | 柠檬/桃/梨→框2 | 失败重试1次",
++                      font=("Arial",8),fg="gray").pack(pady=(6,0))
+++            # ── 动态抓取模式按钮 ──
+++            fdyn=tk.LabelFrame(self.right_frame, text=" 动态抓取", padx=10, pady=10); fdyn.pack(fill="x", pady=5)
+++            bdyn=tk.Frame(fdyn); bdyn.pack(fill="x")
+++            self.dyn_start_btn=tk.Button(bdyn,text=" 动态抓取 ",command=self._dynamic_start,
+++                                         font=("Arial",12,"bold"),bg="#9C27B0",fg="white")
+++            self.dyn_start_btn.pack(side=tk.LEFT,expand=True,fill="x",padx=(0,4))
+++            self.dyn_stop_btn=tk.Button(bdyn,text=" 停止动态抓取 ",command=self._dynamic_stop,
+++                                        font=("Arial",12,"bold"),bg="#FF9800",fg="white",state=tk.DISABLED)
+++            self.dyn_stop_btn.pack(side=tk.LEFT,expand=True,fill="x",padx=(4,0))
+++            tk.Label(fdyn,text=" 上游触发线 u=200 | 下游漏抓线 u=560 (可调) | 越线即停带静态兜底",
+++                     font=("Arial",8),fg="gray").pack(pady=(6,0))
++             fa=tk.Frame(self.right_frame); fa.pack(pady=10)
++             tk.Button(fa,text="🛑 急停 (EMERGENCY STOP)",command=self._on_emergency_stop,
++                       font=("Arial",14,"bold"),bg="#FF0000",fg="white",
++@@ -729,8 +750,8 @@ def main():
++                     # 默认主物体显示 (顶层字段, 保持向后兼容)
++                     if d.get('detected'):
++                         self.det_status_var.set(f" 已检测到物体 (共 {len(objects)} 个)")
++-                        # 自动分拣运行时保持手动按钮禁用
++-                        if not self.auto_sort_running:
+++                        # 自动分拣/动态抓取运行时保持手动按钮禁用
+++                        if not (self.auto_sort_running or self.dynamic_mode):
++                             self.pick_btn.config(state=tk.NORMAL,bg="#4CAF50")
++                             # 两阶段精定位在 eye-to-hand 下无效 (相机固定, 移动机械臂不改变视角), 永久禁用
++                             self.pick_graspnet_btn.config(state=tk.NORMAL,bg="#FF9800")
++@@ -1177,7 +1198,7 @@ def main():
++                 self.det_dist.set("尺寸: --")
++             # 启用蓝方块抓取按钮 (仅在非切换状态且 base_coords 有效时)
++             if not self._mode_switching and bc and all(k in bc for k in ('x', 'y', 'z')):
++-                if not self.auto_sort_running:
+++                if not (self.auto_sort_running or self.dynamic_mode):
++                     self.pick_blue_block_btn.config(state=tk.NORMAL, bg="#33CAE8")
++ 
++         # ── 原有功能 ──
++@@ -1369,8 +1390,8 @@ def main():
++ 
++         def _conveyor_done(self, run, ok, err):
++             self._conveyor_busy=False
++-            # 自动分拣运行时保持手动按钮禁用
++-            if not self.auto_sort_running:
+++            # 自动分拣/动态抓取运行时保持手动按钮禁用
+++            if not (self.auto_sort_running or self.dynamic_mode):
++                 self.conveyor_on_btn.config(state=tk.NORMAL)
++                 self.conveyor_off_btn.config(state=tk.NORMAL)
++             if ok:
++@@ -1448,9 +1469,9 @@ def main():
++             if s=='idle':
++                 self.status_var.set("当前服务器状态: 空闲 (Idle)"); self.status_label.configure(fg="green")
++                 self.error_notified=False
++-                # ⚠️ 自动分拣运行时禁止弹出排队任务: 状态机自己通过 _dispatch_sort_cmd 直接
+++                # ⚠️ 自动分拣/动态抓取运行时禁止弹出排队任务: 状态机自己通过 _dispatch_sort_cmd 直接
++                 # 下发 sort_verify, 排队队列的 cmd_queue.put 会与服务端正在处理的指令冲突。
++-                if not self.auto_sort_running and getattr(self,'queue_running',False):
+++                if not (self.auto_sort_running or self.dynamic_mode) and getattr(self,'queue_running',False):
++                     if self.task_queue and (time.time()-self.last_dispatch_time>1.5):
++                         self.cmd_queue.put(self.task_queue.pop(0)); self.refresh_queue_listbox()
++                         self.last_dispatch_time=time.time()
++@@ -1460,8 +1481,8 @@ def main():
++             elif s=='busy': self.status_var.set("当前服务器状态: 忙碌 (Busy)"); self.status_label.configure(fg="red")
++             elif s=='error':
++                 self.status_var.set("当前服务器状态: 异常 (Error)"); self.status_label.configure(fg="orange")
++-                if self.auto_sort_running:
++-                    pass  # 自动分拣运行时, 状态机自行处理 error, 不弹窗
+++                if self.auto_sort_running or self.dynamic_mode:
+++                    pass  # 自动分拣/动态抓取运行时, 状态机自行处理 error, 不弹窗
++                 elif not getattr(self,'error_notified',False):
++                     self.error_notified=True; self.clear_queue()
++                     messagebox.showwarning("规划失败","机械臂执行失败。任务队列已清空。")
++@@ -1485,32 +1506,152 @@ def main():
++                 if k in n: return 2
++             return 1  # 未知默认料框1
++ 
++-        def _pick_object_right_of_line(self):
+++        def _pick_object_right_of_line(self, line_u=None, require_base=True):
++             """筛选 x2 ≥ 分界线 且有 base_position_m 的物体, 返回 center_u 最大的 (最右侧, 最远离分界线)。
++ 
++             物体从左向右移动, 越过左侧分界线后进入抓取区 (分界线右侧).
+++            自动分拣用 self._auto_sort_line_u (默认), 动态模式用传入 line_u.
+++            require_base=False 时仅按像素分界线筛选 (不要求 base_position_m).
++             选 center_u 最大的 = 最右侧 = 最远离分界线的物体 (先抓最远的, 避免机械臂遮挡后续物体).
++             """
+++            line_u = self._auto_sort_line_u if line_u is None else line_u
++             d = self.latest_detection
++             if not d or not d.get('detected'): return None
++             objects = d.get('objects', []) or []
++             candidates = []
++             for obj in objects:
++-                bp = obj.get('base_position_m')
++-                if not bp or not all(k in bp for k in ('x','y','z')): continue
+++                if require_base:
+++                    bp = obj.get('base_position_m')
+++                    if not bp or not all(k in bp for k in ('x','y','z')): continue
++                 bbox = obj.get('bbox_pixel', {})
++                 x1 = bbox.get('x1'); x2 = bbox.get('x2')
++                 if x1 is None or x2 is None: continue
++-                if x2 >= self._auto_sort_line_u:
+++                if x2 >= line_u:
++                     center_u = (x1 + x2) / 2.0
++                     candidates.append((center_u, obj))
++             if not candidates: return None
++             candidates.sort(key=lambda t: t[0], reverse=True)  # center_u 降序 (最大=最右侧, 最远离分界线)
++             return candidates[0][1]
++ 
++-        def _dispatch_sort_cmd(self, obj, retry=False):
++-            """构造分拣命令并发送: 使用 sort (单次检测, eye-to-hand 下无需两阶段精定位)。"""
++-            bp = obj['base_position_m']
+++        # ═══════════════════════ 动态抓取模式 ═══════════════════════
+++
+++        def _dynamic_start(self):
+++            """启动动态抓取: 开启传送带并进入 RUNNING 状态."""
+++            if self._dynamic_state != 'OFF':
+++                return
+++            self.dynamic_mode = True
+++            self._dynamic_state = 'RUNNING'
+++            self.dyn_start_btn.config(state=tk.DISABLED)
+++            self.dyn_stop_btn.config(state=tk.NORMAL)
+++            self._set_manual_buttons_state(tk.DISABLED)
+++            # 显示上游触发线与下游漏抓分界线
+++            for cid in (self._dyn_trig_line_id, self._dyn_trig_label_id,
+++                        self._dyn_miss_line_id, self._dyn_miss_label_id):
+++                if cid is not None:
+++                    self.camera_canvas.itemconfig(cid, state='normal')
+++            self._auto_sort_log(f"动态抓取启动: 传送带持续运行, 移动拦截物体")
+++            if self.conveyor_state != True and not self._conveyor_busy:
+++                self._conveyor_set(True)
+++            self.after(300, self._dynamic_tick)
+++
+++        def _dynamic_stop(self):
+++            """停止动态抓取: 完成当前任务后停带并复位."""
+++            if self._dynamic_state == 'OFF':
+++                return
+++            self._dynamic_state = 'STOPPING'
+++            self.dyn_stop_btn.config(state=tk.DISABLED)
+++            self._auto_sort_log("动态抓取停止请求: 完成当前任务后停带")
+++            self.after(200, self._dynamic_tick)
+++
+++        def _dynamic_tick(self):
+++            """动态抓取状态机主循环 (GUI 主线程, 复用 _dispatch_sort_cmd)."""
+++            if not self.dynamic_mode:
+++                return
+++            st = self._dynamic_state
+++
+++            if st == 'STOPPING':
+++                if self.current_status == 'busy':
+++                    self.after(200, self._dynamic_tick)
+++                    return
+++                if self.conveyor_state != False and not self._conveyor_busy:
+++                    self._conveyor_set(False)
+++                    self.after(200, self._dynamic_tick)
+++                    return
+++                if self._conveyor_busy:
+++                    self.after(200, self._dynamic_tick)
+++                    return
+++                self.dynamic_mode = False
+++                self._dynamic_state = 'OFF'
+++                self._dynamic_busy = False
+++                self.dyn_start_btn.config(state=tk.NORMAL)
+++                self.dyn_stop_btn.config(state=tk.DISABLED)
+++                self._restore_manual_buttons()
+++                # 隐藏上游触发线与下游漏抓分界线
+++                for cid in (self._dyn_trig_line_id, self._dyn_trig_label_id,
+++                            self._dyn_miss_line_id, self._dyn_miss_label_id):
+++                    if cid is not None:
+++                        self.camera_canvas.itemconfig(cid, state='hidden')
+++                self._auto_sort_log("动态抓取已停止")
+++                return
+++
+++            if self.current_status == 'busy':
+++                # 机械臂忙碌(正在执行 sort_dynamic / sort), 等待完成
+++                self.after(200, self._dynamic_tick)
+++                return
+++
+++            # ── idle: 检查漏抓分界线 (优先) 与上游触发线 ──
+++            # 1) 下游漏抓: 分界线右侧有物体 → 停带静态兜底 (仅在 RUNNING 下进入, 避免重复停带)
+++            miss_obj = self._pick_object_right_of_line(
+++                line_u=self._dynamic_miss_line_u, require_base=True)
+++            if st != 'MISS_STOP' and miss_obj is not None and self.conveyor_state == True:
+++                self._dynamic_state = 'MISS_STOP'
+++                self._auto_sort_log(f"漏抓检测: 物体越过下游分界线 u={self._dynamic_miss_line_u}, 停带静态抓取")
+++                self._conveyor_set(False)
+++                self.after(300, self._dynamic_tick)
+++                return
+++
+++            # 2) 漏抓静态兜底: 等传送带停稳后对下游物体执行静态 sort
+++            if st == 'MISS_STOP':
+++                if self.conveyor_state != False:
+++                    self.after(200, self._dynamic_tick)
+++                    return
+++                # 传送带已停: 对下游物体执行静态 sort
+++                self._dispatch_sort_cmd(miss_obj, static_mode=True)
+++                self._dynamic_state = 'RUNNING'  # 等待 busy→idle 后重启带
+++                self.after(200, self._dynamic_tick)
+++                return
+++
+++            # 3) 兜底后恢复: 传送带已停且无任务 → 重启带 (漏抓静态 sort 完成后自动恢复)
+++            if self.conveyor_state != True and not self._conveyor_busy:
+++                self._conveyor_set(True)
+++
+++            # 4) 上游触发: 触发线右侧有物体且传送带运行中 → 下发 sort_dynamic
+++            trig_obj = self._pick_object_right_of_line(
+++                line_u=self._dynamic_trigger_line_u, require_base=True)
+++            if trig_obj is not None and self.conveyor_state == True:
+++                self._dynamic_state = 'RUNNING'
+++                self._auto_sort_log(f"动态: 目标 {trig_obj.get('object_name','?')} 进入跟踪区, 下发 sort_dynamic")
+++                self._dispatch_sort_cmd(trig_obj, static_mode=False)
+++                self.after(300, self._dynamic_tick)
+++                return
+++
+++            self.after(200, self._dynamic_tick)
+++
+++        def _restore_manual_buttons(self):
+++            """恢复手动按钮可用状态 (退出动态模式时调用)."""
+++            self._set_manual_buttons_state(tk.NORMAL)
+++
+++        def _dispatch_sort_cmd(self, obj, retry=False, static_mode=True):
+++            """构造分拣命令并发送.
+++
+++            static_mode=True:  下发 sort (静态兜底/自动分拣, 传送带已停, 物体静止抓取).
+++            static_mode=False: 下发 sort_dynamic (动态抓取, 传送带持续运行, 移动拦截).
+++            自动分拣沿用 retry 逻辑 (sort 单次检测, eye-to-hand 下无需两阶段精定位)。
+++            """
+++            bp = obj.get('base_position_m')
+++            if not bp or not all(k in bp for k in ('x','y','z')):
+++                self._auto_sort_log("⚠️ 物体缺少 base_position_m, 跳过")
+++                return
++             try:
++                 r = float(self.default_grasp_roll.get())
++                 p = float(self.default_grasp_pitch.get())
++@@ -1524,11 +1665,16 @@ def main():
++             bin_num = self._bin_for_object(name)
++             # 优先用 D455 估计直径, fallback 预设尺寸
++             dia = obj.get('estimated_diameter_m') or obj.get('size_m', {}).get('diameter')
++-            cmd = {"cmd": "sort", "pick": pick, "bin": bin_num,
+++            cmd = {"cmd": "sort" if static_mode else "sort_dynamic",
+++                   "pick": pick, "bin": bin_num,
++                    "pick_name": f"{name} (auto-sort{'-retry' if retry else ''})",
++                    "place_name": f"料框{bin_num}"}
++-            method_tag = "single"
+++            method_tag = "single" if static_mode else "dynamic"
++             if dia: cmd["object_diameter_m"] = round(float(dia), 3)
+++            if not static_mode:
+++                # 动态抓取命令带唯一 cycle_id, 便于服务端区分单次拦截任务
+++                cmd["cycle_id"] = f"dyn-{int(time.time())}"
+++                self._dynamic_busy = True
++             self.last_dispatch_time = time.time()
++             self.cmd_queue.put(cmd)
++             self._auto_sort_log(f"分拣[{method_tag}]: {name}→料框{bin_num} {'[重试]' if retry else ''}")
++@@ -1555,6 +1701,22 @@ def main():
++                     x_line + 5, 12, text=f"分界线 u={self._auto_sort_line_u}", fill='yellow', anchor=tk.NW, font=("Arial", 9, "bold"))
++                 self.camera_canvas.itemconfig(self._div_line_id, state='hidden')
++                 self.camera_canvas.itemconfig(self._div_label_id, state='hidden')
+++                # 动态抓取: 上游触发线 (绿色虚线) 与下游漏抓分界线 (蓝色虚线), 默认隐藏, 动态模式启动时显示
+++                x_trig = int(self._canvas_w * self._dynamic_trigger_line_u / 640)
+++                self._dyn_trig_line_id = self.camera_canvas.create_line(
+++                    x_trig, 0, x_trig, self._canvas_h, fill='green', dash=(4, 4), width=2)
+++                self._dyn_trig_label_id = self.camera_canvas.create_text(
+++                    x_trig + 5, 38, text=f"触发线 u={self._dynamic_trigger_line_u}",
+++                    fill='green', anchor=tk.NW, font=("Arial", 9, "bold"))
+++                x_miss = int(self._canvas_w * self._dynamic_miss_line_u / 640)
+++                self._dyn_miss_line_id = self.camera_canvas.create_line(
+++                    x_miss, 0, x_miss, self._canvas_h, fill='blue', dash=(6, 4), width=2)
+++                self._dyn_miss_label_id = self.camera_canvas.create_text(
+++                    x_miss + 5, 26, text=f"漏抓线 u={self._dynamic_miss_line_u}",
+++                    fill='blue', anchor=tk.NW, font=("Arial", 9, "bold"))
+++                for cid in (self._dyn_trig_line_id, self._dyn_trig_label_id,
+++                            self._dyn_miss_line_id, self._dyn_miss_label_id):
+++                    self.camera_canvas.itemconfig(cid, state='hidden')
++             except Exception as e:
++                 _log(f"画分界线失败: {e}")
++ 
+diff --git a/auto_sorting_action.py b/auto_sorting_action.py
+index 266013e5..2bb02498 100755
+--- a/auto_sorting_action.py
++++ b/auto_sorting_action.py
+@@ -54,6 +54,10 @@ import numpy as np
+ import traceback
+ from typing import Tuple, Optional
+ 
++# ── 动态抓取: 传送带状态订阅 + 速度预测 ──
++# 依赖上方 sys.path 注入 (_ws_root) 定位 workspace 根目录的 velocity_predictor.py
++from velocity_predictor import VelocityPredictor
++
+ # ---- Pinocchio IKSolver (内嵌副本, 独立节点 pinocchio_ik_node.py 已移除) ----
+ 
+ # State variables for lazy-loading
+@@ -315,6 +319,15 @@ class MoveItActionClient(Node):
+         self._detection_event = threading.Event()
+         self.det_sub = self.create_subscription(String, '/detection_info', self._detection_cb, 10)
+ 
++        # ── 动态抓取: 订阅传送带状态 (速度/方向/物体检测) ──
++        self._belt_speed = 0.0
++        self._belt_direction = 1
++        self._predictor = VelocityPredictor()
++        self._dynamic_calib = None
++        self._conveyor_status_sub = self.create_subscription(
++            String, '/conveyor_status', self._conveyor_status_cb, 10)
++        self._load_dynamic_calib()
++
+         # ── GraspNet 服务客户端 (sort_graspnet 命令) ──
+         # 通过话题通信请求独立服务节点 graspnet_service_node.py 生成 6DoF 抓取位姿
+         # (该节点运行在 orange_dataset/.venv, 避免与本节点 .venv_ik 的 pinocchio 冲突)
+@@ -458,6 +471,35 @@ class MoveItActionClient(Node):
+             self.current_joints = {}
+         self.current_joints.update(dict(zip(msg.name, msg.position)))
+ 
++    def _conveyor_status_cb(self, msg):
++        """缓存传送带状态 (STM32 滤波后速度), 供动态抓取预测."""
++        try:
++            d = json.loads(msg.data)
++            if d.get('type') == 'conveyor_status':
++                self._belt_speed = float(d.get('speed', 0.0))
++                self._belt_direction = int(d.get('motor_direction', 1))
++                self._predictor.set_belt_speed(self._belt_speed)
++        except Exception:
++            pass
++
++    def _load_dynamic_calib(self):
++        """加载传送带方向标定 conveyor_calib.json, 初始化预测器方向."""
++        import os
++        path = '/home/lxf/agx_arm_ws/conveyor_calib.json'
++        if not os.path.exists(path):
++            self.get_logger().warn(f"⚠️ 未找到传送带标定文件 {path}, 动态抓取将退化为静态抓取")
++            return
++        try:
++            with open(path, 'r') as f:
++                calib = json.load(f)
++            self._dynamic_calib = calib
++            self._predictor.set_direction(float(calib['dx']), float(calib['dy']))
++            self.get_logger().info(
++                f"✅ 传送带方向标定已加载: d̂=({calib['dx']:.4f},{calib['dy']:.4f}) "
++                f"angle={calib.get('angle_rad', 0.0):.3f}rad")
++        except Exception as e:
++            self.get_logger().warn(f"⚠️ 传送带标定加载失败: {e}")
++
+     def _detection_cb(self, msg):
+         """缓存 YOLO 检测结果，唤醒等待线程。"""
+         try:
+@@ -508,6 +550,45 @@ class MoveItActionClient(Node):
+         self.get_logger().warn(f"⏰ 重试: {timeout_s}s 内未获取到 {target_name} 新坐标")
+         return None
+ 
++    def _dynamic_find_object(self, objects, target_name):
++        """从检测列表中找到目标物体(名称匹配), 返回该物体的 dict."""
++        target_key = (target_name or '').split(' (')[0].strip().lower()
++        for obj in objects or []:
++            name = (obj.get('name', '') or '').lower().strip()
++            if target_key and (target_key in name or name in target_key):
++                return obj
++        return None
++
++    def _dynamic_current_xy(self, target_name, max_age_s=2.0):
++        """返回目标物体最新基坐标系位置 (x, y) 与测量时刻 (秒).
++
++        使用 header_stamp(图像时刻) 而非接收时刻, 供 VelocityPredictor 延迟补偿.
++        返回 (x, y, t_meas) 或 None.
++        """
++        det = self._latest_detection
++        if not det or not det.get('detected'):
++            return None
++        obj = self._dynamic_find_object(det.get('objects', []), target_name)
++        if obj is None:
++            return None
++        bp = obj.get('base_position_m')
++        if not bp or 'x' not in bp or 'y' not in bp:
++            return None
++        hs = obj.get('header_stamp')
++        t_meas = time.time()
++        if isinstance(hs, str) and hs:
++            try:
++                # ISO 格式 "2026-08-22 12:34:56.789123" (可含 T/Z)
++                hs_clean = hs.replace('T', ' ').replace('Z', '')
++                t_meas = time.mktime(time.strptime(hs_clean[:19], '%Y-%m-%d %H:%M:%S'))
++                if len(hs_clean) > 20:
++                    t_meas += float('0.' + hs_clean[20:])
++            except Exception:
++                t_meas = time.time()
++        if time.time() - t_meas > max_age_s:
++            return None
++        return (float(bp['x']), float(bp['y']), t_meas)
++
+     def _init_ik_solver(self):
+         """初始化内嵌 Pinocchio IK 求解器（无需 ROS2 topic 通信）"""
+         try:
+@@ -1555,6 +1636,48 @@ class MoveItActionClient(Node):
+         self.get_logger().error("❌ 所有规划策略全部失败！")
+         return False
+ 
++    def _dynamic_disable_conveyor_collision(self):
++        """动态抓取: 临时禁用传送带碰撞体与机械臂的碰撞检测 (供斜线下降).
++        复用现有 PlanningScene ACM diff 机制. 调用前需 sleep 0.15s 供 move_group 处理."""
++        try:
++            allowed = [
++                ('arm', 'belt_deck'), ('arm', 'conveyor_belt_col'),
++                ('arm', 'rail_ny'), ('arm', 'control_box'),
++                ('arm', 'conveyor_control_box'),
++            ]
++            acm = AllowedCollisionEntry()
++            for link_a, link_b in allowed:
++                acm.model_a_name = link_a
++                acm.model_b_name = link_b
++                acm.entry_names.append(link_b)
++                acm.enabled.append(True)
++            diff = PlanningSceneMsg()
++            diff.is_diff = True
++            diff.allowed_collision_matrix.entry_names = [link_a]
++            diff.allowed_collision_matrix.entry_values = [acm]
++            self._planning_scene_pub.publish(diff)
++            time.sleep(0.15)
++            self.get_logger().info("🧩 动态抓取: 已禁用传送带碰撞体碰撞检测")
++        except Exception as e:
++            self.get_logger().warn(f"⚠️ 禁用碰撞体失败: {e}")
++
++    def _dynamic_restore_conveyor_collision(self):
++        """动态抓取: 恢复传送带碰撞检测 (回 P_HOVER 后调用)."""
++        try:
++            acm = AllowedCollisionEntry()
++            acm.model_a_name = 'arm'
++            acm.entry_names.append('__all__')
++            acm.enabled.append(False)
++            diff = PlanningSceneMsg()
++            diff.is_diff = True
++            diff.allowed_collision_matrix.entry_names = ['arm']
++            diff.allowed_collision_matrix.entry_values = [acm]
++            self._planning_scene_pub.publish(diff)
++            time.sleep(0.15)
++            self.get_logger().info("🧩 动态抓取: 已恢复传送带碰撞检测")
++        except Exception as e:
++            self.get_logger().warn(f"⚠️ 恢复碰撞体失败: {e}")
++
+     def _try_gripper_action(self, joint_names, positions, timeout_sec=1.0):
+         if not self._gripper_action_client.wait_for_server(timeout_sec=timeout_sec):
+             return False
+@@ -2535,6 +2658,19 @@ def main():
+     #  此值为最后安全兜底; 若仍碰→增大, 若空夹→减小, 步长 0.005)
+     MIN_GRASP_Z = 0.045
+ 
++    # ── 动态抓取 (sort_dynamic) ──
++    # P_HOVER: 抓取区上方悬停位 (base 系, link6 末端位置, 待用户标定后替换示例值)
++    # 要求: 位于抓取区正上方、安全高度、远离传送带碰撞体
++    P_HOVER_POSE = {'x': 0.45, 'y': 0.0, 'z': 0.32}      # 示例值, 需标定
++    P_HOVER_ORIENTATION = [0.0, 0.0, -1.0, 0.0]          # 简化示例, 需按末端实际姿态标定
++    # 动态抓取前瞻名义耗时 (秒): 移到影子点 / 下降 / 抬起 的名义用时,
++    # 用于计算目标前瞻量 (物体位移 = 速度 × 名义耗时). 空跑测试后细调.
++    SHADOW_LEAD_S = 1.0
++    DESCENT_NOMINAL_S = 0.6
++    LIFT_LEAD_S = 0.3
++    # 动态抓取最低下降高度 (base 系, 米); 与静态 MIN_GRASP_Z 含义相同, 兜底防碰
++    DYNAMIC_MIN_GRASP_Z = 0.045
++
+     # ── eye-to-hand 标定系统性 X/Y 偏移补偿 (单位: 米) ──
+     # ⚠️ 已在 realsense_yolo_node.py 源头补偿 (x_offset_m/y_offset_m 参数),
+     # 此处设 0 避免双重修正. 如需额外微调, 改为非 0 值叠加补偿.
+@@ -2564,7 +2700,124 @@ def main():
+         if close_target >= open_target:
+             close_target = max(0.022, open_target - 0.028)
+         return open_target, close_target
+-    
++
++    def _run_dynamic_grasp(self, pick_id, bin_num, object_diameter_m, start_pose, compute_gripper_targets):
++        """动态抓取核心序列: 影子对齐 → 斜线随动下降 → 夹取 → 抬起 → 放置.
++
++        Args:
++            pick_id: 物体名称 (如 "apple (detected)")
++            bin_num: 料框编号 1/2
++            object_diameter_m: 物体直径 (m), 用于夹爪开度
++            start_pose: {'x','y','z'} 命令下发时的检测位置 (备用)
++        Returns:
++            bool: 本次动态抓取是否成功
++        """
++        if not self._dynamic_calib:
++            self.get_logger().warn("⚠️ 无传送带标定, 动态抓取不可用")
++            return False
++
++        v = self._belt_speed
++        if v <= 0.0:
++            self.get_logger().warn("⚠️ 传送带速度不可用(v<=0), 动态抓取不可用")
++            return False
++
++        # ── 1. 读取目标最新位置 (含延迟补偿的测量时刻) ──
++        xy = self._dynamic_current_xy(pick_id)
++        if xy is None:
++            self.get_logger().warn("⚠️ 动态抓取: 未获取到目标最新位置, 回退静态")
++            return False
++        x_now, y_now, t_meas = xy
++
++        # 物体表面 z (base 系), 决定夹取高度
++        det = self._latest_detection
++        obj = self._dynamic_find_object(det.get('objects', []), pick_id)
++        surface_z = float(obj.get('base_position_m', {}).get('z', 0.0)) if obj else float(start_pose.get('z', 0.0))
++        grasp_z = max(surface_z + GRIPPER_PICK_Z_OFFSET, MIN_GRASP_Z)
++
++        # ── 2. 影子点 (横向对齐): 目标 = 预测位置 + v*SHADOW_LEAD_S 前瞻 ──
++        t_shadow = time.time()
++        self._predictor.add_measurement(t_meas, x_now, y_now)
++        sx, sy = self._predictor.predict(t_meas, x_now, y_now, t_shadow + SHADOW_LEAD_S)
++        z_shadow = P_HOVER_POSE['z']
++        self.get_logger().info(
++            f"🎯 动态: 影子点=({sx:.3f},{sy:.3f},z={z_shadow:.3f}) 速度={v:.4f} m/s")
++        shadow_ok = self.move_arm_pose(
++            {'x': sx, 'y': sy, 'z': z_shadow},
++            "动态-影子对齐", continuous=False, planning_mode='normal',
++            preferred_orientation=self._build_pick_orientation({'x': sx, 'y': sy}))
++        if not shadow_ok:
++            self.get_logger().warn("⚠️ 动态: 影子点运动失败")
++            return False
++
++        # ── 3. 斜线随动下降: 目标 = 预测位置 + v*DESCENT_NOMINAL_S 前瞻 ──
++        xy2 = self._dynamic_current_xy(pick_id)
++        if xy2 is not None:
++            x_now, y_now, t_meas = xy2
++            self._predictor.add_measurement(t_meas, x_now, y_now)
++        t_descent = time.time()
++        gx, gy = self._predictor.predict(t_meas, x_now, y_now, t_descent + DESCENT_NOMINAL_S)
++        # 目标姿态: 用抓取点生成的 PCA 短轴候选 (外部已传入 start_pose 无姿态, 用径向候选)
++        orientations = self._build_pick_orientations_multi({'x': gx, 'y': gy})
++        self._dynamic_disable_conveyor_collision()
++        waypoints = [self._create_pose({'x': gx, 'y': gy, 'z': grasp_z}, orientations[0])]
++        self.get_logger().info(
++            f"🎯 动态: 下降目标=({gx:.3f},{gy:.3f},z={grasp_z:.3f}) 前瞻={DESCENT_NOMINAL_S}s")
++        descent_ok = self.execute_cartesian_path(
++            waypoints, "动态-斜线随动下降", fraction_threshold=0.80, jump_threshold=0.8)
++        if not descent_ok:
++            self._dynamic_restore_conveyor_collision()
++            self.get_logger().warn("⚠️ 动态: 斜线下降失败")
++            return False
++
++        # ── 4. 夹取: 一次性闭合 + 力矩判定 ──
++        if object_diameter_m:
++            _, close_target = compute_gripper_targets(object_diameter_m)
++        else:
++            close_target = GRIPPER_CLOSE
++        self._pre_grasp_width = self._latest_gripper_status.width if self._latest_gripper_status else None
++        grasp_ok = self.operate_gripper(close_target, "动态-闭合夹爪")
++        if not grasp_ok:
++            self._dynamic_restore_conveyor_collision()
++            self.get_logger().warn("⚠️ 动态: 夹爪闭合失败")
++            return False
++
++        # ── 5. 带前向分量抬起 (水平平移 + 抬升, 一次笛卡尔路径) ──
++        xy3 = self._dynamic_current_xy(pick_id)
++        lift_dx, lift_dy = 0.0, 0.0
++        if xy3 is not None:
++            x3, y3, t3 = xy3
++            self._predictor.add_measurement(t3, x3, y3)
++            lx, ly = self._predictor.predict(t3, x3, y3, time.time() + LIFT_LEAD_S)
++            lift_dx, lift_dy = lx - gx, ly - gy
++        lift_z = z_shadow + 0.05
++        lift_ok = self.execute_cartesian_path(
++            [self._create_pose({'x': gx + lift_dx, 'y': gy + lift_dy, 'z': lift_z},
++                               self._build_pick_orientation({'x': gx + lift_dx, 'y': gy + lift_dy})[0])],
++            "动态-带前向抬起", fraction_threshold=0.80)
++        if not lift_ok:
++            self._dynamic_restore_conveyor_collision()
++            self.get_logger().warn("⚠️ 动态: 抬起失败, 尝试原地抬升")
++            self.move_arm_pose({'x': gx, 'y': gy, 'z': lift_z}, "动态-原地抬升")
++
++        # ── 6. 放料框 ──
++        bin_above, bin_place = BIN_JOINTS[bin_num]
++        self.move_arm_joint(bin_above, f"动态-料框{bin_num}上方")
++        self.move_arm_joint(bin_place, f"动态-料框{bin_num}放置")
++        self.operate_gripper(GRIPPER_OPEN, f"动态-料框{bin_num}释放")
++        self.move_arm_joint(bin_above, f"动态-料框{bin_num}上方")
++
++        # ── 7. 回 P_HOVER 并恢复碰撞 ──
++        self.move_arm_pose(P_HOVER_POSE, "动态-回悬停位", continuous=False,
++                           planning_mode='normal',
++                           preferred_orientation=P_HOVER_ORIENTATION)
++        self._dynamic_restore_conveyor_collision()
++        self.get_logger().info("✅ 动态抓取完成")
++        return True
++
++    # _run_dynamic_grasp 引用 main() 局部常量 (P_HOVER_POSE/SHADOW_LEAD_S/GRIPPER_PICK_Z_OFFSET/BIN_JOINTS 等),
++    # 类方法无法访问 main() 局部作用域, 故定义为 main() 内闭包并绑定到 node 供命令分发调用.
++    node._run_dynamic_grasp = _run_dynamic_grasp
++
+     loop_count = 0
+     try:
+         print("\n\n======== 🔵 自动分拣服务端已启动 (等待 GUI 客户端指令) ========\n")
+@@ -3159,6 +3412,45 @@ def main():
+                 node.cycle_result_pub.publish(result_msg)
+                 time.sleep(0.5)
+ 
++            elif data.get("cmd") == "sort_dynamic":
++                # 动态抓取: 传送带持续运行, 机械臂预测并拦截移动物体
++                # 依赖: conveyor_calib.json (方向标定) + /conveyor_status (STM32 速度)
++                node.is_busy = True
++                status_msg.data = 'busy'
++                node.status_pub.publish(status_msg)
++                node.last_planning_profile_name = ''
++                node.last_planning_strategy = ''
++                try:
++                    pick_id = str(data.get("pick_name", "Pick"))
++                    bin_num = int(data.get("bin", 1))
++                    if bin_num not in BIN_JOINTS:
++                        bin_num = 1
++                    object_diameter_m = data.get("object_diameter_m", None)
++                    start_pose = data.get("pick", {})
++                    ok = node._run_dynamic_grasp(
++                        pick_id, bin_num, object_diameter_m, start_pose,
++                        compute_gripper_targets)
++                except Exception as e:
++                    print(f"❌ 动态抓取异常: {e}")
++                    import traceback; traceback.print_exc()
++                    ok = False
++                if not ok:
++                    # 动态抓取失败 → 回退静态抓取 (传送带已由 GUI 停止/或将停止)
++                    node.get_logger().warn("⚠️ 动态抓取失败, 回退静态抓取流程")
++                    node.move_arm_joint(JOINT_STANDBY, "动态失败-回待机位")
++                    node.operate_gripper(GRIPPER_OPEN, "动态失败-张开夹爪")
++                    result = {'ok': False, 'cmd': 'sort_dynamic',
++                              'msg': '动态抓取失败(已回退)'}
++                else:
++                    result = {'ok': True, 'cmd': 'sort_dynamic',
++                              'msg': '动态抓取成功'}
++                result_msg = String()
++                result_msg.data = json.dumps(result)
++                node.cycle_result_pub.publish(result_msg)
++                node.is_busy = False
++                status_msg.data = 'idle'
++                node.status_pub.publish(status_msg)
++
+             elif data.get("cmd") == "sort_blue_block":
+                 # 🟦 蓝方块分拣 (Task 2.1): 顶面中位抓取 + 分层姿态约束
+                 # 命令 JSON: {cmd, pick, surface_z_m, block_width_m, block_length_m,
+diff --git a/conveyor_calib.py b/conveyor_calib.py
+new file mode 100644
+index 00000000..d927c937
+--- /dev/null
++++ b/conveyor_calib.py
+@@ -0,0 +1,69 @@
++#!/usr/bin/env python3
++"""传送带方向标定: 用俯视相机采集的 base_position_m 轨迹拟合传送带方向单位向量.
++
++相机画面横轴与传送带不平行(存在夹角), 因此方向必须通过实际运动轨迹拟合,
++而不能直接用图像坐标轴. 本模块同时提供视觉速度估计, 用于与 STM32 上报速度交叉校验.
++"""
++import math
++import numpy as np
++
++
++def fit_belt_direction(xys):
++    """对 (x, y) 轨迹点做 PCA 主轴拟合, 返回 (dx, dy, info).
++
++    Args:
++        xys: [(x, y), ...] 基坐标系下轨迹点, 至少 3 个且非零跨度.
++    Returns:
++        (dx, dy, info): 归一化单位向量 (dx>=0 消除 180° 二义性),
++                        info 含 angle_rad / n_points / residual.
++    Raises:
++        ValueError: 点数不足或轨迹退化(零跨度).
++    """
++    if len(xys) < 3:
++        raise ValueError("轨迹点不足: 至少需要 3 个采样点")
++    arr = np.asarray(xys, dtype=float).reshape(-1, 2)
++    if arr.shape[0] < 3:
++        raise ValueError("轨迹点不足: 至少需要 3 个采样点")
++    cov = np.cov(arr, rowvar=False)
++    if np.linalg.matrix_rank(cov) < 2:
++        raise ValueError("轨迹退化: 点几乎共线, 无法确定方向(检查物体是否在动)")
++    eigvals, eigvecs = np.linalg.eigh(cov)
++    principal = eigvecs[:, int(np.argmax(eigvals))]
++    dx, dy = float(principal[0]), float(principal[1])
++    # 消除 180° 二义性: 统一取 dx>=0 分支
++    if dx < 0.0:
++        dx, dy = -dx, -dy
++    norm = math.hypot(dx, dy)
++    if norm < 1e-9:
++        raise ValueError("轨迹退化: 主方向模为零")
++    dx, dy = dx / norm, dy / norm
++    # 残差: 点到拟合直线的平均垂直距离
++    proj = arr @ np.array([dx, dy])
++    residual = float(np.mean(np.abs(arr - np.outer(proj, [dx, dy])), axis=0).sum() / 2.0)
++    info = {
++        'angle_rad': math.atan2(dy, dx),
++        'n_points': int(arr.shape[0]),
++        'residual': residual,
++    }
++    return dx, dy, info
++
++
++def estimate_belt_speed_vision(samples):
++    """用 (t, x, y) 采样点线性拟合位移速度 (m/s).
++
++    Args:
++        samples: [(t, x, y), ...] 时间(秒)与基坐标系位置.
++    Returns:
++        视觉估计的传送带线速度 (m/s, 非负). 点数不足时返回 0.0.
++    """
++    if len(samples) < 3:
++        return 0.0
++    t = np.asarray([s[0] for s in samples], dtype=float)
++    p = np.asarray([(s[1], s[2]) for s in samples], dtype=float)
++    t0 = t - t[0]
++    denom = float(np.sum(t0 * t0))
++    if denom < 1e-12:
++        return 0.0
++    # 位移向量对时间做最小二乘斜率 (向量点积/标量)
++    v_vec = np.sum((p - p[0]) * t0[:, None], axis=0) / denom
++    return float(np.hypot(v_vec[0], v_vec[1]))
+diff --git a/sorting_gui_client.py b/sorting_gui_client.py
+index 610fa48b..6c017ed4 100644
+--- a/sorting_gui_client.py
++++ b/sorting_gui_client.py
+@@ -73,6 +73,12 @@ def ros_process_worker(cmd_q, st_q, pose_q, img_q, det_q, conv_q, conv_status_q,
+             try:
+                 if _conv_ok:
+                     s = _conv.get_status()
++                    status_msg = {'type': 'conveyor_status',
++                                  'speed': s['speed'],
++                                  'object_detected': s['object_detected'],
++                                  'motor_running': s['motor_running'],
++                                  'motor_direction': int(s.get('motor_direction', 1)),
++                                  'connected': True}
+                     try:
+                         conv_status_q.put_nowait({'type': 'status', 'speed': s['speed'],
+                                        'object_detected': s['object_detected'],
+@@ -80,14 +86,22 @@ def ros_process_worker(cmd_q, st_q, pose_q, img_q, det_q, conv_q, conv_status_q,
+                     except Exception:
+                         pass
+                 else:
++                    status_msg = {'type': 'conveyor_status', 'speed': 0.0,
++                                  'object_detected': False, 'motor_running': False,
++                                  'motor_direction': 1, 'connected': False}
+                     try:
+                         conv_status_q.put_nowait({'type': 'status', 'speed': 0.0,
+                                        'object_detected': False, 'motor_running': False})
+                     except Exception:
+                         pass
++                try:
++                    sm = String(); sm.data = json.dumps(status_msg)
++                    node._conv_status_pub.publish(sm)
++                except Exception:
++                    pass
+             except Exception:
+                 pass
+-            time.sleep(0.25)
++            time.sleep(0.1)
+     threading.Thread(target=_conv_monitor, daemon=True).start()
+ 
+     # ═════════ 模式切换 (水果 YOLO ↔ 蓝方块检测) ═════════
+@@ -142,6 +156,8 @@ def ros_process_worker(cmd_q, st_q, pose_q, img_q, det_q, conv_q, conv_status_q,
+             self._exp_pub = self.create_publisher(String, '/camera/exposure_ctrl', 10)
+             # 急停/返回待机位 命令发布器 (auto_sorting_action.py 订阅 /emergency_stop)
+             self._emergency_pub = self.create_publisher(String, '/emergency_stop', 10)
++            # 传送带实时状态发布 (auto_sorting_action.py sort_dynamic 订阅): 速度/物体/电机
++            self._conv_status_pub = self.create_publisher(String, '/conveyor_status', 10)
+             self.create_subscription(String, '/sorting_status', self._on_st, 10)
+             self._tf_buf = tf2_ros.Buffer()
+             self._tf_lis = tf2_ros.TransformListener(self._tf_buf, self)
+@@ -387,6 +403,16 @@ def main():
+             self._auto_error_seen=False        # SORTING 中是否看到 error
+             self._auto_sort_stop_requested=False  # 停止请求标志
+             self._auto_sort_line_u=260         # 分界线 u 坐标 (向左偏移, 物体从左向右移动, 越线后进入抓取区)
++            # ── 动态抓取模式 (传送带持续运行, 移动拦截) ──
++            self.dynamic_mode = False
++            self._dynamic_state = 'OFF'      # OFF/RUNNING/MISS_STOP/STOPPING
++            self._dynamic_trigger_line_u = 200   # 上游触发线: 物体越线进入跟踪区
++            self._dynamic_miss_line_u = 560      # 下游漏抓分界线 (可调): 越线即漏抓
++            self._dynamic_busy = False
++            self._dyn_trig_line_id = None        # 上游触发线 canvas 线对象
++            self._dyn_trig_label_id = None       # 上游触发线 canvas 文本对象
++            self._dyn_miss_line_id = None        # 下游漏抓分界线 canvas 线对象
++            self._dyn_miss_label_id = None       # 下游漏抓分界线 canvas 文本对象
+             self._auto_sort_tick_id=None       # after 句柄
+             self._conv_stop_retry=0            # 传送带停止重试计数
+             self._conv_stopped_ts=0            # 传送带停止完成时间戳 (用于观察 1s 等物体静止)
+@@ -607,6 +633,17 @@ def main():
+             self.auto_sort_stop_btn.pack(side=tk.LEFT,expand=True,fill="x",padx=(4,0))
+             tk.Label(fas,text=" 分界线 u=260 (物体左→右) | 苹果/草莓/橙→框1 | 柠檬/桃/梨→框2 | 失败重试1次",
+                      font=("Arial",8),fg="gray").pack(pady=(6,0))
++            # ── 动态抓取模式按钮 ──
++            fdyn=tk.LabelFrame(self.right_frame, text=" 动态抓取", padx=10, pady=10); fdyn.pack(fill="x", pady=5)
++            bdyn=tk.Frame(fdyn); bdyn.pack(fill="x")
++            self.dyn_start_btn=tk.Button(bdyn,text=" 动态抓取 ",command=self._dynamic_start,
++                                         font=("Arial",12,"bold"),bg="#9C27B0",fg="white")
++            self.dyn_start_btn.pack(side=tk.LEFT,expand=True,fill="x",padx=(0,4))
++            self.dyn_stop_btn=tk.Button(bdyn,text=" 停止动态抓取 ",command=self._dynamic_stop,
++                                        font=("Arial",12,"bold"),bg="#FF9800",fg="white",state=tk.DISABLED)
++            self.dyn_stop_btn.pack(side=tk.LEFT,expand=True,fill="x",padx=(4,0))
++            tk.Label(fdyn,text=" 上游触发线 u=200 | 下游漏抓线 u=560 (可调) | 越线即停带静态兜底",
++                     font=("Arial",8),fg="gray").pack(pady=(6,0))
+             fa=tk.Frame(self.right_frame); fa.pack(pady=10)
+             tk.Button(fa,text="🛑 急停 (EMERGENCY STOP)",command=self._on_emergency_stop,
+                       font=("Arial",14,"bold"),bg="#FF0000",fg="white",
+@@ -713,8 +750,8 @@ def main():
+                     # 默认主物体显示 (顶层字段, 保持向后兼容)
+                     if d.get('detected'):
+                         self.det_status_var.set(f" 已检测到物体 (共 {len(objects)} 个)")
+-                        # 自动分拣运行时保持手动按钮禁用
+-                        if not self.auto_sort_running:
++                        # 自动分拣/动态抓取运行时保持手动按钮禁用
++                        if not (self.auto_sort_running or self.dynamic_mode):
+                             self.pick_btn.config(state=tk.NORMAL,bg="#4CAF50")
+                             # 两阶段精定位在 eye-to-hand 下无效 (相机固定, 移动机械臂不改变视角), 永久禁用
+                             self.pick_graspnet_btn.config(state=tk.NORMAL,bg="#FF9800")
+@@ -1161,7 +1198,7 @@ def main():
+                 self.det_dist.set("尺寸: --")
+             # 启用蓝方块抓取按钮 (仅在非切换状态且 base_coords 有效时)
+             if not self._mode_switching and bc and all(k in bc for k in ('x', 'y', 'z')):
+-                if not self.auto_sort_running:
++                if not (self.auto_sort_running or self.dynamic_mode):
+                     self.pick_blue_block_btn.config(state=tk.NORMAL, bg="#33CAE8")
+ 
+         # ── 原有功能 ──
+@@ -1353,8 +1390,8 @@ def main():
+ 
+         def _conveyor_done(self, run, ok, err):
+             self._conveyor_busy=False
+-            # 自动分拣运行时保持手动按钮禁用
+-            if not self.auto_sort_running:
++            # 自动分拣/动态抓取运行时保持手动按钮禁用
++            if not (self.auto_sort_running or self.dynamic_mode):
+                 self.conveyor_on_btn.config(state=tk.NORMAL)
+                 self.conveyor_off_btn.config(state=tk.NORMAL)
+             if ok:
+@@ -1432,9 +1469,9 @@ def main():
+             if s=='idle':
+                 self.status_var.set("当前服务器状态: 空闲 (Idle)"); self.status_label.configure(fg="green")
+                 self.error_notified=False
+-                # ⚠️ 自动分拣运行时禁止弹出排队任务: 状态机自己通过 _dispatch_sort_cmd 直接
++                # ⚠️ 自动分拣/动态抓取运行时禁止弹出排队任务: 状态机自己通过 _dispatch_sort_cmd 直接
+                 # 下发 sort_verify, 排队队列的 cmd_queue.put 会与服务端正在处理的指令冲突。
+-                if not self.auto_sort_running and getattr(self,'queue_running',False):
++                if not (self.auto_sort_running or self.dynamic_mode) and getattr(self,'queue_running',False):
+                     if self.task_queue and (time.time()-self.last_dispatch_time>1.5):
+                         self.cmd_queue.put(self.task_queue.pop(0)); self.refresh_queue_listbox()
+                         self.last_dispatch_time=time.time()
+@@ -1444,8 +1481,8 @@ def main():
+             elif s=='busy': self.status_var.set("当前服务器状态: 忙碌 (Busy)"); self.status_label.configure(fg="red")
+             elif s=='error':
+                 self.status_var.set("当前服务器状态: 异常 (Error)"); self.status_label.configure(fg="orange")
+-                if self.auto_sort_running:
+-                    pass  # 自动分拣运行时, 状态机自行处理 error, 不弹窗
++                if self.auto_sort_running or self.dynamic_mode:
++                    pass  # 自动分拣/动态抓取运行时, 状态机自行处理 error, 不弹窗
+                 elif not getattr(self,'error_notified',False):
+                     self.error_notified=True; self.clear_queue()
+                     messagebox.showwarning("规划失败","机械臂执行失败。任务队列已清空。")
+@@ -1469,32 +1506,183 @@ def main():
+                 if k in n: return 2
+             return 1  # 未知默认料框1
+ 
+-        def _pick_object_right_of_line(self):
++        def _pick_object_right_of_line(self, line_u=None, require_base=True):
+             """筛选 x2 ≥ 分界线 且有 base_position_m 的物体, 返回 center_u 最大的 (最右侧, 最远离分界线)。
+ 
+             物体从左向右移动, 越过左侧分界线后进入抓取区 (分界线右侧).
++            自动分拣用 self._auto_sort_line_u (默认), 动态模式用传入 line_u.
++            require_base=False 时仅按像素分界线筛选 (不要求 base_position_m).
+             选 center_u 最大的 = 最右侧 = 最远离分界线的物体 (先抓最远的, 避免机械臂遮挡后续物体).
+             """
++            line_u = self._auto_sort_line_u if line_u is None else line_u
+             d = self.latest_detection
+             if not d or not d.get('detected'): return None
+             objects = d.get('objects', []) or []
+             candidates = []
+             for obj in objects:
+-                bp = obj.get('base_position_m')
+-                if not bp or not all(k in bp for k in ('x','y','z')): continue
++                if require_base:
++                    bp = obj.get('base_position_m')
++                    if not bp or not all(k in bp for k in ('x','y','z')): continue
+                 bbox = obj.get('bbox_pixel', {})
+                 x1 = bbox.get('x1'); x2 = bbox.get('x2')
+                 if x1 is None or x2 is None: continue
+-                if x2 >= self._auto_sort_line_u:
++                if x2 >= line_u:
+                     center_u = (x1 + x2) / 2.0
+                     candidates.append((center_u, obj))
+             if not candidates: return None
+             candidates.sort(key=lambda t: t[0], reverse=True)  # center_u 降序 (最大=最右侧, 最远离分界线)
+             return candidates[0][1]
+ 
+-        def _dispatch_sort_cmd(self, obj, retry=False):
+-            """构造分拣命令并发送: 使用 sort (单次检测, eye-to-hand 下无需两阶段精定位)。"""
+-            bp = obj['base_position_m']
++        # ═══════════════════════ 动态抓取模式 ═══════════════════════
++
++        def _dynamic_start(self):
++            """启动动态抓取: 开启传送带并进入 RUNNING 状态."""
++            if self._dynamic_state != 'OFF':
++                return
++            self.dynamic_mode = True
++            self._dynamic_state = 'RUNNING'
++            self.dyn_start_btn.config(state=tk.DISABLED)
++            self.dyn_stop_btn.config(state=tk.NORMAL)
++            self._set_manual_buttons_state(tk.DISABLED)
++            # 显示上游触发线与下游漏抓分界线
++            for cid in (self._dyn_trig_line_id, self._dyn_trig_label_id,
++                        self._dyn_miss_line_id, self._dyn_miss_label_id):
++                if cid is not None:
++                    self.camera_canvas.itemconfig(cid, state='normal')
++            self._auto_sort_log(f"动态抓取启动: 传送带持续运行, 移动拦截物体")
++            if self.conveyor_state != True and not self._conveyor_busy:
++                self._conveyor_set(True)
++            self.after(300, self._dynamic_tick)
++
++        def _dynamic_stop(self):
++            """停止动态抓取: 完成当前任务后停带并复位."""
++            if self._dynamic_state == 'OFF':
++                return
++            self._dynamic_state = 'STOPPING'
++            self.dyn_stop_btn.config(state=tk.DISABLED)
++            self._auto_sort_log("动态抓取停止请求: 完成当前任务后停带")
++            self.after(200, self._dynamic_tick)
++
++        def _dynamic_wait_inflight(self):
++            """在途 sort_dynamic / 静态兜底 sort 门控: 等机械臂 busy→idle 确认完成.
++
++            派发命令时置 _dynamic_busy=True, 仅当观察到 busy→idle 转换后才清零;
++            未清零前禁止重启传送带, 避免漏抓静态 sort 下发后传送带过早重启
++            (current_status 每 500ms 轮询刷新, 而 tick 每 200ms 重排, 下发后短期内
++            看到的 idle 可能是派发前的陈旧状态)。
++            返回 True 表示在途任务未完成 (调用方应等待重排), False 表示已清除在途标记。
++            """
++            if not self._dynamic_busy:
++                return False
++            if self.current_status == 'busy':
++                return True  # 已观察到 busy: 机械臂正在执行, 等待任务完成
++            if self.current_status in ('idle', 'error'):
++                # 下发后可能尚未轮询到 busy (状态刷新滞后), 距上次派发 <1s 视为
++                # 指令在途未确认, 继续等待; 超过 1s 仍为 idle/error 则说明该次任务
++                # 已完成或已失败 (error 是真实状态, 不能无限等待), 清除在途标记
++                # 让状态机自我恢复 (传送带重启、进入下一次派发)。
++                if time.time() - self.last_dispatch_time < 1.0:
++                    return True
++                if self.current_status == 'error':
++                    # 服务端报错: 记录日志后清除在途标记, 避免动态模式永久卡死
++                    self._auto_sort_log("在途分拣任务异常 (error), 已清除在途标记, 动态状态机继续运行")
++                self._dynamic_busy = False  # 上次 sort_dynamic/sort 已结束 (busy→idle/error)
++                return False
++            return True  # 状态未知: 继续等待服务端恢复
++
++        def _dynamic_tick(self):
++            """动态抓取状态机主循环 (GUI 主线程, 复用 _dispatch_sort_cmd).
++
++            主体用 try/except 包裹并始终重排, 任何异常都不会让状态机静默冻结
++            (参照 _auto_sort_tick 的续排写法)。
++            """
++            if not self.dynamic_mode:
++                return  # 动态模式已退出 (STOPPING 完成): 唯一允许不再续排的路径
++            try:
++                st = self._dynamic_state
++
++                if st == 'STOPPING':
++                    if self._dynamic_wait_inflight():
++                        # 在途 sort_dynamic / 静态兜底 sort 尚未完成: 先等待, 不立即停带
++                        pass
++                    elif self.current_status == 'busy':
++                        pass  # 机械臂正在执行其它任务, 等待完成
++                    elif self.conveyor_state != False and not self._conveyor_busy:
++                        self._conveyor_set(False)
++                    elif self._conveyor_busy:
++                        pass  # 传送带停止指令在途, 等待停稳
++                    else:
++                        # 传送带已停稳: 完成停止流程, 退出动态模式
++                        self.dynamic_mode = False
++                        self._dynamic_state = 'OFF'
++                        self._dynamic_busy = False
++                        self.dyn_start_btn.config(state=tk.NORMAL)
++                        self.dyn_stop_btn.config(state=tk.DISABLED)
++                        self._restore_manual_buttons()
++                        # 隐藏上游触发线与下游漏抓分界线
++                        for cid in (self._dyn_trig_line_id, self._dyn_trig_label_id,
++                                    self._dyn_miss_line_id, self._dyn_miss_label_id):
++                            if cid is not None:
++                                self.camera_canvas.itemconfig(cid, state='hidden')
++                        self._auto_sort_log("动态抓取已停止")
++                        return  # STOPPING 完成: 状态机退出, 不再续排
++                else:
++                    # 在途 sort_dynamic / 静态兜底 sort: 等待 busy→idle 确认完成后再继续
++                    if self._dynamic_wait_inflight():
++                        pass
++                    elif self.current_status == 'busy':
++                        pass  # 机械臂忙碌(未置 _dynamic_busy 的其它任务), 等待完成
++                    else:
++                        # ── idle: 检查漏抓分界线 (优先) 与上游触发线 ──
++                        # 1) 下游漏抓: 分界线右侧有物体 → 停带静态兜底 (仅在 RUNNING 下进入, 避免重复停带)
++                        miss_obj = self._pick_object_right_of_line(
++                            line_u=self._dynamic_miss_line_u, require_base=True)
++                        if st != 'MISS_STOP' and miss_obj is not None and self.conveyor_state == True:
++                            self._dynamic_state = 'MISS_STOP'
++                            self._auto_sort_log(f"漏抓检测: 物体越过下游分界线 u={self._dynamic_miss_line_u}, 停带静态抓取")
++                            self._conveyor_set(False)
++                        elif st == 'MISS_STOP':
++                            # 2) 漏抓静态兜底: 等传送带停稳后对下游物体执行静态 sort
++                            if self.conveyor_state != False:
++                                pass  # 传送带尚未停稳, 继续等待
++                            else:
++                                # 传送带已停: 对下游物体执行静态 sort (miss_obj 可能因检测抖动为 None,
++                                # 此时不派发, 直接走重启带路径回到 RUNNING, 下轮若仍在检测区会重新命中)
++                                if miss_obj is not None:
++                                    self._dispatch_sort_cmd(miss_obj, static_mode=True)
++                                    self._auto_sort_log("漏抓兜底: 对下游物体执行静态 sort, 完成后重启传送带")
++                                self._dynamic_state = 'RUNNING'  # 等待 busy→idle 后重启带
++                        else:
++                            # 3) 兜底后恢复: 上次兜底 sort 已确认完成 (not _dynamic_busy) 且传送带已停 → 重启带
++                            if not self._dynamic_busy and self.conveyor_state != True and not self._conveyor_busy:
++                                self._conveyor_set(True)
++                            # 4) 上游触发: 触发线右侧有物体且传送带运行中 → 下发 sort_dynamic
++                            trig_obj = self._pick_object_right_of_line(
++                                line_u=self._dynamic_trigger_line_u, require_base=True)
++                            if trig_obj is not None and self.conveyor_state == True:
++                                self._dynamic_state = 'RUNNING'
++                                self._auto_sort_log(f"动态: 目标 {trig_obj.get('object_name','?')} 进入跟踪区, 下发 sort_dynamic")
++                                self._dispatch_sort_cmd(trig_obj, static_mode=False)
++            except Exception as e:
++                # 任何异常都不能让状态机冻结: 记录错误后继续重排
++                self._auto_sort_log(f"动态抓取 tick 异常: {e}")
++            self.after(200, self._dynamic_tick)
++
++        def _restore_manual_buttons(self):
++            """恢复手动按钮可用状态 (退出动态模式时调用)."""
++            self._set_manual_buttons_state(tk.NORMAL)
++
++        def _dispatch_sort_cmd(self, obj, retry=False, static_mode=True):
++            """构造分拣命令并发送.
++
++            static_mode=True:  下发 sort (静态兜底/自动分拣, 传送带已停, 物体静止抓取).
++            static_mode=False: 下发 sort_dynamic (动态抓取, 传送带持续运行, 移动拦截).
++            自动分拣沿用 retry 逻辑 (sort 单次检测, eye-to-hand 下无需两阶段精定位)。
++            """
++            bp = obj.get('base_position_m')
++            if not bp or not all(k in bp for k in ('x','y','z')):
++                self._auto_sort_log("⚠️ 物体缺少 base_position_m, 跳过")
++                return
+             try:
+                 r = float(self.default_grasp_roll.get())
+                 p = float(self.default_grasp_pitch.get())
+@@ -1508,11 +1696,19 @@ def main():
+             bin_num = self._bin_for_object(name)
+             # 优先用 D455 估计直径, fallback 预设尺寸
+             dia = obj.get('estimated_diameter_m') or obj.get('size_m', {}).get('diameter')
+-            cmd = {"cmd": "sort", "pick": pick, "bin": bin_num,
++            cmd = {"cmd": "sort" if static_mode else "sort_dynamic",
++                   "pick": pick, "bin": bin_num,
+                    "pick_name": f"{name} (auto-sort{'-retry' if retry else ''})",
+                    "place_name": f"料框{bin_num}"}
+-            method_tag = "single"
++            method_tag = "single" if static_mode else "dynamic"
+             if dia: cmd["object_diameter_m"] = round(float(dia), 3)
++            if not static_mode:
++                # 动态抓取命令带唯一 cycle_id, 便于服务端区分单次拦截任务
++                cmd["cycle_id"] = f"dyn-{int(time.time())}"
++            # 仅在动态抓取模式下标记在途任务: 移到派发内部, 只有实际派发才置位,
++            # 避免缺 base_position_m 提前 return 造成"已置位但未派发"的偶发耦合
++            if self.dynamic_mode:
++                self._dynamic_busy = True
+             self.last_dispatch_time = time.time()
+             self.cmd_queue.put(cmd)
+             self._auto_sort_log(f"分拣[{method_tag}]: {name}→料框{bin_num} {'[重试]' if retry else ''}")
+@@ -1539,6 +1735,22 @@ def main():
+                     x_line + 5, 12, text=f"分界线 u={self._auto_sort_line_u}", fill='yellow', anchor=tk.NW, font=("Arial", 9, "bold"))
+                 self.camera_canvas.itemconfig(self._div_line_id, state='hidden')
+                 self.camera_canvas.itemconfig(self._div_label_id, state='hidden')
++                # 动态抓取: 上游触发线 (绿色虚线) 与下游漏抓分界线 (蓝色虚线), 默认隐藏, 动态模式启动时显示
++                x_trig = int(self._canvas_w * self._dynamic_trigger_line_u / 640)
++                self._dyn_trig_line_id = self.camera_canvas.create_line(
++                    x_trig, 0, x_trig, self._canvas_h, fill='green', dash=(4, 4), width=2)
++                self._dyn_trig_label_id = self.camera_canvas.create_text(
++                    x_trig + 5, 38, text=f"触发线 u={self._dynamic_trigger_line_u}",
++                    fill='green', anchor=tk.NW, font=("Arial", 9, "bold"))
++                x_miss = int(self._canvas_w * self._dynamic_miss_line_u / 640)
++                self._dyn_miss_line_id = self.camera_canvas.create_line(
++                    x_miss, 0, x_miss, self._canvas_h, fill='blue', dash=(6, 4), width=2)
++                self._dyn_miss_label_id = self.camera_canvas.create_text(
++                    x_miss + 5, 26, text=f"漏抓线 u={self._dynamic_miss_line_u}",
++                    fill='blue', anchor=tk.NW, font=("Arial", 9, "bold"))
++                for cid in (self._dyn_trig_line_id, self._dyn_trig_label_id,
++                            self._dyn_miss_line_id, self._dyn_miss_label_id):
++                    self.camera_canvas.itemconfig(cid, state='hidden')
+             except Exception as e:
+                 _log(f"画分界线失败: {e}")
+ 
+diff --git a/tests/test_conveyor_calib.py b/tests/test_conveyor_calib.py
+new file mode 100644
+index 00000000..5033e637
+--- /dev/null
++++ b/tests/test_conveyor_calib.py
+@@ -0,0 +1,52 @@
++import math
++import os
++import sys
++import numpy as np
++import pytest
++
++sys.path.insert(0, '/home/lxf/agx_arm_ws')
++from conveyor_calib import fit_belt_direction, estimate_belt_speed_vision
++
++
++def _gen_traj(angle_deg, v, t_start=0.0, n=30, dt=0.1, noise=0.001):
++    a = math.radians(angle_deg)
++    d = np.array([math.cos(a), math.sin(a)])
++    pts = []
++    for i in range(n):
++        t = t_start + i * dt
++        p = d * v * (t - t_start)
++        p = p + np.random.normal(0, noise, 2)
++        pts.append((t, float(p[0]), float(p[1])))
++    return pts
++
++
++def test_fit_belt_direction_recovering_angle():
++    np.random.seed(42)
++    pts = _gen_traj(angle_deg=37.0, v=0.10)
++    dx, dy, info = fit_belt_direction([(x, y) for _, x, y in pts])
++    got = math.degrees(math.atan2(dy, dx)) % 180.0
++    assert abs(got - 37.0) < 2.0
++    assert abs(math.hypot(dx, dy) - 1.0) < 1e-9
++    assert info['n_points'] == 30
++
++
++def test_fit_belt_direction_double_angle_ambiguity():
++    # 直线拟合存在 180° 二义性: 0° 与 180° 等价, 归一化时取 dx>=0 分支
++    np.random.seed(1)
++    pts = _gen_traj(angle_deg=180.0 + 10.0, v=0.08)
++    dx, dy, _ = fit_belt_direction([(x, y) for _, x, y in pts])
++    assert dx >= 0.0  # 归一化保证 dx>=0
++    got = math.degrees(math.atan2(dy, dx)) % 180.0
++    assert abs(got - 10.0) < 2.0
++
++
++def test_fit_belt_direction_insufficient_points():
++    with pytest.raises(ValueError):
++        fit_belt_direction([(0.0, 0.0), (0.01, 0.0)])
++
++
++def test_estimate_belt_speed_vision_positive():
++    np.random.seed(7)
++    pts = _gen_traj(angle_deg=0.0, v=0.15)
++    v = estimate_belt_speed_vision(pts)
++    assert abs(v - 0.15) < 0.01
+diff --git a/tests/test_velocity_predictor.py b/tests/test_velocity_predictor.py
+new file mode 100644
+index 00000000..d9ebbfc5
+--- /dev/null
++++ b/tests/test_velocity_predictor.py
+@@ -0,0 +1,53 @@
++import sys
++import math
++import numpy as np
++
++sys.path.insert(0, '/home/lxf/agx_arm_ws')
++from velocity_predictor import VelocityPredictor
++
++
++def test_velocity_vector_from_direction_and_belt_speed():
++    a = math.radians(37.0)
++    dx, dy = math.cos(a), math.sin(a)
++    p = VelocityPredictor(dx=dx, dy=dy)
++    p.set_belt_speed(0.12)
++    vx, vy = p.velocity_vector()
++    assert abs(vx - dx * 0.12) < 1e-9
++    assert abs(vy - dy * 0.12) < 1e-9
++
++
++def test_visual_speed_returns_none_with_few_samples():
++    p = VelocityPredictor()
++    p.add_measurement(0.0, 0.0, 0.0)
++    p.add_measurement(0.1, 0.0, 0.0)
++    assert p.visual_speed() is None
++
++
++def test_predict_constant_velocity_with_latency_compensation():
++    a = math.radians(0.0)  # 传送带沿 x 方向
++    p = VelocityPredictor(dx=1.0, dy=0.0)
++    p.set_belt_speed(0.10)
++    # 测量时刻 t=1.0 时物体在 (0.2, 0.0); 预测到 t=2.0 (间隔 1.0s)
++    x, y = p.predict(t_meas=1.0, x_meas=0.2, y_meas=0.0, t_target=2.0)
++    assert abs(x - 0.30) < 1e-9
++    assert abs(y - 0.0) < 1e-9
++
++
++def test_visual_speed_recovery_on_moving_object():
++    p = VelocityPredictor(dx=1.0, dy=0.0)
++    for i in range(10):
++        t = i * 0.1
++        p.add_measurement(t, 0.05 * t, 0.0)
++    vs = p.visual_speed()
++    assert vs is not None
++    assert abs(vs[0] - 0.05) < 0.01
++
++
++def test_visual_speed_fuses_into_velocity_vector():
++    p = VelocityPredictor(dx=1.0, dy=0.0)
++    p.set_belt_speed(0.10)
++    for i in range(10):
++        p.add_measurement(i * 0.1, 0.08 * i * 0.1, 0.0)  # 视觉估计 ~0.08
++    vx, vy = p.velocity_vector(blend=0.85)
++    # 前馈 0.10 为主, 视觉 0.08 修正 → 0.85*0.10 + 0.15*0.08 = 0.097
++    assert abs(vx - 0.097) < 1e-6
+diff --git a/velocity_predictor.py b/velocity_predictor.py
+new file mode 100644
+index 00000000..8653f2df
+--- /dev/null
++++ b/velocity_predictor.py
+@@ -0,0 +1,65 @@
++#!/usr/bin/env python3
++"""动态抓取速度预测模块.
++
++融合 STM32 线速度前馈(主)与视觉帧间位移估计(修正), 用常速度模型预测物体
++未来位置. 关键: 测量时刻 t_meas 必须是检测的 header_stamp(图像时刻)而非接收
++时刻, 以此显式补偿视觉管线延迟(YOLO+深度+EMA+坐标变换).
++"""
++import math
++from typing import Optional, Tuple
++
++
++class VelocityPredictor:
++    """常速度模型预测器. 线程不安全, 由单一线程(动作节点主循环)调用."""
++
++    MAX_SAMPLES = 20
++
++    def __init__(self, dx: float = 1.0, dy: float = 0.0):
++        self.dx = dx
++        self.dy = dy
++        self.v_stm32 = 0.0
++        self._measurements = []  # [(t, x, y)]
++
++    def set_belt_speed(self, v: float) -> None:
++        self.v_stm32 = max(0.0, float(v))
++
++    def set_direction(self, dx: float, dy: float) -> None:
++        n = math.hypot(dx, dy)
++        if n > 1e-9:
++            self.dx, self.dy = dx / n, dy / n
++
++    def add_measurement(self, t: float, x: float, y: float) -> None:
++        self._measurements.append((float(t), float(x), float(y)))
++        if len(self._measurements) > self.MAX_SAMPLES:
++            self._measurements = self._measurements[-self.MAX_SAMPLES:]
++
++    def visual_speed(self) -> Optional[Tuple[float, float]]:
++        """对 (t,x,y) 做窗口线性拟合, 返回视觉估计速度向量; 样本不足返回 None."""
++        m = self._measurements
++        if len(m) < 3:
++            return None
++        t0 = m[0][0]
++        dt = [t - t0 for t, _, _ in m]
++        denom = sum(d * d for d in dt)
++        if denom < 1e-12:
++            return None
++        p0x, p0y = m[0][1], m[0][2]
++        vx = sum((x - p0x) * d for (_, x, _), d in zip(m, dt)) / denom
++        vy = sum((y - p0y) * d for (_, _, y), d in zip(m, dt)) / denom
++        return (vx, vy)
++
++    def velocity_vector(self, blend: float = 0.85) -> Tuple[float, float]:
++        """融合速度向量: blend*前馈 + (1-blend)*视觉估计 (视觉不可用时纯前馈)."""
++        fx, fy = self.v_stm32 * self.dx, self.v_stm32 * self.dy
++        vs = self.visual_speed()
++        if vs is None:
++            return (fx, fy)
++        return (blend * fx + (1.0 - blend) * vs[0],
++                blend * fy + (1.0 - blend) * vs[1])
++
++    def predict(self, t_meas: float, x_meas: float, y_meas: float,
++                t_target: float) -> Tuple[float, float]:
++        """常速度外推: p(t_target) = p_meas + v*(t_target - t_meas)."""
++        dt = float(t_target) - float(t_meas)
++        vx, vy = self.velocity_vector()
++        return (float(x_meas) + vx * dt, float(y_meas) + vy * dt)

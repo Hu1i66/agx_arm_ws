@@ -1,0 +1,167 @@
+diff --git a/auto_sorting_action.py b/auto_sorting_action.py
+index 2bb02498..c0f7b841 100755
+--- a/auto_sorting_action.py
++++ b/auto_sorting_action.py
+@@ -554,7 +554,8 @@ class MoveItActionClient(Node):
+         """从检测列表中找到目标物体(名称匹配), 返回该物体的 dict."""
+         target_key = (target_name or '').split(' (')[0].strip().lower()
+         for obj in objects or []:
+-            name = (obj.get('name', '') or '').lower().strip()
++            # realsense_yolo_node 发布的键是 object_name (无 'name'), 兼容两者
++            name = (obj.get('object_name', '') or obj.get('name', '') or '').lower().strip()
+             if target_key and (target_key in name or name in target_key):
+                 return obj
+         return None
+@@ -562,7 +563,9 @@ class MoveItActionClient(Node):
+     def _dynamic_current_xy(self, target_name, max_age_s=2.0):
+         """返回目标物体最新基坐标系位置 (x, y) 与测量时刻 (秒).
+ 
+-        使用 header_stamp(图像时刻) 而非接收时刻, 供 VelocityPredictor 延迟补偿.
++        测量时刻 t_meas 用检测帧时刻 (图像时刻) 而非接收时刻, 供 VelocityPredictor
++        延迟补偿. realsense_yolo_node 每物体发布 rgb_stamp_s (浮点 epoch 秒),
++        顶层 header_stamp 亦为浮点 epoch; 两者皆缺时才回退接收时刻.
+         返回 (x, y, t_meas) 或 None.
+         """
+         det = self._latest_detection
+@@ -574,17 +577,13 @@ class MoveItActionClient(Node):
+         bp = obj.get('base_position_m')
+         if not bp or 'x' not in bp or 'y' not in bp:
+             return None
+-        hs = obj.get('header_stamp')
+         t_meas = time.time()
+-        if isinstance(hs, str) and hs:
+-            try:
+-                # ISO 格式 "2026-08-22 12:34:56.789123" (可含 T/Z)
+-                hs_clean = hs.replace('T', ' ').replace('Z', '')
+-                t_meas = time.mktime(time.strptime(hs_clean[:19], '%Y-%m-%d %H:%M:%S'))
+-                if len(hs_clean) > 20:
+-                    t_meas += float('0.' + hs_clean[20:])
+-            except Exception:
+-                t_meas = time.time()
++        hs = obj.get('rgb_stamp_s')
++        if hs is None or not isinstance(hs, (int, float)):
++            # 回退: 顶层 header_stamp (浮点 epoch 秒, YOLO 检测时刻)
++            hs = det.get('header_stamp')
++        if isinstance(hs, (int, float)) and float(hs) > 0:
++            t_meas = float(hs)
+         if time.time() - t_meas > max_age_s:
+             return None
+         return (float(bp['x']), float(bp['y']), t_meas)
+@@ -1638,45 +1637,17 @@ class MoveItActionClient(Node):
+ 
+     def _dynamic_disable_conveyor_collision(self):
+         """动态抓取: 临时禁用传送带碰撞体与机械臂的碰撞检测 (供斜线下降).
+-        复用现有 PlanningScene ACM diff 机制. 调用前需 sleep 0.15s 供 move_group 处理."""
+-        try:
+-            allowed = [
+-                ('arm', 'belt_deck'), ('arm', 'conveyor_belt_col'),
+-                ('arm', 'rail_ny'), ('arm', 'control_box'),
+-                ('arm', 'conveyor_control_box'),
+-            ]
+-            acm = AllowedCollisionEntry()
+-            for link_a, link_b in allowed:
+-                acm.model_a_name = link_a
+-                acm.model_b_name = link_b
+-                acm.entry_names.append(link_b)
+-                acm.enabled.append(True)
+-            diff = PlanningSceneMsg()
+-            diff.is_diff = True
+-            diff.allowed_collision_matrix.entry_names = [link_a]
+-            diff.allowed_collision_matrix.entry_values = [acm]
+-            self._planning_scene_pub.publish(diff)
+-            time.sleep(0.15)
+-            self.get_logger().info("🧩 动态抓取: 已禁用传送带碰撞体碰撞检测")
+-        except Exception as e:
+-            self.get_logger().warn(f"⚠️ 禁用碰撞体失败: {e}")
++
++        复用既有 _set_bin_collision_allowed: 通过 /get_planning_scene 合并当前 ACM,
++        以真实碰撞体名称 (belt_deck/rail_ny/... 共 12 个) 作为矩阵键,
++        只修改传送带相关条目并保留夹爪自碰撞对. 调用前需 sleep 0.15s 供 move_group 处理."""
++        self._set_bin_collision_allowed(allowed=True)
++        self.get_logger().info("🧩 动态抓取: 已禁用传送带碰撞体碰撞检测")
+ 
+     def _dynamic_restore_conveyor_collision(self):
+         """动态抓取: 恢复传送带碰撞检测 (回 P_HOVER 后调用)."""
+-        try:
+-            acm = AllowedCollisionEntry()
+-            acm.model_a_name = 'arm'
+-            acm.entry_names.append('__all__')
+-            acm.enabled.append(False)
+-            diff = PlanningSceneMsg()
+-            diff.is_diff = True
+-            diff.allowed_collision_matrix.entry_names = ['arm']
+-            diff.allowed_collision_matrix.entry_values = [acm]
+-            self._planning_scene_pub.publish(diff)
+-            time.sleep(0.15)
+-            self.get_logger().info("🧩 动态抓取: 已恢复传送带碰撞检测")
+-        except Exception as e:
+-            self.get_logger().warn(f"⚠️ 恢复碰撞体失败: {e}")
++        self._set_bin_collision_allowed(allowed=False)
++        self.get_logger().info("🧩 动态抓取: 已恢复传送带碰撞检测")
+ 
+     def _try_gripper_action(self, joint_names, positions, timeout_sec=1.0):
+         if not self._gripper_action_client.wait_for_server(timeout_sec=timeout_sec):
+@@ -2732,7 +2703,7 @@ def main():
+         det = self._latest_detection
+         obj = self._dynamic_find_object(det.get('objects', []), pick_id)
+         surface_z = float(obj.get('base_position_m', {}).get('z', 0.0)) if obj else float(start_pose.get('z', 0.0))
+-        grasp_z = max(surface_z + GRIPPER_PICK_Z_OFFSET, MIN_GRASP_Z)
++        grasp_z = max(surface_z + GRIPPER_PICK_Z_OFFSET, DYNAMIC_MIN_GRASP_Z)
+ 
+         # ── 2. 影子点 (横向对齐): 目标 = 预测位置 + v*SHADOW_LEAD_S 前瞻 ──
+         t_shadow = time.time()
+@@ -2744,7 +2715,7 @@ def main():
+         shadow_ok = self.move_arm_pose(
+             {'x': sx, 'y': sy, 'z': z_shadow},
+             "动态-影子对齐", continuous=False, planning_mode='normal',
+-            preferred_orientation=self._build_pick_orientation({'x': sx, 'y': sy}))
++            preferred_orientation=self._build_pick_orientation({'x': sx, 'y': sy})[0])
+         if not shadow_ok:
+             self.get_logger().warn("⚠️ 动态: 影子点运动失败")
+             return False
+@@ -3427,8 +3398,10 @@ def main():
+                         bin_num = 1
+                     object_diameter_m = data.get("object_diameter_m", None)
+                     start_pose = data.get("pick", {})
++                    # _run_dynamic_grasp 是 main() 内闭包 (实例属性, 非绑定方法),
++                    # 需显式传入 node 作为 self, 否则 5 实参错位导致 TypeError
+                     ok = node._run_dynamic_grasp(
+-                        pick_id, bin_num, object_diameter_m, start_pose,
++                        node, pick_id, bin_num, object_diameter_m, start_pose,
+                         compute_gripper_targets)
+                 except Exception as e:
+                     print(f"❌ 动态抓取异常: {e}")
+@@ -3450,6 +3423,7 @@ def main():
+                 node.is_busy = False
+                 status_msg.data = 'idle'
+                 node.status_pub.publish(status_msg)
++                loop_count += 1
+ 
+             elif data.get("cmd") == "sort_blue_block":
+                 # 🟦 蓝方块分拣 (Task 2.1): 顶面中位抓取 + 分层姿态约束
+diff --git a/sorting_gui_client.py b/sorting_gui_client.py
+index 6c017ed4..f938a453 100644
+--- a/sorting_gui_client.py
++++ b/sorting_gui_client.py
+@@ -1539,6 +1539,10 @@ def main():
+             """启动动态抓取: 开启传送带并进入 RUNNING 状态."""
+             if self._dynamic_state != 'OFF':
+                 return
++            if self.auto_sort_running:
++                # 自动分拣与动态抓取互斥, 避免两个状态机争抢传送带/命令队列
++                self._auto_sort_log("⚠️ 自动分拣运行中, 请先停止自动分拣再启动动态抓取")
++                return
+             self.dynamic_mode = True
+             self._dynamic_state = 'RUNNING'
+             self.dyn_start_btn.config(state=tk.DISABLED)
+@@ -1757,6 +1761,10 @@ def main():
+         def start_auto_sort(self):
+             """启动自动分拣。"""
+             if self.auto_sort_running: return
++            if self.dynamic_mode:
++                # 自动分拣与动态抓取互斥
++                self._auto_sort_log("⚠️ 动态抓取运行中, 请先停止动态抓取再启动自动分拣")
++                return
+             self.auto_sort_running = True
+             self._auto_sort_current_obj = None
+             self._auto_sort_retry_count = 0
