@@ -1539,6 +1539,10 @@ def main():
             """启动动态抓取: 开启传送带并进入 RUNNING 状态."""
             if self._dynamic_state != 'OFF':
                 return
+            if self.auto_sort_running:
+                # 自动分拣与动态抓取互斥, 避免两个状态机争抢传送带/命令队列
+                self._auto_sort_log("⚠️ 自动分拣运行中, 请先停止自动分拣再启动动态抓取")
+                return
             self.dynamic_mode = True
             self._dynamic_state = 'RUNNING'
             self.dyn_start_btn.config(state=tk.DISABLED)
@@ -1757,6 +1761,10 @@ def main():
         def start_auto_sort(self):
             """启动自动分拣。"""
             if self.auto_sort_running: return
+            if self.dynamic_mode:
+                # 自动分拣与动态抓取互斥
+                self._auto_sort_log("⚠️ 动态抓取运行中, 请先停止动态抓取再启动自动分拣")
+                return
             self.auto_sort_running = True
             self._auto_sort_current_obj = None
             self._auto_sort_retry_count = 0
