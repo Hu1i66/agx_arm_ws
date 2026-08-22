@@ -21,3 +21,6 @@ third_party/python/**/__pycache__/
 
 # Temporary files
 /tmp/
+
+# Third-party nested git repos (cloned, not part of this project)
+src/trac_ik/
