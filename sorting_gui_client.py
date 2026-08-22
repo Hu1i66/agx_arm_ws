@@ -77,7 +77,7 @@ def ros_process_worker(cmd_q, st_q, pose_q, img_q, det_q, conv_q, conv_status_q,
                                   'speed': s['speed'],
                                   'object_detected': s['object_detected'],
                                   'motor_running': s['motor_running'],
-                                  'motor_direction': s.get('motor_direction', 1),
+                                  'motor_direction': int(s.get('motor_direction', 1)),
                                   'connected': True}
                     try:
                         conv_status_q.put_nowait({'type': 'status', 'speed': s['speed'],
