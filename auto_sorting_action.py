@@ -2741,11 +2741,30 @@ def main():
             return False
         x_now, y_now, t_meas = xy
 
-        # 物体表面 z (base 系), 决定夹取高度
+        # ── 夹取高度 (link6 z): 与静态抓取一致, 用 D455 质心顶面 z 作夹持点 ──
+        # 教训 (日志2): 之前用 base_position_m.z (≈ 台面/物体底部, 0.03m) + 0.064,
+        # link6 仅 0.094, 而手指底部在 link6 下方 0.1358 (FK 实测) → 手指底部=-0.042m,
+        # 插入台面 4cm 戳台! 静态抓取正确做法: clamping_z = centroid_base_z (顶面≈0.08),
+        # link6 = 顶面+0.064 ≈ 0.144, 手指底部≈+8mm 台面上方, 安全.
         det = self._latest_detection
         obj = self._dynamic_find_object(det.get('objects', []), pick_id)
         surface_z = float(obj.get('base_position_m', {}).get('z', 0.0)) if obj else float(start_pose.get('z', 0.0))
-        grasp_z = max(surface_z + GRIPPER_PICK_Z_OFFSET, DYNAMIC_MIN_GRASP_Z)
+        centroid_z = det.get('centroid_base_z') if det else None
+        if centroid_z is not None:
+            clamping_z = float(centroid_z)
+        else:
+            # fallback: 表面 z + 按类别经验修正 (与静态 PER_OBJECT_Z_CORRECTION 一致)
+            obj_class = pick_id.split(' (')[0].strip().lower()
+            clamping_z = surface_z + PER_OBJECT_Z_CORRECTION.get(obj_class, 0.0)
+        if clamping_z < DYNAMIC_MIN_GRASP_Z:
+            self.get_logger().info(
+                f"⚠️ 动态 夹持点 z={clamping_z:.3f}m 低于安全下限 {DYNAMIC_MIN_GRASP_Z}m, "
+                f"钳位 (防碰台面)")
+            clamping_z = DYNAMIC_MIN_GRASP_Z
+        grasp_z = clamping_z + GRIPPER_PICK_Z_OFFSET
+        self.get_logger().info(
+            f"📐 动态 夹持点 clamping_z={clamping_z:.3f}m (质心顶面) → "
+            f"link6_z={grasp_z:.3f}m, 手指底部≈{(grasp_z - 0.1358)*1000:.0f}mm (台面=0)")
 
         # ── 2. 影子点 (横向对齐): 目标 = 预测位置 + v*SHADOW_LEAD_S 前瞻 ──
         t_shadow = time.time()
@@ -2804,10 +2823,10 @@ def main():
         # 是否落在物体实际到达位置附近 (误差 < 5cm), 无碰撞、无 -4 错误.
         DRY_RUN = True  # ← 空跑: True=只下降不夹取; 正式测试时删除本段
         if DRY_RUN:
-            self.get_logger().info("🏃 空跑模式: 下降完成, 跳过夹取, 直接回悬停位")
-            self.move_arm_pose(P_HOVER_POSE, "动态-空跑回悬停位", continuous=False,
-                               planning_mode='normal',
-                               preferred_orientation=P_HOVER_ORIENTATION)
+            self.get_logger().info("🏃 空跑模式: 下降完成, 跳过夹取, 直接回待机位")
+            # 结束位置: 回待机位 (JOINT_STANDBY, 关节空间) — P_HOVER_POSE 是未标定示例值,
+            # 回 (0.45,0,0.32) 会停在奇怪位置 (见日志2); 待机位最可靠且符合项目约定.
+            self.move_arm_joint(JOINT_STANDBY, "动态-空跑回待机位")
             self._dynamic_restore_conveyor_collision()
             self.get_logger().info("✅ 空跑完成: 下降路径验证通过")
             return True
@@ -2849,10 +2868,9 @@ def main():
         self.operate_gripper(GRIPPER_OPEN, f"动态-料框{bin_num}释放")
         self.move_arm_joint(bin_above, f"动态-料框{bin_num}上方")
 
-        # ── 7. 回 P_HOVER 并恢复碰撞 ──
-        self.move_arm_pose(P_HOVER_POSE, "动态-回悬停位", continuous=False,
-                           planning_mode='normal',
-                           preferred_orientation=P_HOVER_ORIENTATION)
+        # ── 7. 回待机位并恢复碰撞 ──
+        # 结束位置: 回待机位 (关节空间, 可靠) 而非未标定的 P_HOVER_POSE (见日志2)
+        self.move_arm_joint(JOINT_STANDBY, "动态-回待机位")
         self._dynamic_restore_conveyor_collision()
         self.get_logger().info("✅ 动态抓取完成")
         return True
