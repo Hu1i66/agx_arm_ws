@@ -2678,6 +2678,11 @@ def main():
     LIFT_LEAD_S = 0.3
     # 动态抓取最低下降高度 (base 系, 米); 与静态 MIN_GRASP_Z 含义相同, 兜底防碰
     DYNAMIC_MIN_GRASP_Z = 0.045
+    # 动态抓取可达性预检阈值 (base 系径向距离 R=√(x²+y²), 米).
+    # 影子对齐/下降目标点若 R 超过该值, 判定为工作空间外 (Piper 悬停高度下满伸约 0.85m,
+    # 保持直下手腕姿态有效可达约 0.55m), 直接回退, 避免白等 IK 时间预算 / MoveIt 全失败.
+    # 也可顺带过滤视觉检测异常点 (如现场日志 x=0.867 远超实际皮带范围).
+    DYNAMIC_R_MAX = 0.55
 
     # ── eye-to-hand 标定系统性 X/Y 偏移补偿 (单位: 米) ──
     # ⚠️ 已在 realsense_yolo_node.py 源头补偿 (x_offset_m/y_offset_m 参数),
@@ -2747,6 +2752,12 @@ def main():
         self._predictor.add_measurement(t_meas, x_now, y_now)
         sx, sy = self._predictor.predict(t_meas, x_now, y_now, t_shadow + SHADOW_LEAD_S)
         z_shadow = P_HOVER_POSE['z']
+        # 可达性预检 (RC-1): 影子点径向距离超限 → 不可达, 直接回退, 不白等规划
+        if math.hypot(sx, sy) > DYNAMIC_R_MAX:
+            self.get_logger().warn(
+                f"⚠️ 动态: 影子点 R=√(sx²+sy²)={math.hypot(sx, sy):.3f} > {DYNAMIC_R_MAX}m, "
+                f"超出工作空间, 回退静态")
+            return False
         self.get_logger().info(
             f"🎯 动态: 影子点=({sx:.3f},{sy:.3f},z={z_shadow:.3f}) 速度={v:.4f} m/s")
         shadow_ok = self.move_arm_pose(
@@ -2757,37 +2768,48 @@ def main():
             self.get_logger().warn("⚠️ 动态: 影子点运动失败")
             return False
 
-        # ── 3. 斜线随动下降: 目标 = 预测位置 + v*DESCENT_NOMINAL_S 前瞻 ──
+        # ── 3. 下降至拦截点: 目标 = 预测位置 + v*DESCENT_NOMINAL_S 前瞻 ──
+        # 方案: 不用单航点笛卡尔直线 (Piper 在悬停→近桌面扩展位形下无法维持该直线,
+        # 现场 6/8 轮全挂在"笛卡尔规划度不足 1-2%"), 改为关节空间 IK 一步到位
+        # (下降点在关节空间已验证 100% 可达, 见 offline_ik_multi_seed_test.py),
+        # 目标仍为预测拦截点, 保持与物体同步.
         xy2 = self._dynamic_current_xy(pick_id)
         if xy2 is not None:
             x_now, y_now, t_meas = xy2
             self._predictor.add_measurement(t_meas, x_now, y_now)
         t_descent = time.time()
         gx, gy = self._predictor.predict(t_meas, x_now, y_now, t_descent + DESCENT_NOMINAL_S)
-        # 目标姿态: 用抓取点生成的 PCA 短轴候选 (外部已传入 start_pose 无姿态, 用径向候选)
-        orientations = self._build_pick_orientations_multi({'x': gx, 'y': gy})
+        # 可达性预检 (RC-1): 下降拦截点径向距离超限 → 不可达, 直接回退
+        if math.hypot(gx, gy) > DYNAMIC_R_MAX:
+            self.get_logger().warn(
+                f"⚠️ 动态: 下降点 R=√(gx²+gy²)={math.hypot(gx, gy):.3f} > {DYNAMIC_R_MAX}m, "
+                f"超出工作空间, 回退静态")
+            return False
         self._dynamic_disable_conveyor_collision()
-        waypoints = [self._create_pose({'x': gx, 'y': gy, 'z': grasp_z}, orientations[0])]
+        # 目标姿态: 用抓取点生成的 PCA 短轴候选 (径向直下为首选)
+        orientations = self._build_pick_orientations_multi({'x': gx, 'y': gy})
         self.get_logger().info(
             f"🎯 动态: 下降目标=({gx:.3f},{gy:.3f},z={grasp_z:.3f}) 前瞻={DESCENT_NOMINAL_S}s")
-        descent_ok = self.execute_cartesian_path(
-            waypoints, "动态-斜线随动下降", fraction_threshold=0.80, jump_threshold=0.8)
+        descent_ok = self.move_arm_pose(
+            {'x': gx, 'y': gy, 'z': grasp_z}, "动态-下降至拦截点",
+            continuous=False, planning_mode='normal',
+            preferred_orientation=orientations[0])
         if not descent_ok:
             self._dynamic_restore_conveyor_collision()
-            self.get_logger().warn("⚠️ 动态: 斜线下降失败")
+            self.get_logger().warn("⚠️ 动态: 下降失败 (关节空间 IK)")
             return False
 
-        # ⚠️⚠️ 空跑模式临时开关 (Task 7 Step 2): 只验证斜线下降轨迹, 不夹取/不放料.
+        # ⚠️⚠️ 空跑模式临时开关 (Task 7 Step 2): 只验证下降轨迹, 不夹取/不放料.
         # 用后请删除本段, 恢复真实夹取流程. 对照相机画面检查下降目标点
         # 是否落在物体实际到达位置附近 (误差 < 5cm), 无碰撞、无 -4 错误.
         DRY_RUN = True  # ← 空跑: True=只下降不夹取; 正式测试时删除本段
         if DRY_RUN:
-            self.get_logger().info("🏃 空跑模式: 斜线下降完成, 跳过夹取, 直接回悬停位")
+            self.get_logger().info("🏃 空跑模式: 下降完成, 跳过夹取, 直接回悬停位")
             self.move_arm_pose(P_HOVER_POSE, "动态-空跑回悬停位", continuous=False,
                                planning_mode='normal',
                                preferred_orientation=P_HOVER_ORIENTATION)
             self._dynamic_restore_conveyor_collision()
-            self.get_logger().info("✅ 空跑完成: 斜线下降路径验证通过")
+            self.get_logger().info("✅ 空跑完成: 下降路径验证通过")
             return True
 
         # ── 4. 夹取: 一次性闭合 + 力矩判定 ──
