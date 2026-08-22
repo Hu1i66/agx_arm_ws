@@ -54,6 +54,10 @@ import numpy as np
 import traceback
 from typing import Tuple, Optional
 
+# ── 动态抓取: 传送带状态订阅 + 速度预测 ──
+# 依赖上方 sys.path 注入 (_ws_root) 定位 workspace 根目录的 velocity_predictor.py
+from velocity_predictor import VelocityPredictor
+
 # ---- Pinocchio IKSolver (内嵌副本, 独立节点 pinocchio_ik_node.py 已移除) ----
 
 # State variables for lazy-loading
@@ -315,6 +319,15 @@ class MoveItActionClient(Node):
         self._detection_event = threading.Event()
         self.det_sub = self.create_subscription(String, '/detection_info', self._detection_cb, 10)
 
+        # ── 动态抓取: 订阅传送带状态 (速度/方向/物体检测) ──
+        self._belt_speed = 0.0
+        self._belt_direction = 1
+        self._predictor = VelocityPredictor()
+        self._dynamic_calib = None
+        self._conveyor_status_sub = self.create_subscription(
+            String, '/conveyor_status', self._conveyor_status_cb, 10)
+        self._load_dynamic_calib()
+
         # ── GraspNet 服务客户端 (sort_graspnet 命令) ──
         # 通过话题通信请求独立服务节点 graspnet_service_node.py 生成 6DoF 抓取位姿
         # (该节点运行在 orange_dataset/.venv, 避免与本节点 .venv_ik 的 pinocchio 冲突)
@@ -458,6 +471,35 @@ class MoveItActionClient(Node):
             self.current_joints = {}
         self.current_joints.update(dict(zip(msg.name, msg.position)))
 
+    def _conveyor_status_cb(self, msg):
+        """缓存传送带状态 (STM32 滤波后速度), 供动态抓取预测."""
+        try:
+            d = json.loads(msg.data)
+            if d.get('type') == 'conveyor_status':
+                self._belt_speed = float(d.get('speed', 0.0))
+                self._belt_direction = int(d.get('motor_direction', 1))
+                self._predictor.set_belt_speed(self._belt_speed)
+        except Exception:
+            pass
+
+    def _load_dynamic_calib(self):
+        """加载传送带方向标定 conveyor_calib.json, 初始化预测器方向."""
+        import os
+        path = '/home/lxf/agx_arm_ws/conveyor_calib.json'
+        if not os.path.exists(path):
+            self.get_logger().warn(f"⚠️ 未找到传送带标定文件 {path}, 动态抓取将退化为静态抓取")
+            return
+        try:
+            with open(path, 'r') as f:
+                calib = json.load(f)
+            self._dynamic_calib = calib
+            self._predictor.set_direction(float(calib['dx']), float(calib['dy']))
+            self.get_logger().info(
+                f"✅ 传送带方向标定已加载: d̂=({calib['dx']:.4f},{calib['dy']:.4f}) "
+                f"angle={calib.get('angle_rad', 0.0):.3f}rad")
+        except Exception as e:
+            self.get_logger().warn(f"⚠️ 传送带标定加载失败: {e}")
+
     def _detection_cb(self, msg):
         """缓存 YOLO 检测结果，唤醒等待线程。"""
         try:
@@ -507,6 +549,45 @@ class MoveItActionClient(Node):
 
         self.get_logger().warn(f"⏰ 重试: {timeout_s}s 内未获取到 {target_name} 新坐标")
         return None
+
+    def _dynamic_find_object(self, objects, target_name):
+        """从检测列表中找到目标物体(名称匹配), 返回该物体的 dict."""
+        target_key = (target_name or '').split(' (')[0].strip().lower()
+        for obj in objects or []:
+            name = (obj.get('name', '') or '').lower().strip()
+            if target_key and (target_key in name or name in target_key):
+                return obj
+        return None
+
+    def _dynamic_current_xy(self, target_name, max_age_s=2.0):
+        """返回目标物体最新基坐标系位置 (x, y) 与测量时刻 (秒).
+
+        使用 header_stamp(图像时刻) 而非接收时刻, 供 VelocityPredictor 延迟补偿.
+        返回 (x, y, t_meas) 或 None.
+        """
+        det = self._latest_detection
+        if not det or not det.get('detected'):
+            return None
+        obj = self._dynamic_find_object(det.get('objects', []), target_name)
+        if obj is None:
+            return None
+        bp = obj.get('base_position_m')
+        if not bp or 'x' not in bp or 'y' not in bp:
+            return None
+        hs = obj.get('header_stamp')
+        t_meas = time.time()
+        if isinstance(hs, str) and hs:
+            try:
+                # ISO 格式 "2026-08-22 12:34:56.789123" (可含 T/Z)
+                hs_clean = hs.replace('T', ' ').replace('Z', '')
+                t_meas = time.mktime(time.strptime(hs_clean[:19], '%Y-%m-%d %H:%M:%S'))
+                if len(hs_clean) > 20:
+                    t_meas += float('0.' + hs_clean[20:])
+            except Exception:
+                t_meas = time.time()
+        if time.time() - t_meas > max_age_s:
+            return None
+        return (float(bp['x']), float(bp['y']), t_meas)
 
     def _init_ik_solver(self):
         """初始化内嵌 Pinocchio IK 求解器（无需 ROS2 topic 通信）"""
@@ -2534,6 +2615,19 @@ def main():
     # (0.025→0.035→0.045 逐步上调; Z 补偿已在 YOLO 节点 z_offset_m 源头修正,
     #  此值为最后安全兜底; 若仍碰→增大, 若空夹→减小, 步长 0.005)
     MIN_GRASP_Z = 0.045
+
+    # ── 动态抓取 (sort_dynamic) ──
+    # P_HOVER: 抓取区上方悬停位 (base 系, link6 末端位置, 待用户标定后替换示例值)
+    # 要求: 位于抓取区正上方、安全高度、远离传送带碰撞体
+    P_HOVER_POSE = {'x': 0.45, 'y': 0.0, 'z': 0.32}      # 示例值, 需标定
+    P_HOVER_ORIENTATION = [0.0, 0.0, -1.0, 0.0]          # 简化示例, 需按末端实际姿态标定
+    # 动态抓取前瞻名义耗时 (秒): 移到影子点 / 下降 / 抬起 的名义用时,
+    # 用于计算目标前瞻量 (物体位移 = 速度 × 名义耗时). 空跑测试后细调.
+    SHADOW_LEAD_S = 1.0
+    DESCENT_NOMINAL_S = 0.6
+    LIFT_LEAD_S = 0.3
+    # 动态抓取最低下降高度 (base 系, 米); 与静态 MIN_GRASP_Z 含义相同, 兜底防碰
+    DYNAMIC_MIN_GRASP_Z = 0.045
 
     # ── eye-to-hand 标定系统性 X/Y 偏移补偿 (单位: 米) ──
     # ⚠️ 已在 realsense_yolo_node.py 源头补偿 (x_offset_m/y_offset_m 参数),
