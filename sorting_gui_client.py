@@ -1400,7 +1400,7 @@ def main():
                         speed = result.get('speed', 0.0)
                         obj = result.get('object_detected', False)
                         motor = result.get('motor_running', False)
-                        self._conveyor_speed_var.set(f"速度: {speed:.2f} m/s")
+                        self._conveyor_speed_var.set(f"速度: {speed:.4f} m/s")
                         obj_text = "有物体" if obj else "无物体"
                         self._conveyor_obj_var.set(f"物体: {obj_text}")
                         self._conveyor_obj_label.config(fg="green" if obj else "gray")

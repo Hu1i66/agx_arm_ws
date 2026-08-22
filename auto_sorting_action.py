@@ -11,9 +11,10 @@ import sys
 import os
 import numpy as np
 from std_msgs.msg import String
+from rcl_interfaces.srv import GetParameters
 from rclpy.logging import LoggingSeverity, set_logger_level
 
-from moveit_msgs.srv import GetCartesianPath, GetMotionPlan, GetPlanningScene
+from moveit_msgs.srv import GetCartesianPath, GetMotionPlan, GetPlanningScene, GetPositionIK
 from moveit_msgs.action import ExecuteTrajectory, MoveGroup
 from moveit_msgs.msg import Constraints, JointConstraint, PositionConstraint, OrientationConstraint, BoundingVolume, MotionPlanRequest, WorkspaceParameters, PlanningScene as PlanningSceneMsg, PlanningSceneComponents, AllowedCollisionEntry
 from shape_msgs.msg import SolidPrimitive
@@ -281,6 +282,7 @@ class MoveItActionClient(Node):
         self._action_client = ActionClient(self, MoveGroup, '/move_action')
         self._cartesian_client = self.create_client(GetCartesianPath, '/compute_cartesian_path')
         self._plan_client = self.create_client(GetMotionPlan, '/plan_kinematic_path')
+        self._ik_client = self.create_client(GetPositionIK, '/compute_ik')
         self._execute_action_client = ActionClient(self, ExecuteTrajectory, '/execute_trajectory')
         
         self._gripper_action_client = ActionClient(self, FollowJointTrajectory, '/gripper_controller/follow_joint_trajectory')
@@ -345,6 +347,7 @@ class MoveItActionClient(Node):
         self._pre_grasp_width = None      # 闭合前夹爪宽度 (check_grasp_success 用)
 
         # ========== IK Solver 集成（内嵌 Pinocchio）==========
+        # 优先使用内嵌 Pinocchio IK 求解, 失败回退到 MoveIt2 (TRAC_IKKinematicsPlugin)
         self.enable_ik = True
         self.ik_solver = None
         self._init_ik_solver()
@@ -1001,7 +1004,7 @@ class MoveItActionClient(Node):
             req.start_state.joint_state.name = names
             req.start_state.joint_state.position = positions
         req.waypoints = waypoints
-        req.max_step = 0.005      # 极高细分度: 5mm 一步，提升控制轨迹顺滑度
+        req.max_step = 0.010      # 10mm 一步 (之前5mm, 改为10mm减少路径点数量, 见2026-08-17分析)
         req.jump_threshold = jump_threshold  # j6 突变检测阈值 (默认 1.6, 下降时可降到 0.8)
         req.avoid_collisions = False # 端点在物品附近时关闭防碰撞，防止被误挡
         
@@ -1057,6 +1060,126 @@ class MoveItActionClient(Node):
             
         self.get_logger().error(f"❌ 轨迹执行失败，错误码 {res_exec.result.error_code.val}")
         return False
+    
+    def _compute_ik_via_service(self, pose_dict, orientation, seed_joints=None, timeout_s=0.5):
+        """
+        通过 MoveIt2 /compute_ik 服务调用 TRAC-IK 求解 IK.
+        
+        Args:
+            pose_dict: {'x', 'y', 'z'} 目标位置
+            orientation: Quaternion 或 [qx,qy,qz,qw] 目标姿态
+            seed_joints: [6] 关节角度种子 (可选, 默认当前关节)
+            timeout_s: IK 超时 (秒)
+            
+        Returns:
+            (success, [j1..j6]) 或 (False, None)
+        """
+        # ── 诊断1: 检查服务可用性 ──
+        if not self._ik_client.service_is_ready():
+            self.get_logger().info(
+                f"🔍 DIAG: 等待 /compute_ik 服务... (timeout={timeout_s})")
+            if not self._ik_client.wait_for_service(timeout_sec=1.0):
+                self.get_logger().warn("⚠️ /compute_ik 服务不可用, 跳过 TRAC-IK 直接求解")
+                return False, None
+        
+        # ── 诊断2: 构建目标姿态 ──
+        if isinstance(orientation, Quaternion):
+            q = orientation
+        else:
+            q = Quaternion(x=float(orientation[0]), y=float(orientation[1]),
+                           z=float(orientation[2]), w=float(orientation[3]))
+        target_str = f"目标=({pose_dict['x']:.3f},{pose_dict['y']:.3f},{pose_dict['z']:.3f}) " \
+                     f"ori=({q.x:.3f},{q.y:.3f},{q.z:.3f},{q.w:.3f})"
+        self.get_logger().info(f"🔍 DIAG: TRAC-IK 求解开始, {target_str}, timeout={timeout_s}s")
+        
+        # ── 诊断3: 构建种子候选 ──
+        # 策略: 显式种子 → 当前关节 → 待机位 → 随机偏移 → 全空间随机
+        seed_candidates = []
+        if seed_joints is not None:
+            seed_candidates.append(('显式种子', list(seed_joints)))
+        if self.current_joints:
+            cur = [self.current_joints.get(f'joint{i}', 0.0) for i in range(1, 7)]
+            seed_candidates.append(('当前关节', cur))
+        # 待机位 [0,0,0,0,0,0] 作为通用种子
+        standby = [0.0] * 6
+        if not any(np.allclose(standby, s[1], atol=0.01) for s in seed_candidates):
+            seed_candidates.append(('待机位', standby))
+        # 当前关节大范围随机偏移 (±0.5rad)
+        if self.current_joints:
+            cur = [self.current_joints.get(f'joint{i}', 0.0) for i in range(1, 7)]
+            np.random.seed(int(time.time() * 1000) % 10000)
+            for _ in range(3):
+                noisy = [c + np.random.uniform(-0.5, 0.5) for c in cur]
+                seed_candidates.append(('大偏移', noisy))
+        # 全空间均匀随机 (2个, 扩大搜索范围)
+        np.random.seed(int(time.time() * 1000) % 10000 + 1)
+        for _ in range(2):
+            full_random = [np.random.uniform(-np.pi, np.pi) for _ in range(6)]
+            seed_candidates.append(('全随机', full_random))
+        
+        # ── 诊断4: 遍历所有种子, 记录每个种子的结果 ──
+        seed_debug = "; ".join(f"{n}=({','.join(f'{v:.2f}' for v in s)})" for n, s in seed_candidates)
+        self.get_logger().info(f"🔍 DIAG: 种子候选 ({len(seed_candidates)}个): {seed_debug}")
+        
+        _t0 = self.get_clock().now().nanoseconds * 1e-9
+        for seed_name, seed_pos in seed_candidates:
+            req = GetPositionIK.Request()
+            req.ik_request.group_name = 'arm'
+            req.ik_request.pose_stamped.header.frame_id = 'base_link'
+            req.ik_request.pose_stamped.pose.position.x = float(pose_dict['x'])
+            req.ik_request.pose_stamped.pose.position.y = float(pose_dict['y'])
+            req.ik_request.pose_stamped.pose.position.z = float(pose_dict['z'])
+            req.ik_request.pose_stamped.pose.orientation = q
+            req.ik_request.timeout.sec = int(timeout_s)
+            req.ik_request.timeout.nanosec = int((timeout_s - int(timeout_s)) * 1e9)
+            req.ik_request.avoid_collisions = False
+            req.ik_request.robot_state.joint_state.name = [f'joint{i}' for i in range(1, 7)]
+            req.ik_request.robot_state.joint_state.position = list(seed_pos)
+            
+            _t_seed = self.get_clock().now().nanoseconds * 1e-9
+            future = self._ik_client.call_async(req)
+            rclpy.spin_until_future_complete(self, future, timeout_sec=timeout_s + 0.5)
+            _t_seed_end = self.get_clock().now().nanoseconds * 1e-9
+            seed_elapsed = (_t_seed_end - _t_seed) * 1000
+            
+            if not future.done():
+                self.get_logger().info(
+                    f"🔍 DIAG: 种子<{seed_name}> 服务超时 ({seed_elapsed:.0f}ms)")
+                continue
+            
+            res = future.result()
+            if res is None:
+                self.get_logger().info(
+                    f"🔍 DIAG: 种子<{seed_name}> 返回 None ({seed_elapsed:.0f}ms)")
+                continue
+                
+            err_code = res.error_code.val
+            if err_code == 1:
+                # 提取 joint1-6
+                jnames = res.solution.joint_state.name
+                jpos = res.solution.joint_state.position
+                q_sol = [0.0] * 6
+                for i in range(6):
+                    name = f'joint{i+1}'
+                    for j, n in enumerate(jnames):
+                        if n == name:
+                            q_sol[i] = jpos[j]
+                            break
+                _t1 = self.get_clock().now().nanoseconds * 1e-9
+                self.get_logger().info(
+                    f"✅ TRAC-IK 求解成功 ({(_t1-_t0)*1000:.1f}ms, "
+                    f"种子={seed_name}, error_code=1)")
+                return True, q_sol
+            else:
+                self.get_logger().info(
+                    f"🔍 DIAG: 种子<{seed_name}> 失败 (error_code={err_code}, "
+                    f"{seed_elapsed:.0f}ms)")
+        
+        self.get_logger().info(
+            f"🔴 TRAC-IK 求解失败 (尝试了 {len(seed_candidates)} 个种子, "
+            f"总耗时 {(self.get_clock().now().nanoseconds*1e-9 - _t0)*1000:.0f}ms "
+            f"for {target_str})")
+        return False, None
     
     def move_arm_via_ik(self, pose_dict, orientations, desc, continuous=False):
         """
@@ -1134,7 +1257,12 @@ class MoveItActionClient(Node):
     def move_arm_pose(self, pose_dict, desc, continuous=False, planning_mode='normal',
                        preferred_orientation=None):
         """
-        统一运动方法：优先使用内嵌 IK + 关节空间，失败回退到 Cartesion 规划
+        统一运动方法：优先使用 IK + 关节空间，失败回退到 Cartesion 规划
+
+        IK 优先级:
+          1. enable_ik=True → Pinocchio 内嵌 IK (move_arm_via_ik)
+          2. enable_ik=False → TRAC-IK 服务 (/compute_ik, _compute_ik_via_service)
+          3. 兜底 → MoveIt2 OMPL 规划 (move_arm_cartesian)
 
         Args:
             pose_dict: {'x', 'y', 'z'} 目标位置
@@ -1144,8 +1272,8 @@ class MoveItActionClient(Node):
             preferred_orientation: 优先姿态 ([x,y,z,w] 四元数), 传给 IK 和 Cartesian 兜底
         """
         if self.enable_ik and self.ik_solver is not None:
+            # ── 路径 1: Pinocchio 内嵌 IK ──
             orientations = self._build_pick_orientations_multi(pose_dict)
-            # 处理 preferred_orientation: 可能是 list([x,y,z,w]) 或 Quaternion 对象
             if preferred_orientation is not None:
                 if isinstance(preferred_orientation, Quaternion):
                     preferred_orientation = [preferred_orientation.x,
@@ -1157,7 +1285,47 @@ class MoveItActionClient(Node):
             ik_ok, _ = self.move_arm_via_ik(pose_dict, orientations, desc, continuous=continuous)
             if ik_ok:
                 return True
-            print("🟡 IK 路径失败，回退到 MoveIt2 笛卡尔规划...")
+            print("🟡 Pinocchio IK 路径失败，回退到 MoveIt2 笛卡尔规划...")
+        else:
+            # ── 路径 2: TRAC-IK 服务直接求解 (通过 /compute_ik) ──
+            # 构建候选姿态列表: 优先 preferred_orientation, 再径向朝下
+            trac_ik_oris = []
+            if preferred_orientation is not None:
+                if isinstance(preferred_orientation, Quaternion):
+                    trac_ik_oris.append(preferred_orientation)
+                elif isinstance(preferred_orientation, (list, tuple)) and len(preferred_orientation) == 4:
+                    trac_ik_oris.append(Quaternion(
+                        x=float(preferred_orientation[0]),
+                        y=float(preferred_orientation[1]),
+                        z=float(preferred_orientation[2]),
+                        w=float(preferred_orientation[3])))
+            # 补充径向朝下姿态
+            radial_ori = self._build_pick_orientation(pose_dict)
+            if radial_ori:
+                for o in radial_ori:
+                    if o not in trac_ik_oris:
+                        trac_ik_oris.append(o)
+
+            # 尝试每个候选姿态 + 反向
+            seed = None
+            if self.current_joints:
+                seed = [self.current_joints.get(f'joint{i}', 0.0) for i in range(1, 7)]
+            _trac_t0 = self.get_clock().now().nanoseconds * 1e-9
+            for ori in trac_ik_oris:
+                ok, q_sol = self._compute_ik_via_service(pose_dict, ori, seed_joints=seed, timeout_s=0.2)
+                if ok and q_sol:
+                    if self.move_arm_joint(q_sol, f"{desc} (TRAC-IK)", continuous=continuous):
+                        _trac_t1 = self.get_clock().now().nanoseconds * 1e-9
+                        self.get_logger().info(
+                            f"📊 TRAC-IK 路径总耗时: {(_trac_t1-_trac_t0)*1000:.0f}ms "
+                            f"(IK+关节执行)")
+                        # 保存成功姿态供后续下降使用
+                        self.last_successful_orientation = ori
+                        return True
+                    else:
+                        self.get_logger().warn("⚠️ TRAC-IK 关节执行失败, 尝试下一姿态")
+            
+            self.get_logger().info("🟡 TRAC-IK 直接求解失败, 回退到 MoveIt2 OMPL 规划...")
 
         return self.move_arm_cartesian(
             pose_dict, desc, continuous=continuous,
@@ -1700,6 +1868,16 @@ class MoveItActionClient(Node):
         Returns:
             active_ori (list [qx,qy,qz,qw]) 或 None (两层均失败)
         """
+        # 尝试从视觉节点获取 PCA 短轴朝向 (优先于径向朝下)
+        pca_ori = None
+        if hasattr(self, '_latest_detection') and self._latest_detection:
+            pca_ori = self._latest_detection.get('grasp_orientation')
+        if pca_ori is not None and len(pca_ori) == 4:
+            # PCA 短轴朝向来自视觉节点 (D455 点云 PCA)
+            self.get_logger().info(
+                f"📐 蓝方块姿态预规划: PCA 短轴对齐 (rotation={block_rotation_deg:.1f}°)")
+            return list(pca_ori)
+        
         # IK 不可用时回退到径向朝下姿态 (无验证)
         if not self.enable_ik or self.ik_solver is None:
             ori = self._build_pick_orientation(pose_pick)[0]
@@ -2298,14 +2476,14 @@ def main():
         return
     
     # ========== IK 分支启用/禁用控制 ==========
-    # enable_ik 已在 __init__ 中通过 _init_ik_solver() 自动设置
-    # 若 Pinocchio/CasADi 未安装则自动降级为 False
+    # ⚠️ 2026-08-17: TRAC-IK 测试阶段, 临时禁用内嵌 Pinocchio IK
+    # 使用内嵌 Pinocchio IK 求解, 失败回退到 MoveIt2 (TRAC_IKKinematicsPlugin)
     enable_ik_solver = True
-    node.enable_ik = enable_ik_solver and node.ik_solver is not None
+    node.enable_ik = True
     if node.enable_ik:
-        print("✅ 内嵌 Pinocchio IK 已启用 - 所有运动步骤优先使用 IK 求解")
+        print("✅ 内嵌 Pinocchio IK 已启用 - 优先使用 IK 求解, 失败回退 MoveIt2")
     else:
-        print("⚠️ Pinocchio IK 不可用 - 回退到经典 MoveIt2 规划器")
+        print("⚠️ Pinocchio IK 已禁用 - 所有运动步骤走 MoveIt2")
     
     # ── 默认待机位 (eye-to-hand: 相机固定, 用待机位作为默认位置) ──
     # 程序启动/任务完成/错误恢复 都回到此位置
@@ -2624,15 +2802,36 @@ def main():
                         node.get_logger().info("📐 姿态预规划: GraspNet 6DoF 姿态")
                     else:
                         pick_fallback_ori = node._build_pick_orientation(POSE_PICK)[0]
+                        # 从视觉节点获取 PCA 短轴对齐朝向
+                        # realsense_yolo_node.py 发布格式: dict {qx,qy,qz,qw}
+                        # blue_block_detector.py 发布格式: dict {qx,qy,qz,qw}
                         pca_ori = None
+                        raw_ori = None
                         if getattr(node, '_latest_detection', None):
-                            pca_ori = node._latest_detection.get('grasp_orientation')
-                        if pca_ori is not None and len(pca_ori) == 4:
+                            raw_ori = node._latest_detection.get('grasp_orientation')
+                        if raw_ori is not None:
+                            # 处理 dict 格式 {qx, qy, qz, qw}
+                            if isinstance(raw_ori, dict) and all(k in raw_ori for k in ('qx','qy','qz','qw')):
+                                # 排除单位四元数 (视觉节点默认值 qx=qy=qz=0, qw=1, 非真实 PCA)
+                                if abs(float(raw_ori['qx'])) + abs(float(raw_ori['qy'])) + abs(float(raw_ori['qz'])) > 1e-6:
+                                    pca_ori = [float(raw_ori['qx']), float(raw_ori['qy']),
+                                               float(raw_ori['qz']), float(raw_ori['qw'])]
+                                    node.get_logger().info(
+                                        f"📐 姿态预规划: PCA 短轴对齐姿态 (来自视觉节点 dict)")
+                            # 处理 list 格式 [qx, qy, qz, qw]
+                            elif isinstance(raw_ori, (list, tuple)) and len(raw_ori) == 4:
+                                if abs(raw_ori[0]) + abs(raw_ori[1]) + abs(raw_ori[2]) > 1e-6:
+                                    pca_ori = list(raw_ori)
+                                    node.get_logger().info(
+                                        f"📐 姿态预规划: PCA 短轴对齐姿态 (来自视觉节点 list)")
+                        if pca_ori is not None:
                             active_ori = pca_ori
-                            node.get_logger().info("📐 姿态预规划: PCA 短轴对齐姿态")
                         else:
                             active_ori = getattr(node, 'last_successful_orientation', pick_fallback_ori)
-                            node.get_logger().info("📐 姿态预规划: 径向朝下姿态")
+                            if raw_ori is None:
+                                node.get_logger().info("📐 姿态预规划: 径向朝下姿态 (无 PCA 数据)")
+                            else:
+                                node.get_logger().info("📐 姿态预规划: 径向朝下姿态 (PCA 数据无效)")
 
                     # 【第一步】 抓取过渡(防止碰桌面) — IK 优先, 传入预规划姿态
                     if two_stage:

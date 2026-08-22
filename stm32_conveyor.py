@@ -29,12 +29,6 @@ DEFAULT_BAUDRATE = 115200
 DEFAULT_TIMEOUT = 0.1          # 串口读取超时
 CMD_RESPONSE_TIMEOUT = 0.8     # 命令等待应答超时 (F/R 换向需 500ms + 余量)
 
-# ⚠️ 速度校正系数: STM32 固件测速换算系数与实物不符, GUI 显示约为实际 24 倍。
-# 实测校准: GUI 1.13→实际 0.0468 (×0.0414), 2.67→0.11 (×0.0412),
-#           1.85→0.0764 (×0.0413), 3.54→0.1489 (×0.0421)
-# 取平均 0.0415。修改此值即可校正, 无需改固件。
-SPEED_SCALE_FACTOR = 0.0415
-
 # 状态帧正则: V:2.04,O:1,M1:1,M2:1
 FRAME_PATTERN = re.compile(rb'V:([\d.]+),O:(\d),M1:(\d),M2:(\d)')
 
@@ -179,8 +173,8 @@ class STM32Conveyor:
         if not m:
             return
         with self._status_lock:
-            # ⚠️ 速度校正: STM32 固件测速系数偏差, 乘 SPEED_SCALE_FACTOR 校准到实际 m/s
-            self._speed_raw = float(m.group(1)) * SPEED_SCALE_FACTOR
+            # 速度: 串口直接为实际值, 无二次校正, 仅保留滤波
+            self._speed_raw = float(m.group(1))
             # 速度滤波: 滑动窗口平均 (最近 10 帧 ≈ 1s), 平滑脉冲计数抖动
             self._speed_win.append(self._speed_raw)
             self._speed = sum(self._speed_win) / len(self._speed_win)
@@ -315,14 +309,14 @@ def main():
 
         if args.monitor:
             print("⏳ 实时监控状态 (Ctrl+C 退出) [速度=滤波后, 括号内为原始值]:")
-            print(f"{'时间':>8s}  {'速度(m/s)':>14s}  {'物体':>5s}  {'电机':>5s}  {'方向':>5s}")
+            print(f"{'时间':>8s}  {'速度(m/s)':>22s}  {'物体':>5s}  {'电机':>5s}  {'方向':>5s}")
             try:
                 while True:
                     s = conv.get_status()
                     obj = "有" if s['object_detected'] else "无"
                     motor = "运行" if s['motor_running'] else "停止"
                     direc = "正转" if s['motor_direction'] else "反转"
-                    print(f"{time.time():>8.0f}  {s['speed']:>9.2f}({s['speed_raw']:.2f})  {obj:>5s}  {motor:>5s}  {direc:>5s}")
+                    print(f"{time.time():>8.0f}  {s['speed']:>15.4f}({s['speed_raw']:.4f})  {obj:>5s}  {motor:>5s}  {direc:>5s}")
                     time.sleep(0.2)
             except KeyboardInterrupt:
                 print("\n监控结束")
@@ -332,7 +326,7 @@ def main():
             obj = "有物体" if s['object_detected'] else "无物体"
             motor = "运行中" if s['motor_running'] else "已停止"
             direc = "正转" if s['motor_direction'] else "反转"
-            print(f"线速度: {s['speed']:.2f} m/s")
+            print(f"线速度: {s['speed']:.4f} m/s")
             print(f"物体检测: {obj}")
             print(f"电机状态: {motor}")
             print(f"运行方向: {direc}")

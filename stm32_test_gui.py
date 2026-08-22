@@ -32,11 +32,6 @@ KNOWN_VID_PID = [
     (0x067B, 0x2303),  # PL2303
 ]
 
-# ⚠️ 速度校正系数: 与 stm32_conveyor.py 保持一致。
-# STM32 固件测速换算系数偏差, GUI 显示约为实际 24 倍, 乘此系数校正。
-SPEED_SCALE_FACTOR = 0.0415
-
-
 def auto_detect_port() -> str:
     """自动查找 STM32 串口设备。"""
     import os
@@ -137,7 +132,7 @@ class SerialBridge:
             if m:
                 info.update({
                     "valid": True,
-                    "V": float(m.group(1)) * SPEED_SCALE_FACTOR,  # ⚠️ 校正到实际 m/s
+                    "V": float(m.group(1)),  # 串口直接为实际值
                     "O": int(m.group(2)),
                     "M1": int(m.group(3)),
                     "M2": int(m.group(4)),
@@ -313,7 +308,7 @@ class TestApp(tk.Tk):
                         self._speed_win = deque(maxlen=10)
                     self._speed_win.append(info["V"])
                     v_filt = sum(self._speed_win) / len(self._speed_win)
-                    self.speed_var.set(f"速度: {v_filt:.3f} m/s (原始{info['V']:.2f})")
+                    self.speed_var.set(f"速度: {v_filt:.4f} m/s (原始{info['V']:.4f})")
                     self.obj_var.set(f"物体: {'有' if info['O_ok'] else '无'}")
                     self.m1_var.set(f"电机: {'运行' if info['M1'] else '停止'}")
                     self.m2_var.set(f"方向: {'正转' if info['M2'] else '反转'}")
