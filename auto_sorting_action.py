@@ -1636,6 +1636,48 @@ class MoveItActionClient(Node):
         self.get_logger().error("❌ 所有规划策略全部失败！")
         return False
 
+    def _dynamic_disable_conveyor_collision(self):
+        """动态抓取: 临时禁用传送带碰撞体与机械臂的碰撞检测 (供斜线下降).
+        复用现有 PlanningScene ACM diff 机制. 调用前需 sleep 0.15s 供 move_group 处理."""
+        try:
+            allowed = [
+                ('arm', 'belt_deck'), ('arm', 'conveyor_belt_col'),
+                ('arm', 'rail_ny'), ('arm', 'control_box'),
+                ('arm', 'conveyor_control_box'),
+            ]
+            acm = AllowedCollisionEntry()
+            for link_a, link_b in allowed:
+                acm.model_a_name = link_a
+                acm.model_b_name = link_b
+                acm.entry_names.append(link_b)
+                acm.enabled.append(True)
+            diff = PlanningSceneMsg()
+            diff.is_diff = True
+            diff.allowed_collision_matrix.entry_names = [link_a]
+            diff.allowed_collision_matrix.entry_values = [acm]
+            self._planning_scene_pub.publish(diff)
+            time.sleep(0.15)
+            self.get_logger().info("🧩 动态抓取: 已禁用传送带碰撞体碰撞检测")
+        except Exception as e:
+            self.get_logger().warn(f"⚠️ 禁用碰撞体失败: {e}")
+
+    def _dynamic_restore_conveyor_collision(self):
+        """动态抓取: 恢复传送带碰撞检测 (回 P_HOVER 后调用)."""
+        try:
+            acm = AllowedCollisionEntry()
+            acm.model_a_name = 'arm'
+            acm.entry_names.append('__all__')
+            acm.enabled.append(False)
+            diff = PlanningSceneMsg()
+            diff.is_diff = True
+            diff.allowed_collision_matrix.entry_names = ['arm']
+            diff.allowed_collision_matrix.entry_values = [acm]
+            self._planning_scene_pub.publish(diff)
+            time.sleep(0.15)
+            self.get_logger().info("🧩 动态抓取: 已恢复传送带碰撞检测")
+        except Exception as e:
+            self.get_logger().warn(f"⚠️ 恢复碰撞体失败: {e}")
+
     def _try_gripper_action(self, joint_names, positions, timeout_sec=1.0):
         if not self._gripper_action_client.wait_for_server(timeout_sec=timeout_sec):
             return False
@@ -2658,7 +2700,124 @@ def main():
         if close_target >= open_target:
             close_target = max(0.022, open_target - 0.028)
         return open_target, close_target
-    
+
+    def _run_dynamic_grasp(self, pick_id, bin_num, object_diameter_m, start_pose, compute_gripper_targets):
+        """动态抓取核心序列: 影子对齐 → 斜线随动下降 → 夹取 → 抬起 → 放置.
+
+        Args:
+            pick_id: 物体名称 (如 "apple (detected)")
+            bin_num: 料框编号 1/2
+            object_diameter_m: 物体直径 (m), 用于夹爪开度
+            start_pose: {'x','y','z'} 命令下发时的检测位置 (备用)
+        Returns:
+            bool: 本次动态抓取是否成功
+        """
+        if not self._dynamic_calib:
+            self.get_logger().warn("⚠️ 无传送带标定, 动态抓取不可用")
+            return False
+
+        v = self._belt_speed
+        if v <= 0.0:
+            self.get_logger().warn("⚠️ 传送带速度不可用(v<=0), 动态抓取不可用")
+            return False
+
+        # ── 1. 读取目标最新位置 (含延迟补偿的测量时刻) ──
+        xy = self._dynamic_current_xy(pick_id)
+        if xy is None:
+            self.get_logger().warn("⚠️ 动态抓取: 未获取到目标最新位置, 回退静态")
+            return False
+        x_now, y_now, t_meas = xy
+
+        # 物体表面 z (base 系), 决定夹取高度
+        det = self._latest_detection
+        obj = self._dynamic_find_object(det.get('objects', []), pick_id)
+        surface_z = float(obj.get('base_position_m', {}).get('z', 0.0)) if obj else float(start_pose.get('z', 0.0))
+        grasp_z = max(surface_z + GRIPPER_PICK_Z_OFFSET, MIN_GRASP_Z)
+
+        # ── 2. 影子点 (横向对齐): 目标 = 预测位置 + v*SHADOW_LEAD_S 前瞻 ──
+        t_shadow = time.time()
+        self._predictor.add_measurement(t_meas, x_now, y_now)
+        sx, sy = self._predictor.predict(t_meas, x_now, y_now, t_shadow + SHADOW_LEAD_S)
+        z_shadow = P_HOVER_POSE['z']
+        self.get_logger().info(
+            f"🎯 动态: 影子点=({sx:.3f},{sy:.3f},z={z_shadow:.3f}) 速度={v:.4f} m/s")
+        shadow_ok = self.move_arm_pose(
+            {'x': sx, 'y': sy, 'z': z_shadow},
+            "动态-影子对齐", continuous=False, planning_mode='normal',
+            preferred_orientation=self._build_pick_orientation({'x': sx, 'y': sy}))
+        if not shadow_ok:
+            self.get_logger().warn("⚠️ 动态: 影子点运动失败")
+            return False
+
+        # ── 3. 斜线随动下降: 目标 = 预测位置 + v*DESCENT_NOMINAL_S 前瞻 ──
+        xy2 = self._dynamic_current_xy(pick_id)
+        if xy2 is not None:
+            x_now, y_now, t_meas = xy2
+            self._predictor.add_measurement(t_meas, x_now, y_now)
+        t_descent = time.time()
+        gx, gy = self._predictor.predict(t_meas, x_now, y_now, t_descent + DESCENT_NOMINAL_S)
+        # 目标姿态: 用抓取点生成的 PCA 短轴候选 (外部已传入 start_pose 无姿态, 用径向候选)
+        orientations = self._build_pick_orientations_multi({'x': gx, 'y': gy})
+        self._dynamic_disable_conveyor_collision()
+        waypoints = [self._create_pose({'x': gx, 'y': gy, 'z': grasp_z}, orientations[0])]
+        self.get_logger().info(
+            f"🎯 动态: 下降目标=({gx:.3f},{gy:.3f},z={grasp_z:.3f}) 前瞻={DESCENT_NOMINAL_S}s")
+        descent_ok = self.execute_cartesian_path(
+            waypoints, "动态-斜线随动下降", fraction_threshold=0.80, jump_threshold=0.8)
+        if not descent_ok:
+            self._dynamic_restore_conveyor_collision()
+            self.get_logger().warn("⚠️ 动态: 斜线下降失败")
+            return False
+
+        # ── 4. 夹取: 一次性闭合 + 力矩判定 ──
+        if object_diameter_m:
+            _, close_target = compute_gripper_targets(object_diameter_m)
+        else:
+            close_target = GRIPPER_CLOSE
+        self._pre_grasp_width = self._latest_gripper_status.width if self._latest_gripper_status else None
+        grasp_ok = self.operate_gripper(close_target, "动态-闭合夹爪")
+        if not grasp_ok:
+            self._dynamic_restore_conveyor_collision()
+            self.get_logger().warn("⚠️ 动态: 夹爪闭合失败")
+            return False
+
+        # ── 5. 带前向分量抬起 (水平平移 + 抬升, 一次笛卡尔路径) ──
+        xy3 = self._dynamic_current_xy(pick_id)
+        lift_dx, lift_dy = 0.0, 0.0
+        if xy3 is not None:
+            x3, y3, t3 = xy3
+            self._predictor.add_measurement(t3, x3, y3)
+            lx, ly = self._predictor.predict(t3, x3, y3, time.time() + LIFT_LEAD_S)
+            lift_dx, lift_dy = lx - gx, ly - gy
+        lift_z = z_shadow + 0.05
+        lift_ok = self.execute_cartesian_path(
+            [self._create_pose({'x': gx + lift_dx, 'y': gy + lift_dy, 'z': lift_z},
+                               self._build_pick_orientation({'x': gx + lift_dx, 'y': gy + lift_dy})[0])],
+            "动态-带前向抬起", fraction_threshold=0.80)
+        if not lift_ok:
+            self._dynamic_restore_conveyor_collision()
+            self.get_logger().warn("⚠️ 动态: 抬起失败, 尝试原地抬升")
+            self.move_arm_pose({'x': gx, 'y': gy, 'z': lift_z}, "动态-原地抬升")
+
+        # ── 6. 放料框 ──
+        bin_above, bin_place = BIN_JOINTS[bin_num]
+        self.move_arm_joint(bin_above, f"动态-料框{bin_num}上方")
+        self.move_arm_joint(bin_place, f"动态-料框{bin_num}放置")
+        self.operate_gripper(GRIPPER_OPEN, f"动态-料框{bin_num}释放")
+        self.move_arm_joint(bin_above, f"动态-料框{bin_num}上方")
+
+        # ── 7. 回 P_HOVER 并恢复碰撞 ──
+        self.move_arm_pose(P_HOVER_POSE, "动态-回悬停位", continuous=False,
+                           planning_mode='normal',
+                           preferred_orientation=P_HOVER_ORIENTATION)
+        self._dynamic_restore_conveyor_collision()
+        self.get_logger().info("✅ 动态抓取完成")
+        return True
+
+    # _run_dynamic_grasp 引用 main() 局部常量 (P_HOVER_POSE/SHADOW_LEAD_S/GRIPPER_PICK_Z_OFFSET/BIN_JOINTS 等),
+    # 类方法无法访问 main() 局部作用域, 故定义为 main() 内闭包并绑定到 node 供命令分发调用.
+    node._run_dynamic_grasp = _run_dynamic_grasp
+
     loop_count = 0
     try:
         print("\n\n======== 🔵 自动分拣服务端已启动 (等待 GUI 客户端指令) ========\n")
@@ -3252,6 +3411,45 @@ def main():
                 }, ensure_ascii=False)
                 node.cycle_result_pub.publish(result_msg)
                 time.sleep(0.5)
+
+            elif data.get("cmd") == "sort_dynamic":
+                # 动态抓取: 传送带持续运行, 机械臂预测并拦截移动物体
+                # 依赖: conveyor_calib.json (方向标定) + /conveyor_status (STM32 速度)
+                node.is_busy = True
+                status_msg.data = 'busy'
+                node.status_pub.publish(status_msg)
+                node.last_planning_profile_name = ''
+                node.last_planning_strategy = ''
+                try:
+                    pick_id = str(data.get("pick_name", "Pick"))
+                    bin_num = int(data.get("bin", 1))
+                    if bin_num not in BIN_JOINTS:
+                        bin_num = 1
+                    object_diameter_m = data.get("object_diameter_m", None)
+                    start_pose = data.get("pick", {})
+                    ok = node._run_dynamic_grasp(
+                        pick_id, bin_num, object_diameter_m, start_pose,
+                        compute_gripper_targets)
+                except Exception as e:
+                    print(f"❌ 动态抓取异常: {e}")
+                    import traceback; traceback.print_exc()
+                    ok = False
+                if not ok:
+                    # 动态抓取失败 → 回退静态抓取 (传送带已由 GUI 停止/或将停止)
+                    node.get_logger().warn("⚠️ 动态抓取失败, 回退静态抓取流程")
+                    node.move_arm_joint(JOINT_STANDBY, "动态失败-回待机位")
+                    node.operate_gripper(GRIPPER_OPEN, "动态失败-张开夹爪")
+                    result = {'ok': False, 'cmd': 'sort_dynamic',
+                              'msg': '动态抓取失败(已回退)'}
+                else:
+                    result = {'ok': True, 'cmd': 'sort_dynamic',
+                              'msg': '动态抓取成功'}
+                result_msg = String()
+                result_msg.data = json.dumps(result)
+                node.cycle_result_pub.publish(result_msg)
+                node.is_busy = False
+                status_msg.data = 'idle'
+                node.status_pub.publish(status_msg)
 
             elif data.get("cmd") == "sort_blue_block":
                 # 🟦 蓝方块分拣 (Task 2.1): 顶面中位抓取 + 分层姿态约束
