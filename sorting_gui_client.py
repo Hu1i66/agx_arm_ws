@@ -1563,78 +1563,110 @@ def main():
             self._auto_sort_log("动态抓取停止请求: 完成当前任务后停带")
             self.after(200, self._dynamic_tick)
 
+        def _dynamic_wait_inflight(self):
+            """在途 sort_dynamic / 静态兜底 sort 门控: 等机械臂 busy→idle 确认完成.
+
+            派发命令时置 _dynamic_busy=True, 仅当观察到 busy→idle 转换后才清零;
+            未清零前禁止重启传送带, 避免漏抓静态 sort 下发后传送带过早重启
+            (current_status 每 500ms 轮询刷新, 而 tick 每 200ms 重排, 下发后短期内
+            看到的 idle 可能是派发前的陈旧状态)。
+            返回 True 表示在途任务未完成 (调用方应等待重排), False 表示已清除在途标记。
+            """
+            if not self._dynamic_busy:
+                return False
+            if self.current_status == 'busy':
+                return True  # 已观察到 busy: 机械臂正在执行, 等待任务完成
+            if self.current_status == 'idle':
+                # 下发后可能尚未轮询到 busy (状态刷新滞后), 距上次派发 <1s 视为
+                # 指令在途未确认, 继续等待; 超过 1s 仍为 idle 则说明该次任务已完成
+                if time.time() - self.last_dispatch_time < 1.0:
+                    return True
+                self._dynamic_busy = False  # 上次 sort_dynamic/sort 已完成 (busy→idle)
+                return False
+            return True  # 状态未知/error: 继续等待服务端恢复
+
         def _dynamic_tick(self):
-            """动态抓取状态机主循环 (GUI 主线程, 复用 _dispatch_sort_cmd)."""
+            """动态抓取状态机主循环 (GUI 主线程, 复用 _dispatch_sort_cmd).
+
+            主体用 try/except 包裹并始终重排, 任何异常都不会让状态机静默冻结
+            (参照 _auto_sort_tick 的续排写法)。
+            """
             if not self.dynamic_mode:
                 return
-            st = self._dynamic_state
+            try:
+                st = self._dynamic_state
 
-            if st == 'STOPPING':
+                if st == 'STOPPING':
+                    if self._dynamic_wait_inflight():
+                        # 在途 sort_dynamic / 静态兜底 sort 尚未完成: 先等待, 不立即停带
+                        return
+                    if self.current_status == 'busy':
+                        return  # 机械臂正在执行其它任务, 等待完成
+                    if self.conveyor_state != False and not self._conveyor_busy:
+                        self._conveyor_set(False)
+                        return
+                    if self._conveyor_busy:
+                        return
+                    self.dynamic_mode = False
+                    self._dynamic_state = 'OFF'
+                    self._dynamic_busy = False
+                    self.dyn_start_btn.config(state=tk.NORMAL)
+                    self.dyn_stop_btn.config(state=tk.DISABLED)
+                    self._restore_manual_buttons()
+                    # 隐藏上游触发线与下游漏抓分界线
+                    for cid in (self._dyn_trig_line_id, self._dyn_trig_label_id,
+                                self._dyn_miss_line_id, self._dyn_miss_label_id):
+                        if cid is not None:
+                            self.camera_canvas.itemconfig(cid, state='hidden')
+                    self._auto_sort_log("动态抓取已停止")
+                    return
+
+                # 在途 sort_dynamic / 静态兜底 sort: 等待 busy→idle 确认完成后再继续
+                if self._dynamic_wait_inflight():
+                    return
+
                 if self.current_status == 'busy':
-                    self.after(200, self._dynamic_tick)
+                    # 机械臂忙碌(未置 _dynamic_busy 的其它任务), 等待完成
                     return
-                if self.conveyor_state != False and not self._conveyor_busy:
+
+                # ── idle: 检查漏抓分界线 (优先) 与上游触发线 ──
+                # 1) 下游漏抓: 分界线右侧有物体 → 停带静态兜底 (仅在 RUNNING 下进入, 避免重复停带)
+                miss_obj = self._pick_object_right_of_line(
+                    line_u=self._dynamic_miss_line_u, require_base=True)
+                if st != 'MISS_STOP' and miss_obj is not None and self.conveyor_state == True:
+                    self._dynamic_state = 'MISS_STOP'
+                    self._auto_sort_log(f"漏抓检测: 物体越过下游分界线 u={self._dynamic_miss_line_u}, 停带静态抓取")
                     self._conveyor_set(False)
-                    self.after(200, self._dynamic_tick)
                     return
-                if self._conveyor_busy:
-                    self.after(200, self._dynamic_tick)
+
+                # 2) 漏抓静态兜底: 等传送带停稳后对下游物体执行静态 sort
+                if st == 'MISS_STOP':
+                    if self.conveyor_state != False:
+                        return  # 传送带尚未停稳, 继续等待
+                    # 传送带已停: 对下游物体执行静态 sort (miss_obj 可能因检测抖动为 None,
+                    # 此时不派发, 直接走重启带路径回到 RUNNING, 下轮若仍在检测区会重新命中)
+                    if miss_obj is not None:
+                        self._dispatch_sort_cmd(miss_obj, static_mode=True)
+                        self._dynamic_busy = True  # 标记静态兜底 sort 在途
+                        self._auto_sort_log("漏抓兜底: 对下游物体执行静态 sort, 完成后重启传送带")
+                    self._dynamic_state = 'RUNNING'  # 等待 busy→idle 后重启带
                     return
-                self.dynamic_mode = False
-                self._dynamic_state = 'OFF'
-                self._dynamic_busy = False
-                self.dyn_start_btn.config(state=tk.NORMAL)
-                self.dyn_stop_btn.config(state=tk.DISABLED)
-                self._restore_manual_buttons()
-                # 隐藏上游触发线与下游漏抓分界线
-                for cid in (self._dyn_trig_line_id, self._dyn_trig_label_id,
-                            self._dyn_miss_line_id, self._dyn_miss_label_id):
-                    if cid is not None:
-                        self.camera_canvas.itemconfig(cid, state='hidden')
-                self._auto_sort_log("动态抓取已停止")
-                return
 
-            if self.current_status == 'busy':
-                # 机械臂忙碌(正在执行 sort_dynamic / sort), 等待完成
-                self.after(200, self._dynamic_tick)
-                return
+                # 3) 兜底后恢复: 上次兜底 sort 已确认完成 (not _dynamic_busy) 且传送带已停 → 重启带
+                if not self._dynamic_busy and self.conveyor_state != True and not self._conveyor_busy:
+                    self._conveyor_set(True)
 
-            # ── idle: 检查漏抓分界线 (优先) 与上游触发线 ──
-            # 1) 下游漏抓: 分界线右侧有物体 → 停带静态兜底 (仅在 RUNNING 下进入, 避免重复停带)
-            miss_obj = self._pick_object_right_of_line(
-                line_u=self._dynamic_miss_line_u, require_base=True)
-            if st != 'MISS_STOP' and miss_obj is not None and self.conveyor_state == True:
-                self._dynamic_state = 'MISS_STOP'
-                self._auto_sort_log(f"漏抓检测: 物体越过下游分界线 u={self._dynamic_miss_line_u}, 停带静态抓取")
-                self._conveyor_set(False)
-                self.after(300, self._dynamic_tick)
-                return
-
-            # 2) 漏抓静态兜底: 等传送带停稳后对下游物体执行静态 sort
-            if st == 'MISS_STOP':
-                if self.conveyor_state != False:
-                    self.after(200, self._dynamic_tick)
+                # 4) 上游触发: 触发线右侧有物体且传送带运行中 → 下发 sort_dynamic
+                trig_obj = self._pick_object_right_of_line(
+                    line_u=self._dynamic_trigger_line_u, require_base=True)
+                if trig_obj is not None and self.conveyor_state == True:
+                    self._dynamic_state = 'RUNNING'
+                    self._auto_sort_log(f"动态: 目标 {trig_obj.get('object_name','?')} 进入跟踪区, 下发 sort_dynamic")
+                    self._dispatch_sort_cmd(trig_obj, static_mode=False)
                     return
-                # 传送带已停: 对下游物体执行静态 sort
-                self._dispatch_sort_cmd(miss_obj, static_mode=True)
-                self._dynamic_state = 'RUNNING'  # 等待 busy→idle 后重启带
-                self.after(200, self._dynamic_tick)
-                return
-
-            # 3) 兜底后恢复: 传送带已停且无任务 → 重启带 (漏抓静态 sort 完成后自动恢复)
-            if self.conveyor_state != True and not self._conveyor_busy:
-                self._conveyor_set(True)
-
-            # 4) 上游触发: 触发线右侧有物体且传送带运行中 → 下发 sort_dynamic
-            trig_obj = self._pick_object_right_of_line(
-                line_u=self._dynamic_trigger_line_u, require_base=True)
-            if trig_obj is not None and self.conveyor_state == True:
-                self._dynamic_state = 'RUNNING'
-                self._auto_sort_log(f"动态: 目标 {trig_obj.get('object_name','?')} 进入跟踪区, 下发 sort_dynamic")
-                self._dispatch_sort_cmd(trig_obj, static_mode=False)
-                self.after(300, self._dynamic_tick)
-                return
-
+            except Exception as e:
+                # 任何异常都不能让状态机冻结: 记录错误后继续重排
+                self._auto_sort_log(f"动态抓取 tick 异常: {e}")
             self.after(200, self._dynamic_tick)
 
         def _restore_manual_buttons(self):
