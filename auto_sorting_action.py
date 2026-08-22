@@ -2740,6 +2740,19 @@ def main():
             self.get_logger().warn("⚠️ 动态: 斜线下降失败")
             return False
 
+        # ⚠️⚠️ 空跑模式临时开关 (Task 7 Step 2): 只验证斜线下降轨迹, 不夹取/不放料.
+        # 用后请删除本段, 恢复真实夹取流程. 对照相机画面检查下降目标点
+        # 是否落在物体实际到达位置附近 (误差 < 5cm), 无碰撞、无 -4 错误.
+        DRY_RUN = True  # ← 空跑: True=只下降不夹取; 正式测试时删除本段
+        if DRY_RUN:
+            self.get_logger().info("🏃 空跑模式: 斜线下降完成, 跳过夹取, 直接回悬停位")
+            self.move_arm_pose(P_HOVER_POSE, "动态-空跑回悬停位", continuous=False,
+                               planning_mode='normal',
+                               preferred_orientation=P_HOVER_ORIENTATION)
+            self._dynamic_restore_conveyor_collision()
+            self.get_logger().info("✅ 空跑完成: 斜线下降路径验证通过")
+            return True
+
         # ── 4. 夹取: 一次性闭合 + 力矩判定 ──
         if object_diameter_m:
             _, close_target = compute_gripper_targets(object_diameter_m)
