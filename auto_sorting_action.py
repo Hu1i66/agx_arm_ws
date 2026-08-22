@@ -1289,26 +1289,63 @@ class MoveItActionClient(Node):
         best_error = float('inf')
         best_time = 0.0
 
+        # 动态抓取代 IK 总时间预算: 超过则该点视为不可解并立即采用当前最优解
+        # (若有), 防止 10姿态×8种子全扫耗时数十秒, 运行中的物体早已跑出工作空间.
+        _ik_budget = 2.5  # 秒
+
+        # ⚠️ 多种子策略 (RC-4 修复): Pinocchio 随机优化只用"当前关节角"单一初始猜测,
+        # 在待机位(折叠态)与伸展+手腕朝下抓取构型属于不同吸引域, 70% 局部采样够不到,
+        # 30% 全局采样在 6D 空间过于稀疏 → 频繁误报"无解".
+        # 参照 _compute_ik_via_service 的 TRAC-IK 8 种子策略:
+        #   当前关节 → 待机位 → 大偏移(±0.5rad) → 全空间随机, 逐种子求解取最优.
+        # 所有姿态候选共享同一组种子, 遍历顺序: 先姿态, 后种子 (外层 ori 保持不变,
+        # 内层并行尝试多种子, 保留第一个足够好的解以缩短耗时).
+        seed_candidates = []
+        if initial_guess is not None:
+            seed_candidates.append(('当前关节', initial_guess.astype(float)))
+        standby = np.zeros(6)
+        seed_candidates.append(('待机位', standby.astype(float)))
+        if initial_guess is not None:
+            np.random.seed(int(time.time() * 1000) % 10000)
+            for _ in range(3):
+                noisy = initial_guess + np.random.uniform(-0.5, 0.5, 6)
+                seed_candidates.append(('大偏移', noisy.astype(float)))
+        np.random.seed(int(time.time() * 1000) % 10000 + 1)
+        for _ in range(2):
+            full_random = np.random.uniform(-np.pi, np.pi, 6)
+            seed_candidates.append(('全随机', full_random.astype(float)))
+
+        _t_ik0 = time.time()
         for ori in orientations:
+            if time.time() - _t_ik0 > _ik_budget:
+                self.get_logger().info(f"⏱️ IK 时间预算已达 ({_ik_budget:.1f}s), 采用当前最优 err={best_error:.4f}")
+                break
             if isinstance(ori, Quaternion):
                 qx, qy, qz, qw = ori.x, ori.y, ori.z, ori.w
             else:
                 qx, qy, qz, qw = float(ori[0]), float(ori[1]), float(ori[2]), float(ori[3])
 
             target_quat = np.array([qx, qy, qz, qw])
-            ok, q_sol, err, comp_t = self.ik_solver.get_ik_solution(
-                target_pos, target_quat, initial_guess=initial_guess
-            )
-
-            if ok and err < best_error:
-                best_error = err
-                best_q = list(q_sol)
-                best_time = comp_t
-                if err < 0.001:
-                    break
+            for seed_name, seed_val in seed_candidates:
+                ok, q_sol, err, comp_t = self.ik_solver.get_ik_solution(
+                    target_pos, target_quat, initial_guess=seed_val
+                )
+                if ok and err < best_error:
+                    best_error = err
+                    best_q = list(q_sol)
+                    best_time = comp_t
+                    # 提前接受阈值: 动态抓取对求解速度敏感, 组合误差 <0.010 已足够
+                    # (对应位置误差<1cm 级 + 合理姿态), 避免为追求 0.001 全扫 8 种子
+                    # 导致单次 IK 数秒~数十秒, 动态目标早跑出视野. 后续仍会留更多姿态
+                    # 校正, 无需极致精确. (原 0.001 阈值对真实可达点几乎不触发, 每次都
+                    # 全扫 10姿态×8种子 → 20s+, 动态抓取不可用, 见离线 IKM test.)
+                    if err < 0.010:
+                        break
+            if best_error < 0.010:
+                break
 
         if best_q is None:
-            self.get_logger().info(f"⚠️ IK 无解 (尝试了 {len(orientations)} 种姿态)")
+            self.get_logger().info(f"⚠️ IK 无解 (尝试了 {len(orientations)} 种姿态 × {len(seed_candidates)} 种子)")
             return False, None
 
         self.get_logger().info(f"✅ IK 求解成功: error={best_error:.4f}, time={best_time*1000:.1f}ms")
