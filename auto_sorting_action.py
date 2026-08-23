@@ -2787,35 +2787,51 @@ def main():
             self.get_logger().warn("⚠️ 动态: 影子点运动失败")
             return False
 
-        # ── 3. 下降至拦截点: 目标 = 预测位置 + v*DESCENT_NOMINAL_S 前瞻 ──
-        # 方案: 不用单航点笛卡尔直线 (Piper 在悬停→近桌面扩展位形下无法维持该直线,
-        # 现场 6/8 轮全挂在"笛卡尔规划度不足 1-2%"), 改为关节空间 IK 一步到位
-        # (下降点在关节空间已验证 100% 可达, 见 offline_ik_multi_seed_test.py),
-        # 目标仍为预测拦截点, 保持与物体同步.
-        xy2 = self._dynamic_current_xy(pick_id)
-        if xy2 is not None:
-            x_now, y_now, t_meas = xy2
-            self._predictor.add_measurement(t_meas, x_now, y_now)
-        t_descent = time.time()
-        gx, gy = self._predictor.predict(t_meas, x_now, y_now, t_descent + DESCENT_NOMINAL_S)
-        # 可达性预检 (RC-1): 下降拦截点径向距离超限 → 不可达, 直接回退
-        if math.hypot(gx, gy) > DYNAMIC_R_MAX:
-            self.get_logger().warn(
-                f"⚠️ 动态: 下降点 R=√(gx²+gy²)={math.hypot(gx, gy):.3f} > {DYNAMIC_R_MAX}m, "
-                f"超出工作空间, 回退静态")
-            return False
+        # ── 3. 渐进分段下降至拦截点: 每段重新追踪对齐 xy, 避免夹爪戳到物体 ──
+        # 方案 A (借鉴 QC2002 渐进下降式追踪): 从 z_shadow 到 grasp_z 分 DESCENT_STAGES 段,
+        # 每段下降前重新获取目标最新位置、重新做 IK 对齐 (水平分量补偿传送带位移),
+        # Z 向每段只降一小段, 确保夹爪全程贴着物体推进, 落位时不会戳偏.
+        # 不用单航点笛卡尔直线 (Piper 在悬停→近桌面扩展位形下无法维持, 规划度仅 1-2%).
+        DESCENT_STAGES = 4  # 下降段数 (3-4 段)
         self._dynamic_disable_conveyor_collision()
-        # 目标姿态: 用抓取点生成的 PCA 短轴候选 (径向直下为首选)
-        orientations = self._build_pick_orientations_multi({'x': gx, 'y': gy})
-        self.get_logger().info(
-            f"🎯 动态: 下降目标=({gx:.3f},{gy:.3f},z={grasp_z:.3f}) 前瞻={DESCENT_NOMINAL_S}s")
-        descent_ok = self.move_arm_pose(
-            {'x': gx, 'y': gy, 'z': grasp_z}, "动态-下降至拦截点",
-            continuous=False, planning_mode='normal',
-            preferred_orientation=orientations[0])
+        # 各段结束 z 高度 (从 z_shadow 到 grasp_z 等分)
+        z_levels = np.linspace(z_shadow, grasp_z, DESCENT_STAGES + 1)[1:]
+        descent_ok = True
+        gx, gy = 0.0, 0.0
+        for _si, z_target in enumerate(z_levels, start=1):
+            # 每段下降前重新获取目标最新位置并追踪对齐
+            xy_seg = self._dynamic_current_xy(pick_id)
+            if xy_seg is not None:
+                x_now, y_now, t_meas = xy_seg
+                self._predictor.add_measurement(t_meas, x_now, y_now)
+            t_seg = time.time()
+            # 段前瞻: 中间段小前瞻跟随, 最后段用完整前瞻赶向拦截点
+            seg_lead = DESCENT_NOMINAL_S * (_si / DESCENT_STAGES)
+            seg_x, seg_y = self._predictor.predict(t_meas, x_now, y_now, t_seg + seg_lead)
+            gx, gy = seg_x, seg_y  # 末段即为最终拦截点, 供后续抬起使用
+            # 可达性预检 (RC-1): 预检点径向距离超限 → 不可达, 直接回退
+            if math.hypot(seg_x, seg_y) > DYNAMIC_R_MAX:
+                self.get_logger().warn(
+                    f"⚠️ 动态: 下降第{_si}段 R=√(x²+y²)={math.hypot(seg_x, seg_y):.3f} > "
+                    f"{DYNAMIC_R_MAX}m, 超出工作空间, 回退静态")
+                descent_ok = False
+                break
+            # 目标姿态: 用该段抓取点生成的 PCA 短轴候选 (径向直下为首选)
+            orientations_seg = self._build_pick_orientations_multi({'x': seg_x, 'y': seg_y})
+            self.get_logger().info(
+                f"🎯 动态: 下降第{_si}/{DESCENT_STAGES}段 -> "
+                f"({seg_x:.3f},{seg_y:.3f},z={float(z_target):.3f}) 前瞻={seg_lead:.2f}s")
+            seg_ok = self.move_arm_pose(
+                {'x': seg_x, 'y': seg_y, 'z': float(z_target)}, f"动态-下降第{_si}段",
+                continuous=False, planning_mode='normal',
+                preferred_orientation=orientations_seg[0])
+            if not seg_ok:
+                self.get_logger().warn(f"⚠️ 动态: 下降第{_si}段 IK 失败")
+                descent_ok = False
+                break
         if not descent_ok:
             self._dynamic_restore_conveyor_collision()
-            self.get_logger().warn("⚠️ 动态: 下降失败 (关节空间 IK)")
+            self.get_logger().warn("⚠️ 动态: 渐进下降失败")
             return False
 
         # ⚠️⚠️ 空跑模式临时开关 (Task 7 Step 2): 只验证下降轨迹, 不夹取/不放料.
