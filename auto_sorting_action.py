@@ -290,6 +290,11 @@ class MoveItActionClient(Node):
         self._execute_action_client = ActionClient(self, ExecuteTrajectory, '/execute_trajectory')
         
         self._gripper_action_client = ActionClient(self, FollowJointTrajectory, '/gripper_controller/follow_joint_trajectory')
+        # 手臂关节轨迹控制器 (方案 X): 用于"多航点关节轨迹一次下发", 不经过 MoveIt 单目标规划.
+        # 日志4 证明 GetCartesianPath 笛卡尔直线在下降区 0.0% 失败, 而关节空间逐航点 Pinocchio IK
+        # 100% 可达 (offline_verify_jointspace_multiwaypoint.py). 故下降改为: 逐航点 IK 解关节角
+        # → 打包成整条 JointTrajectory → 一次下发 arm_controller, 既消除笛卡尔奇异性又消分段死区.
+        self._arm_jt_client = ActionClient(self, FollowJointTrajectory, '/arm_controller/follow_joint_trajectory')
         self._joint_states_pub = self.create_publisher(JointState, '/control/joint_states', 10)
         # PlanningScene diff 话题发布器：用于临时禁用/恢复 control_box 等碰撞体的碰撞检测
         # 通过 AllowedCollisionMatrix (ACM) diff 实现，不影响场景中物体的实际存在
@@ -912,6 +917,59 @@ class MoveItActionClient(Node):
             jc.weight = 1.0
             c.joint_constraints.append(jc)
         return self.send_goal('arm', c, continuous=continuous)
+
+    def execute_multiwaypoint_joint_trajectory(self, joint_waypoints, desc, per_point_dur=0.30):
+        """方案 X: 多航点关节轨迹一次下发 (不经过 MoveIt 单目标规划).
+
+        日志4 根因: GetCartesianPath 笛卡尔刚性直线在 Piper 悬停(z=0.32)->近桌面(z≈0.109)
+        扩展位形下奇异性不可达, 完整度 0.0%-0.2% 全失败; 而关节空间逐航点 Pinocchio IK
+        100% 可达 (offline_verify_jointspace_multiwaypoint.py 验证). 本函数把逐航点 IK 解出的
+        关节角序列打包成整条 JointTrajectory, 一次下发 arm_controller 连续执行, 既消除
+        笛卡尔奇异性, 又无"分段式每段间计算/启动死区"导致的落后.
+
+        Args:
+            joint_waypoints: list[[j1..j6], ...] 依次为下降轨迹各航点的关节角
+            desc: 动作描述
+            per_point_dur: 每段耗时 (s), 决定轨迹时间戳分配
+        Returns:
+            bool: 是否成功
+        """
+        if not joint_waypoints:
+            return False
+        if not self._arm_jt_client.wait_for_server(timeout_sec=1.5):
+            self.get_logger().error("⚠️ /arm_controller/follow_joint_trajectory 服务不可用 (方案X)")
+            return False
+
+        joint_names = ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6']
+        goal_msg = FollowJointTrajectory.Goal()
+        goal_msg.trajectory.joint_names = joint_names
+        # 逐点构造 JointTrajectoryPoint, 时间戳递增.
+        # ⚠️ 不额外插入"起点点": FollowJointTrajectory 会从当前实际位姿平滑过渡到首点,
+        # 机械臂自然从影子位姿 (即 vma 第0点附近) 起步, 无需重复起点 (重复反而产生零长段).
+        for i, q in enumerate(joint_waypoints):
+            point = JointTrajectoryPoint()
+            point.positions = [float(v) for v in q]
+            t = (i + 1) * per_point_dur
+            point.time_from_start.sec = int(t)
+            point.time_from_start.nanosec = int((t - int(t)) * 1e9)
+            goal_msg.trajectory.points.append(point)
+
+        self.get_logger().info(f"🚀 连续关节轨迹一次下发 -> {desc} ({len(joint_waypoints)} 航点)")
+        send_goal_future = self._arm_jt_client.send_goal_async(goal_msg)
+        rclpy.spin_until_future_complete(self, send_goal_future)
+        goal_handle = send_goal_future.result()
+        if goal_handle is None or not goal_handle.accepted:
+            self.get_logger().error("❌ 关节轨迹被拒绝执行")
+            return False
+        get_result_future = goal_handle.get_result_async()
+        rclpy.spin_until_future_complete(self, get_result_future)
+        result = get_result_future.result().result
+        if result and result.error_code == 0:  # FollowJointTrajectory 成功返回 error_code 0
+            self.get_logger().info(f"✅ 连续关节轨迹执行完毕: {desc}")
+            return True
+        err = result.error_code if result else "None"
+        self.get_logger().error(f"❌ 轨迹执行失败, 错误码 {err}")
+        return False
 
     @staticmethod
     def _normalize(v):
@@ -2799,44 +2857,80 @@ def main():
             self.get_logger().warn("⚠️ 动态: 影子点运动失败")
             return False
 
-        # ── 3. 连续航点笛卡尔整条跟踪曲线 (方案 B): 生成随时间前移的航点, 一次规划整条斜线下降 ──
-        # 根因 (日志3定量): 分段式"到点→停下→算下段 IK→再启动 MoveIt"每段间有 0.3-0.5s
-        # 计算/启动死区, 4 段累积 ~1.5-2s "追不上"窗口, 机械臂 y 均速低于物体速度 → 落后.
-        # 方案 B: 生成 CARTO_N 个航点, 每点 xy = 物体在其"经时刻"的预测位置, z 从悬停到
-        # grasp_z 等分, 一次 GetCartesianPath 规划出整条连续斜线, MoveIt 连续执行使 y 持续
-        # 前移匹配物体速度 → 既消除落后也消除卡顿. 姿态全程用 PCA 短轴候选 (径向直下).
-        CARTO_N = 10            # 航点数 (越多越贴近物体轨迹, 也越慢规划)
-        DESCENT_TOTAL = 3.0     # 整条下降预计耗时 (s), 用于航点时间序列 (需标定)
+        # ── 3. 关节空间连续多航点轨迹 (方案 X): 逐航点 Pinocchio IK → 一次整条 JointTrajectory 下发 ──
+        # 根因 (日志4 定量): 连续笛卡尔 GetCartesianPath 在 Piper 悬停(z=0.32)->近桌面(z≈0.109)
+        # 扩展位形下刚性直线奇异性, 完整度 0.0%-0.2% 全失败. 但同区逐航点 Pinocchio IK 100% 可达
+        # (offline_verify_jointspace_multiwaypoint.py: 10/10, err 0.002-0.009). 方案 X: 生成随时间
+        # 前移的航点 (xy=物体经时刻预测位置, z 线性下探), 逐点解关节角, 打包成一条 JointTrajectory
+        # 一次下发 arm_controller. 既消除笛卡尔奇异性(全失败), 又无边死区(落后), 且 y 持续前移(跟速).
+        CARTO_N = 10            # 航点数 (越多越贴近物体轨迹, 也越长轨迹)
+        DESCENT_TOTAL = 3.0     # 整条下降预计耗时 (s) → 决定每点时间戳 (需标定)
         self._dynamic_disable_conveyor_collision()
         self._predictor.add_measurement(t_meas, x_now, y_now)
         base_t = time.time()
+        # warm start: 用当前关节角作首航点种子, 保证第0点即伸展构型 (消除待机→伸展首跳)
+        warm_q = None
+        if self.current_joints:
+            warm_q = np.array([self.current_joints.get(f'joint{i}', 0.0) for i in range(1, 7)])
+        standby_q = np.zeros(6)
         zz = np.linspace(z_shadow, grasp_z, CARTO_N)
-        waypoints = []
+        joint_waypoints = []
+        seg_dur = DESCENT_TOTAL / CARTO_N
+        gx, gy = 0.0, 0.0
         for _i in range(CARTO_N):
-            t_wp = base_t + (_i / (CARTO_N - 1)) * DESCENT_TOTAL   # 该航点预计经由时刻
+            t_wp = base_t + (_i / (CARTO_N - 1)) * DESCENT_TOTAL   # 该航点预计经时刻
             wpx, wpy = self._predictor.predict(t_meas, x_now, y_now, t_wp)  # 物体那时位置
             wpx, wpy = float(wpx), float(wpy)
-            # 可达性预检 (RC-1): 任一点径向超限 → 整条不可达轨迹, 回退静态
+            # 可达性预检 (RC-1): 任一点径向超限 → 整条不可达, 回退静态
             if math.hypot(wpx, wpy) > DYNAMIC_R_MAX:
                 self.get_logger().warn(
                     f"⚠️ 动态: 下降航点#{_i} R=√(x²+y²)={math.hypot(wpx, wpy):.3f} > "
                     f"{DYNAMIC_R_MAX}m, 超出工作空间, 回退静态")
                 self._dynamic_restore_conveyor_collision()
                 return False
+            # 主姿态候选: PCA 短轴径向直下 (与生产 move_arm_via_ik 一致)
             ori_wp = self._build_pick_orientations_multi({'x': wpx, 'y': wpy})[0]
-            waypoints.append(self._create_pose(
-                {'x': wpx, 'y': wpy, 'z': float(zz[_i])}, ori_wp))
-            # 末点即最终拦截点, 供后续抬起使用
+            if isinstance(ori_wp, Quaternion):
+                q_quat = np.array([ori_wp.x, ori_wp.y, ori_wp.z, ori_wp.w])
+            else:
+                q_quat = np.array([float(ori_wp[0]), float(ori_wp[1]), float(ori_wp[2]), float(ori_wp[3])])
+            target_pos = np.array([wpx, wpy, float(zz[_i])])
+            # 多种子求解 (镜像 move_arm_via_ik): warm start → 待机 → 大偏移 → 全随机, 取最优
+            seeds = []
+            if warm_q is not None:
+                seeds.append(warm_q.astype(float))
+            seeds.append(standby_q.astype(float))
+            if warm_q is not None:
+                for _ in range(3):
+                    seeds.append((warm_q + np.random.uniform(-0.5, 0.5, 6)).astype(float))
+            for _ in range(2):
+                seeds.append(np.random.uniform(-np.pi, np.pi, 6).astype(float))
+            best_q, best_err = None, float('inf')
+            for _sd in seeds:
+                ok, q_sol, err, _ct = self.ik_solver.get_ik_solution(
+                    target_pos, q_quat, initial_guess=_sd)
+                if ok and err < best_err:
+                    best_err = err
+                    best_q = list(q_sol)
+                    if err < 0.010:
+                        break
+            if best_q is None:
+                self.get_logger().warn(
+                    f"⚠️ 动态: 下降航点#{_i} ({wpx:.3f},{wpy:.3f},z={float(zz[_i]):.3f}) IK 无解, 回退静态")
+                self._dynamic_restore_conveyor_collision()
+                return False
+            joint_waypoints.append(best_q)
+            warm_q = np.asarray(best_q, dtype=float)  # warm start 下一航点
             if _i == CARTO_N - 1:
                 gx, gy = wpx, wpy
         self.get_logger().info(
-            f"🎯 动态: 连续笛卡尔下降 {CARTO_N} 航点 (z={z_shadow:.3f}→{grasp_z:.3f}), "
-            f"拦截点=({gx:.3f},{gy:.3f}) 预计耗时={DESCENT_TOTAL:.2f}s")
-        descent_ok = self.execute_cartesian_path(
-            waypoints, "动态-连续斜线下降", fraction_threshold=0.80)
+            f"🎯 动态: 关节空间连续下降 {CARTO_N} 航点 (z={z_shadow:.3f}→{grasp_z:.3f}), "
+            f"拦截点=({gx:.3f},{gy:.3f}) 每段={seg_dur:.2f}s, 总量={DESCENT_TOTAL:.2f}s")
+        descent_ok = self.execute_multiwaypoint_joint_trajectory(
+            joint_waypoints, "动态-关节空间连续下降", per_point_dur=seg_dur)
         if not descent_ok:
             self._dynamic_restore_conveyor_collision()
-            self.get_logger().warn("⚠️ 动态: 连续笛卡尔下降失败")
+            self.get_logger().warn("⚠️ 动态: 关节空间连续下降失败")
             return False
 
         # ⚠️⚠️ 空跑模式临时开关 (Task 7 Step 2): 只验证下降轨迹, 不夹取/不放料.
