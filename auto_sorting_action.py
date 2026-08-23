@@ -1444,6 +1444,15 @@ class MoveItActionClient(Node):
             
             self.get_logger().info("🟡 TRAC-IK 直接求解失败, 回退到 MoveIt2 OMPL 规划...")
 
+        # ⚠️ 全程仅用 Pinocchio IK (用户要求): 不再回退到 MoveIt2 OMPL/笛卡尔规划.
+        # 原因: move_group 单一规划器下同时发出多个 profile 请求会互相抢占资源,
+        # 既慢又常全部失败; 而 Pinocchio IK + 多种子 + 提前接受阈值对动态抓取已足够.
+        # Pinocchio IK 失败直接返回 False, 交由调用方回退 (如动态抓取回退静态、
+        # 静态流程回待机位), 不做 MoveIt 兜底.
+        if self.enable_ik and self.ik_solver is not None:
+            self.get_logger().warn(f"🟡 Pinocchio IK 失败, 不再回退 MoveIt (全程皮诺曹), 目标: {desc}")
+            return False
+
         return self.move_arm_cartesian(
             pose_dict, desc, continuous=continuous,
             preferred_orientation=preferred_orientation,
