@@ -2885,6 +2885,10 @@ def main():
                                 # = 下降期间前进 0.082m 远超前瞻 0.6s (≈0.016m) → 落后 5cm.
                                 # 缩至 1.5s 下探快一倍, 物体移动减半 (~4cm), 配合前瞻可追上.
                                 # 关节速度上限 5rad/s, 1.5s 下探 0.21m 足够, 不会 -4. (需标定)
+        DELTA_INTERCEPT_S = 0.6  # 额外拦截前瞻偏置 (s): 补偿"影子对齐→10次IK求解→轨迹下发"与
+                                 # 机械臂实际到位之间的规划-执行延迟差, 让拦截点在物体前缘.
+                                 # 物体 0.027m/s*0.6s≈0.016m 前移, 配合 DESCENT_TOTAL(1.5s) 覆盖的
+                                 # ~4cm, 总超前 ~5.6cm 抵消下降期移动, 目标控制落后<1cm. (需标定)
         self._dynamic_disable_conveyor_collision()
         self._predictor.add_measurement(t_meas, x_now, y_now)
         base_t = time.time()
@@ -2898,7 +2902,8 @@ def main():
         seg_dur = DESCENT_TOTAL / CARTO_N
         gx, gy = 0.0, 0.0
         for _i in range(CARTO_N):
-            t_wp = base_t + (_i / (CARTO_N - 1)) * DESCENT_TOTAL   # 该航点预计经时刻
+            # 航点经时刻 = 轨道起点 + 覆盖下降耗时 + 额外拦截偏置 (整体前移, 追到物体前缘)
+            t_wp = base_t + (_i / (CARTO_N - 1)) * DESCENT_TOTAL + DELTA_INTERCEPT_S
             wpx, wpy = self._predictor.predict(t_meas, x_now, y_now, t_wp)  # 物体那时位置
             wpx, wpy = float(wpx), float(wpy)
             # 可达性预检 (RC-1): 任一点径向超限 → 整条不可达, 回退静态
