@@ -946,15 +946,32 @@ class MoveItActionClient(Node):
         # 逐点构造 JointTrajectoryPoint, 时间戳递增.
         # ⚠️ 不额外插入"起点点": FollowJointTrajectory 会从当前实际位姿平滑过渡到首点,
         # 机械臂自然从影子位姿 (即 vma 第0点附近) 起步, 无需重复起点 (重复反而产生零长段).
+        # 抖动根因 (日志5): 相邻航点 IK 解在关节空间可能有较大跳变 (离线 Δq_max 0.8-1.4rad),
+        # FollowJointTrajectory 线性推进放大末端抖动. 对相邻航点做关节空间线性插值
+        # (每段中间插 SMOOTH_SUB 个子点), 平滑轨迹消除末端抖动. 关节空间线性插值安全
+        # (凸组合, 不易越界), 且不改变起点终点.
+        SMOOTH_SUB = 2          # 每段插入子点数
+        smooth_points = []
         for i, q in enumerate(joint_waypoints):
+            smooth_points.append([float(v) for v in q])
+            if i < len(joint_waypoints) - 1:
+                qn = joint_waypoints[i + 1]
+                for s in range(1, SMOOTH_SUB + 1):
+                    alpha = s / (SMOOTH_SUB + 1.0)
+                    interp = [float(a + alpha * (b - a)) for a, b in zip(q, qn)]
+                    smooth_points.append(interp)
+        # 插值后按时间均匀分配 (总时长= len(waypoints_orig)*per_point_dur, 保持下降总耗时不变)
+        total_dur = len(joint_waypoints) * per_point_dur
+        n_pts = len(smooth_points)
+        for k, q in enumerate(smooth_points):
             point = JointTrajectoryPoint()
-            point.positions = [float(v) for v in q]
-            t = (i + 1) * per_point_dur
+            point.positions = q
+            t = (k + 1) * (total_dur / n_pts)
             point.time_from_start.sec = int(t)
             point.time_from_start.nanosec = int((t - int(t)) * 1e9)
             goal_msg.trajectory.points.append(point)
 
-        self.get_logger().info(f"🚀 连续关节轨迹一次下发 -> {desc} ({len(joint_waypoints)} 航点)")
+        self.get_logger().info(f"🚀 连续关节轨迹一次下发 -> {desc} ({len(joint_waypoints)}航点→{n_pts}插入平滑点, 总量={total_dur:.2f}s)")
         send_goal_future = self._arm_jt_client.send_goal_async(goal_msg)
         rclpy.spin_until_future_complete(self, send_goal_future)
         goal_handle = send_goal_future.result()
@@ -2864,7 +2881,10 @@ def main():
         # 前移的航点 (xy=物体经时刻预测位置, z 线性下探), 逐点解关节角, 打包成一条 JointTrajectory
         # 一次下发 arm_controller. 既消除笛卡尔奇异性(全失败), 又无边死区(落后), 且 y 持续前移(跟速).
         CARTO_N = 10            # 航点数 (越多越贴近物体轨迹, 也越长轨迹)
-        DESCENT_TOTAL = 3.0     # 整条下降预计耗时 (s) → 决定每点时间戳 (需标定)
+        DESCENT_TOTAL = 1.5     # 整条下降预计耗时 (s). 日志5: 原 3.0s 太慢, 物体 0.027m/s*3.05s
+                                # = 下降期间前进 0.082m 远超前瞻 0.6s (≈0.016m) → 落后 5cm.
+                                # 缩至 1.5s 下探快一倍, 物体移动减半 (~4cm), 配合前瞻可追上.
+                                # 关节速度上限 5rad/s, 1.5s 下探 0.21m 足够, 不会 -4. (需标定)
         self._dynamic_disable_conveyor_collision()
         self._predictor.add_measurement(t_meas, x_now, y_now)
         base_t = time.time()
