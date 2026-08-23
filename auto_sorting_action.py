@@ -2799,51 +2799,44 @@ def main():
             self.get_logger().warn("⚠️ 动态: 影子点运动失败")
             return False
 
-        # ── 3. 渐进分段下降至拦截点: 每段重新追踪对齐 xy, 避免夹爪戳到物体 ──
-        # 方案 A (借鉴 QC2002 渐进下降式追踪): 从 z_shadow 到 grasp_z 分 DESCENT_STAGES 段,
-        # 每段下降前重新获取目标最新位置、重新做 IK 对齐 (水平分量补偿传送带位移),
-        # Z 向每段只降一小段, 确保夹爪全程贴着物体推进, 落位时不会戳偏.
-        # 不用单航点笛卡尔直线 (Piper 在悬停→近桌面扩展位形下无法维持, 规划度仅 1-2%).
-        DESCENT_STAGES = 4  # 下降段数 (3-4 段)
+        # ── 3. 连续航点笛卡尔整条跟踪曲线 (方案 B): 生成随时间前移的航点, 一次规划整条斜线下降 ──
+        # 根因 (日志3定量): 分段式"到点→停下→算下段 IK→再启动 MoveIt"每段间有 0.3-0.5s
+        # 计算/启动死区, 4 段累积 ~1.5-2s "追不上"窗口, 机械臂 y 均速低于物体速度 → 落后.
+        # 方案 B: 生成 CARTO_N 个航点, 每点 xy = 物体在其"经时刻"的预测位置, z 从悬停到
+        # grasp_z 等分, 一次 GetCartesianPath 规划出整条连续斜线, MoveIt 连续执行使 y 持续
+        # 前移匹配物体速度 → 既消除落后也消除卡顿. 姿态全程用 PCA 短轴候选 (径向直下).
+        CARTO_N = 10            # 航点数 (越多越贴近物体轨迹, 也越慢规划)
+        DESCENT_TOTAL = 3.0     # 整条下降预计耗时 (s), 用于航点时间序列 (需标定)
         self._dynamic_disable_conveyor_collision()
-        # 各段结束 z 高度 (从 z_shadow 到 grasp_z 等分)
-        z_levels = np.linspace(z_shadow, grasp_z, DESCENT_STAGES + 1)[1:]
-        descent_ok = True
-        gx, gy = 0.0, 0.0
-        for _si, z_target in enumerate(z_levels, start=1):
-            # 每段下降前重新获取目标最新位置并追踪对齐
-            xy_seg = self._dynamic_current_xy(pick_id)
-            if xy_seg is not None:
-                x_now, y_now, t_meas = xy_seg
-                self._predictor.add_measurement(t_meas, x_now, y_now)
-            t_seg = time.time()
-            # 段前瞻: 中间段小前瞻跟随, 最后段用完整前瞻赶向拦截点
-            seg_lead = DESCENT_NOMINAL_S * (_si / DESCENT_STAGES)
-            seg_x, seg_y = self._predictor.predict(t_meas, x_now, y_now, t_seg + seg_lead)
-            gx, gy = seg_x, seg_y  # 末段即为最终拦截点, 供后续抬起使用
-            # 可达性预检 (RC-1): 预检点径向距离超限 → 不可达, 直接回退
-            if math.hypot(seg_x, seg_y) > DYNAMIC_R_MAX:
+        self._predictor.add_measurement(t_meas, x_now, y_now)
+        base_t = time.time()
+        zz = np.linspace(z_shadow, grasp_z, CARTO_N)
+        waypoints = []
+        for _i in range(CARTO_N):
+            t_wp = base_t + (_i / (CARTO_N - 1)) * DESCENT_TOTAL   # 该航点预计经由时刻
+            wpx, wpy = self._predictor.predict(t_meas, x_now, y_now, t_wp)  # 物体那时位置
+            wpx, wpy = float(wpx), float(wpy)
+            # 可达性预检 (RC-1): 任一点径向超限 → 整条不可达轨迹, 回退静态
+            if math.hypot(wpx, wpy) > DYNAMIC_R_MAX:
                 self.get_logger().warn(
-                    f"⚠️ 动态: 下降第{_si}段 R=√(x²+y²)={math.hypot(seg_x, seg_y):.3f} > "
+                    f"⚠️ 动态: 下降航点#{_i} R=√(x²+y²)={math.hypot(wpx, wpy):.3f} > "
                     f"{DYNAMIC_R_MAX}m, 超出工作空间, 回退静态")
-                descent_ok = False
-                break
-            # 目标姿态: 用该段抓取点生成的 PCA 短轴候选 (径向直下为首选)
-            orientations_seg = self._build_pick_orientations_multi({'x': seg_x, 'y': seg_y})
-            self.get_logger().info(
-                f"🎯 动态: 下降第{_si}/{DESCENT_STAGES}段 -> "
-                f"({seg_x:.3f},{seg_y:.3f},z={float(z_target):.3f}) 前瞻={seg_lead:.2f}s")
-            seg_ok = self.move_arm_pose(
-                {'x': seg_x, 'y': seg_y, 'z': float(z_target)}, f"动态-下降第{_si}段",
-                continuous=False, planning_mode='normal',
-                preferred_orientation=orientations_seg[0])
-            if not seg_ok:
-                self.get_logger().warn(f"⚠️ 动态: 下降第{_si}段 IK 失败")
-                descent_ok = False
-                break
+                self._dynamic_restore_conveyor_collision()
+                return False
+            ori_wp = self._build_pick_orientations_multi({'x': wpx, 'y': wpy})[0]
+            waypoints.append(self._create_pose(
+                {'x': wpx, 'y': wpy, 'z': float(zz[_i])}, ori_wp))
+            # 末点即最终拦截点, 供后续抬起使用
+            if _i == CARTO_N - 1:
+                gx, gy = wpx, wpy
+        self.get_logger().info(
+            f"🎯 动态: 连续笛卡尔下降 {CARTO_N} 航点 (z={z_shadow:.3f}→{grasp_z:.3f}), "
+            f"拦截点=({gx:.3f},{gy:.3f}) 预计耗时={DESCENT_TOTAL:.2f}s")
+        descent_ok = self.execute_cartesian_path(
+            waypoints, "动态-连续斜线下降", fraction_threshold=0.80)
         if not descent_ok:
             self._dynamic_restore_conveyor_collision()
-            self.get_logger().warn("⚠️ 动态: 渐进下降失败")
+            self.get_logger().warn("⚠️ 动态: 连续笛卡尔下降失败")
             return False
 
         # ⚠️⚠️ 空跑模式临时开关 (Task 7 Step 2): 只验证下降轨迹, 不夹取/不放料.
