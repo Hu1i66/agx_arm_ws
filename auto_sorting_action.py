@@ -1529,11 +1529,15 @@ class MoveItActionClient(Node):
                 'time': 3.0,
             })
 
-        self.get_logger().info(f"⚡ 开始并发计算 {len(planning_profiles)} 种位姿解...")
-        import asyncio
-        import concurrent.futures
+        # ⚠️ 禁用 MoveIt 并行求解: move_group 是单一规划器, 同时 call_async 多个请求
+        # 会互相抢占 BFM 线程/规划资源, 导致每个 profile 都超慢且通常全部失败.
+        # 改为串行: 按优先级逐个发送, 单请求等待完成后若不满足再尝试下一档 (更快速且稳定).
+        self.get_logger().info(f"⚡ 开始串行求解 {len(planning_profiles)} 种位姿解 (禁用并行)...")
 
-        futures = []
+        best_profile = None
+        best_trajectory = None
+
+        # 按优先级顺序 (0 为最严格/最优) 串行尝试
         for i, profile in enumerate(planning_profiles):
             req = GetMotionPlan.Request()
             req.motion_plan_request.workspace_parameters.header.stamp = self.get_clock().now().to_msg()
@@ -1562,53 +1566,52 @@ class MoveItActionClient(Node):
                 ori_tolerances=profile['ori_tol'],
             )
             req.motion_plan_request.goal_constraints.append(c)
-            # send fast async requests
-            f = self._plan_client.call_async(req)
-            futures.append((i, profile, f))
 
-        while rclpy.ok() and any(not f.done() for _, _, f in futures):
-            rclpy.spin_once(self, timeout_sec=0.01)
+            # 串行: 发送单个请求并等待其完成
+            future = self._plan_client.call_async(req)
+            while rclpy.ok() and not future.done():
+                rclpy.spin_once(self, timeout_sec=0.01)
+            res = future.result()
 
-        best_profile = None
-        best_trajectory = None
-        
-        # Sort by priority index (0 is best, most constrained)
-        for i, p, f in sorted(futures, key=lambda x: x[0]):
-            res = f.result()
-            if res and res.motion_plan_response.error_code.val == 1:
-                traj = res.motion_plan_response.trajectory
-                num_pts = len(traj.joint_trajectory.points)
-                if num_pts > 0:
-                    # ⚠️ 安全检查: 验证轨迹终点的末端 Z 轴朝下 (防朝上抓)
-                    # 安全兜底 profile 虽已约束 Z轴±45°, 但 MoveIt 偶尔返回超出容差的解;
-                    # 此 FK 检查作为最终硬防线: 拒绝末端 Z 轴 z分量 > -0.5 (倾斜>60°) 的轨迹.
-                    if self.enable_ik and self.ik_solver is not None and _pin is not None:
-                        try:
-                            last_pt = traj.joint_trajectory.points[-1]
-                            jm = dict(zip(traj.joint_trajectory.joint_names, last_pt.positions))
-                            # ⚠️ model.nq=8 (joint1-6 + gripper_joint1/2), 必须用 neutral 向量
-                            # 再按 joint_q_indices 填入 joint1-6, 否则 forwardKinematics 报
-                            # "wrong argument size: expected 8, got 6" → 安全检查失效
-                            q_full = _pin.neutral(self.ik_solver.model)
-                            for i, idx in enumerate(self.ik_solver.joint_q_indices):
-                                q_full[idx] = jm.get(f'joint{i}', 0.0)
-                            _pin.forwardKinematics(self.ik_solver.model, self.ik_solver.data, q_full)
-                            _pin.updateFramePlacements(self.ik_solver.model, self.ik_solver.data)
-                            ee_z = self.ik_solver.data.oMf[self.ik_solver.ee_frame_id].rotation[:, 2]
-                            if float(ee_z[2]) > -0.5:
-                                self.get_logger().error(
-                                    f"⛔ 安全拒绝: profile '{p['name']}' 轨迹终点末端 Z 轴朝上 "
-                                    f"(z分量={float(ee_z[2]):.2f}, 需<-0.5 防朝上抓), 跳过此 profile"
-                                )
-                                continue
-                        except Exception as _e:
-                            self.get_logger().warn(f"轨迹姿态安全检查异常 ({_e}), 谨慎放行")
-                    best_profile = p
-                    best_trajectory = traj
-                    break
+            if not (res and res.motion_plan_response.error_code.val == 1):
+                self.get_logger().info(f"⏳ 串行: profile '{profile['name']}' 未解得, 尝试下一档")
+                continue
+
+            traj = res.motion_plan_response.trajectory
+            if len(traj.joint_trajectory.points) == 0:
+                self.get_logger().info(f"⏳ 串行: profile '{profile['name']}' 返回空轨迹, 尝试下一档")
+                continue
+
+            # ⚠️ 安全检查: 验证轨迹终点的末端 Z 轴朝下 (防朝上抓)
+            # 安全兜底 profile 虽已约束 Z轴±45°, 但 MoveIt 偶尔返回超出容差的解;
+            # 此 FK 检查作为最终硬防线: 拒绝末端 Z 轴 z分量 > -0.5 (倾斜>60°) 的轨迹.
+            if self.enable_ik and self.ik_solver is not None and _pin is not None:
+                try:
+                    last_pt = traj.joint_trajectory.points[-1]
+                    jm = dict(zip(traj.joint_trajectory.joint_names, last_pt.positions))
+                    # ⚠️ model.nq=8 (joint1-6 + gripper_joint1/2), 必须用 neutral 向量
+                    # 再按 joint_q_indices 填入 joint1-6, 否则 forwardKinematics 报
+                    # "wrong argument size: expected 8, got 6" → 安全检查失效
+                    q_full = _pin.neutral(self.ik_solver.model)
+                    for i, idx in enumerate(self.ik_solver.joint_q_indices):
+                        q_full[idx] = jm.get(f'joint{i}', 0.0)
+                    _pin.forwardKinematics(self.ik_solver.model, self.ik_solver.data, q_full)
+                    _pin.updateFramePlacements(self.ik_solver.model, self.ik_solver.data)
+                    ee_z = self.ik_solver.data.oMf[self.ik_solver.ee_frame_id].rotation[:, 2]
+                    if float(ee_z[2]) > -0.5:
+                        self.get_logger().error(
+                            f"⛔ 安全拒绝: profile '{profile['name']}' 轨迹终点末端 Z 轴朝上 "
+                            f"(z分量={float(ee_z[2]):.2f}, 需<-0.5 防朝上抓), 跳过此 profile"
+                        )
+                        continue
+                except Exception as _e:
+                    self.get_logger().warn(f"轨迹姿态安全检查异常 ({_e}), 谨慎放行")
+            best_profile = profile
+            best_trajectory = traj
+            break
 
         if best_profile is not None:
-            self.get_logger().info(f"\x1b[32m🎉 并发计算成功！选用最优解策略: {best_profile['name']}\x1b[0m")
+            self.get_logger().info(f"\x1b[32m🎉 串行求解成功！选用最优解策略: {best_profile['name']}\x1b[0m")
             # 所有 profile 现在都有非 None orientation (安全兜底也已约束为朝下姿态),
             # 直接写入 last_successful_orientation 供后续下降抓取使用
             if best_profile['orientation'] is not None:
