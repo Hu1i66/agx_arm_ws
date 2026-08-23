@@ -2853,7 +2853,13 @@ def main():
             f"📐 动态 夹持点 clamping_z={clamping_z:.3f}m (质心顶面) → "
             f"link6_z={grasp_z:.3f}m, 手指底部≈{(grasp_z - 0.1358)*1000:.0f}mm (台面=0)")
 
-        # ── 2. 影子点 (横向对齐): 目标 = 预测位置 + v*SHADOW_LEAD_S 前瞻 ──
+        # ── 2. 影子点计算 (合并进追踪轨迹起点, 不再单独慢速 move_arm_pose) ──
+        # ── 重要架构重构 (全链路实时逐点追踪) ──
+        # 根因 (最新日志 6250 轮定量): 独立影子对齐用 move_arm_pose 走 Pinocchio IK→move_arm_joint,
+        # IK 超时 ~2.55s + 执行 ~1.56s ≈ 4.1s, 期间物体 0.0278m/s 前移 ~11cm, 而影子点仅前瞻 1.0s≈2.8cm
+        # → 机械臂到位时已落后 ~7cm, 且此落后发生在"下降之前", 改下降段 DESCENT_TOTAL/DELTA 无法补偿.
+        # 解法: 删除独立影子对齐, 影子点作为追踪轨迹的第0帧起点, 从机械臂当前姿态直接逐点下探,
+        # 全程 warm-start 连续 IK + 一次 FollowJointTrajectory 下发 → 总延迟 4.1s 降至 ~1.6s.
         t_shadow = time.time()
         self._predictor.add_measurement(t_meas, x_now, y_now)
         sx, sy = self._predictor.predict(t_meas, x_now, y_now, t_shadow + SHADOW_LEAD_S)
@@ -2865,14 +2871,8 @@ def main():
                 f"超出工作空间, 回退静态")
             return False
         self.get_logger().info(
-            f"🎯 动态: 影子点=({sx:.3f},{sy:.3f},z={z_shadow:.3f}) 速度={v:.4f} m/s")
-        shadow_ok = self.move_arm_pose(
-            {'x': sx, 'y': sy, 'z': z_shadow},
-            "动态-影子对齐", continuous=False, planning_mode='normal',
-            preferred_orientation=self._build_pick_orientation({'x': sx, 'y': sy})[0])
-        if not shadow_ok:
-            self.get_logger().warn("⚠️ 动态: 影子点运动失败")
-            return False
+            f"🎯 动态: 影子点=({sx:.3f},{sy:.3f},z={z_shadow:.3f}) 速度={v:.4f} m/s "
+            f"(作为追踪轨迹起点, 不再单独对齐)")
 
         # ── 3. 关节空间连续多航点轨迹 (方案 X): 逐航点 Pinocchio IK → 一次整条 JointTrajectory 下发 ──
         # 根因 (日志4 定量): 连续笛卡尔 GetCartesianPath 在 Piper 悬停(z=0.32)->近桌面(z≈0.109)
@@ -2885,10 +2885,10 @@ def main():
                                 # = 下降期间前进 0.082m 远超前瞻 0.6s (≈0.016m) → 落后 5cm.
                                 # 缩至 1.5s 下探快一倍, 物体移动减半 (~4cm), 配合前瞻可追上.
                                 # 关节速度上限 5rad/s, 1.5s 下探 0.21m 足够, 不会 -4. (需标定)
-        DELTA_INTERCEPT_S = 0.6  # 额外拦截前瞻偏置 (s): 补偿"影子对齐→10次IK求解→轨迹下发"与
-                                 # 机械臂实际到位之间的规划-执行延迟差, 让拦截点在物体前缘.
-                                 # 物体 0.027m/s*0.6s≈0.016m 前移, 配合 DESCENT_TOTAL(1.5s) 覆盖的
-                                 # ~4cm, 总超前 ~5.6cm 抵消下降期移动, 目标控制落后<1cm. (需标定)
+        DELTA_INTERCEPT_S = 0.0  # 额外拦截前瞻偏置 (s). 合并影子+下降为单条追踪后, 机械臂立
+                                 # 即开始下探 (不再有 4.1s 影子延迟), base_t 即动作真实起始时刻,
+                                 # 无需额外偏置; 仅 DESCENT_TOTAL=1.5s 覆盖下探期物体前移即可.
+                                 # 若仍落后, 增大此值 (0.1~0.3); 若超前过头, 保持 0. (需标定)
         self._dynamic_disable_conveyor_collision()
         self._predictor.add_measurement(t_meas, x_now, y_now)
         base_t = time.time()
