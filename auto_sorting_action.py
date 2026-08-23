@@ -1027,7 +1027,8 @@ class MoveItActionClient(Node):
         msg.position = [float(v) for v in joint6]
         self._move_js_pub.publish(msg)
 
-    def _stream_track_to(self, pick_id, gx, gy, grasp_z, n_steps=6, step_dur=0.15):
+    def _stream_track_to(self, pick_id, gx, gy, grasp_z, z_start=None,
+                         n_steps=8, step_dur=0.12):
         """流式实时追踪下降: 从当前姿态分 n_steps 步边动边跟匀速物体.
 
         根治 (日志6 定量): 预解 IK 需 2-3s, 期间物体前进 6-8cm → 无论前瞻多少都落后.
@@ -1038,6 +1039,7 @@ class MoveItActionClient(Node):
             pick_id: 物体名
             gx, gy: 拦截点 (物体到位时刻位置)
             grasp_z: 抓取高度 (link6 z)
+            z_start: 起始高度 (悬停高度), 默认用当前关节 FK 估计; 传入 z_shadow 避免访问名空间常量
             n_steps: 下降步数
             step_dur: 每步间隔 (s)
         Returns:
@@ -1048,8 +1050,8 @@ class MoveItActionClient(Node):
         warm_q = None
         if self.current_joints:
             warm_q = np.array([self.current_joints.get(f'joint{i}', 0.0) for i in range(1, 7)])
-        # 起始高度: 当前实际 z (近似 P_HOVER), 逐段降到 grasp_z
-        z_now = P_HOVER_POSE['z']
+        # 起始高度: 用传入 z_start (悬停), 无法访问 main() 局部 P_HOVER_POSE
+        z_now = float(z_start) if z_start is not None else (0.32 if warm_q is None else float(grasp_z) + 0.21)
         gx_f, gy_f = float(gx), float(gy)
         self._dynamic_disable_conveyor_collision()
         last_tx, last_ty = gx_f, gy_f
@@ -2993,8 +2995,9 @@ def main():
             return False
         # 流式实时追踪下降 (从悬停 → grasp_z)
         gx, gy = sx, sy  # 初始拦截点=悬停点, 流式内部每步实时更新, 返回最终抓取点
-        fx, fy, descent_ok = self._stream_track_to(pick_id, sx, sy, grasp_z,
-                                                   n_steps=8, step_dur=0.12)
+        fx, fy, descent_ok = self._stream_track_to(
+            pick_id, sx, sy, grasp_z, z_start=z_shadow,
+            n_steps=8, step_dur=0.12)
         if not descent_ok:
             self.get_logger().warn("⚠️ 动态: 流式追踪下降失败")
             return False
