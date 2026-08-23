@@ -296,6 +296,9 @@ class MoveItActionClient(Node):
         # → 打包成整条 JointTrajectory → 一次下发 arm_controller, 既消除笛卡尔奇异性又消分段死区.
         self._arm_jt_client = ActionClient(self, FollowJointTrajectory, '/arm_controller/follow_joint_trajectory')
         self._joint_states_pub = self.create_publisher(JointState, '/control/joint_states', 10)
+        # 流式实时追踪 (方案①): 发布关节角度到底层 /control/move_js, 底层 agx_arm_ctrl_single_node
+        # 做平滑流线运动并即时跟踪, 不经过 MoveIt 规划. 用于"边动边跟"匀速物体, 根治预解IK延迟.
+        self._move_js_pub = self.create_publisher(JointState, '/control/move_js', 10)
         # PlanningScene diff 话题发布器：用于临时禁用/恢复 control_box 等碰撞体的碰撞检测
         # 通过 AllowedCollisionMatrix (ACM) diff 实现，不影响场景中物体的实际存在
         self._planning_scene_pub = self.create_publisher(PlanningSceneMsg, '/planning_scene', 10)
@@ -987,6 +990,105 @@ class MoveItActionClient(Node):
         err = result.error_code if result else "None"
         self.get_logger().error(f"❌ 轨迹执行失败, 错误码 {err}")
         return False
+
+    def _solve_single_ik(self, target_pos, ori_wp, warm_q):
+        """对流式追踪: 实时解 1 个 IK (当前关节 warm start, 快速). 返回 (best_q or None, best_err)."""
+        if self.ik_solver is None:
+            return None, float('inf')
+        if isinstance(ori_wp, Quaternion):
+            q_quat = np.array([ori_wp.x, ori_wp.y, ori_wp.z, ori_wp.w])
+        else:
+            q_quat = np.array([float(ori_wp[0]), float(ori_wp[1]), float(ori_wp[2]), float(ori_wp[3])])
+        seeds = []
+        if warm_q is not None:
+            seeds.append(np.asarray(warm_q, dtype=float))
+        seeds.append(np.zeros(6))
+        if warm_q is not None:
+            for _ in range(3):
+                seeds.append((np.asarray(warm_q) + np.random.uniform(-0.5, 0.5, 6)).astype(float))
+        for _ in range(2):
+            seeds.append(np.random.uniform(-np.pi, np.pi, 6).astype(float))
+        best_q, best_err = None, float('inf')
+        for _sd in seeds:
+            ok, q_sol, err, _ct = self.ik_solver.get_ik_solution(
+                target_pos, q_quat, initial_guess=_sd)
+            if ok and err < best_err:
+                best_err = err
+                best_q = list(q_sol)
+                if err < 0.012:
+                    break
+        return best_q, best_err
+
+    def _publish_move_js(self, joint6):
+        """发布 6 关节角到底层 /control/move_js (平滑流线追踪, 不经过 MoveIt)."""
+        msg = JointState()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.name = ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6']
+        msg.position = [float(v) for v in joint6]
+        self._move_js_pub.publish(msg)
+
+    def _stream_track_to(self, pick_id, gx, gy, grasp_z, n_steps=6, step_dur=0.15):
+        """流式实时追踪下降: 从当前姿态分 n_steps 步边动边跟匀速物体.
+
+        根治 (日志6 定量): 预解 IK 需 2-3s, 期间物体前进 6-8cm → 无论前瞻多少都落后.
+        本方法改为: 每步读取物体最新位置 → 实时解 1 个 IK (warm start, 几十 ms) → move_js 下发,
+        底层平滑流线运动 → 机械臂边降边实时跟踪, 误差只累积每步几十 ms, 永不失步.
+
+        Args:
+            pick_id: 物体名
+            gx, gy: 拦截点 (物体到位时刻位置)
+            grasp_z: 抓取高度 (link6 z)
+            n_steps: 下降步数
+            step_dur: 每步间隔 (s)
+        Returns:
+            (fx, fy, ok): 最终抓取点 (x, y) 与成功标志 (None,None,False 表示失败)
+        """
+        import math as _m
+        # 当前关节作为 warm start 起点
+        warm_q = None
+        if self.current_joints:
+            warm_q = np.array([self.current_joints.get(f'joint{i}', 0.0) for i in range(1, 7)])
+        # 起始高度: 当前实际 z (近似 P_HOVER), 逐段降到 grasp_z
+        z_now = P_HOVER_POSE['z']
+        gx_f, gy_f = float(gx), float(gy)
+        self._dynamic_disable_conveyor_collision()
+        last_tx, last_ty = gx_f, gy_f
+        for _s in range(1, n_steps + 1):
+            # 每步 z 目标 (线性下探)
+            z_t = z_now + (grasp_z - z_now) * (_s / n_steps)
+            # 每步重新读取物体最新位置, 实时预测到位位置
+            xy_s = self._dynamic_current_xy(pick_id)
+            if xy_s is not None:
+                xm, ym, tm = xy_s
+                self._predictor.add_measurement(tm, xm, ym)
+            else:
+                xm, ym, tm = gx_f, gy_f, time.time()
+            t_now = time.time()
+            # 该步到位时刻 ≈ t_now + step_dur*(剩余步加权), 用前瞻补偿; 物体按此预测
+            tx, ty = self._predictor.predict(tm, xm, ym, t_now + step_dur * _m.sqrt(_s / n_steps))
+            target_pos = np.array([float(tx), float(ty), float(z_t)])
+            # 实时 IK
+            ori_wp = self._build_pick_orientations_multi({'x': tx, 'y': ty})[0]
+            best_q, best_err = self._solve_single_ik(target_pos, ori_wp, warm_q)
+            if best_q is None:
+                self.get_logger().warn(
+                    f"⚠️ 流式: 第{_s}步 ({tx:.3f},{ty:.3f},z={z_t:.3f}) IK 无解, 回退静态")
+                self._dynamic_restore_conveyor_collision()
+                return None, None, False
+            # move_js 下发这一步
+            self._publish_move_js(best_q)
+            self.get_logger().info(
+                f"🎯 流式 第{_s}/{n_steps}步 -> ({float(tx):.3f},{float(ty):.3f},z={float(z_t):.3f}) err={best_err:.4f}")
+            last_tx, last_ty = float(tx), float(ty)
+            warm_q = np.asarray(best_q, dtype=float)
+            # 短暂等待让底层执行这一步 (流式, 不阻塞 MoveIt 同步)
+            ts = time.time()
+            while time.time() - ts < step_dur:
+                rclpy.spin_once(self, timeout_sec=0.02)
+                if not rclpy.ok():
+                    self._dynamic_restore_conveyor_collision()
+                    return None, None, False
+        return last_tx, last_ty, True
 
     @staticmethod
     def _normalize(v):
@@ -2874,89 +2976,29 @@ def main():
             f"🎯 动态: 影子点=({sx:.3f},{sy:.3f},z={z_shadow:.3f}) 速度={v:.4f} m/s "
             f"(作为追踪轨迹起点, 不再单独对齐)")
 
-        # ── 3. 关节空间连续多航点轨迹 (方案 X): 逐航点 Pinocchio IK → 一次整条 JointTrajectory 下发 ──
-        # 根因 (日志4 定量): 连续笛卡尔 GetCartesianPath 在 Piper 悬停(z=0.32)->近桌面(z≈0.109)
-        # 扩展位形下刚性直线奇异性, 完整度 0.0%-0.2% 全失败. 但同区逐航点 Pinocchio IK 100% 可达
-        # (offline_verify_jointspace_multiwaypoint.py: 10/10, err 0.002-0.009). 方案 X: 生成随时间
-        # 前移的航点 (xy=物体经时刻预测位置, z 线性下探), 逐点解关节角, 打包成一条 JointTrajectory
-        # 一次下发 arm_controller. 既消除笛卡尔奇异性(全失败), 又无边死区(落后), 且 y 持续前移(跟速).
-        CARTO_N = 10            # 航点数 (越多越贴近物体轨迹, 也越长轨迹)
-        DESCENT_TOTAL = 1.5     # 整条下降预计耗时 (s). 日志5: 原 3.0s 太慢, 物体 0.027m/s*3.05s
-                                # = 下降期间前进 0.082m 远超前瞻 0.6s (≈0.016m) → 落后 5cm.
-                                # 缩至 1.5s 下探快一倍, 物体移动减半 (~4cm), 配合前瞻可追上.
-                                # 关节速度上限 5rad/s, 1.5s 下探 0.21m 足够, 不会 -4. (需标定)
-        DELTA_INTERCEPT_S = 0.0  # 额外拦截前瞻偏置 (s). 合并影子+下降为单条追踪后, 机械臂立
-                                 # 即开始下探 (不再有 4.1s 影子延迟), base_t 即动作真实起始时刻,
-                                 # 无需额外偏置; 仅 DESCENT_TOTAL=1.5s 覆盖下探期物体前移即可.
-                                 # 若仍落后, 增大此值 (0.1~0.3); 若超前过头, 保持 0. (需标定)
+        # ── 3. 流式实时追踪下降 (方案①): 到位悬停 → 边降边实时IK+move_js ──
+        # 根治 (日志6 定量): 预解 IK 需 2-3s, 期间物体前进 6-8cm → 无论前瞻多少都落后.
+        # 本方案: 先一次 move_arm_pose 到位物体正上方 (悬停), 再 _stream_track_to 分步
+        # 逐点读物体实时位置→解 1 个 IK→move_js 下发, 底层平滑流线跟踪, 误差只累积几十ms.
+        # 流式下探 z 从悬停到 grasp_z, 每步 xy 用物体最新位置实时预测, 永不失步.
         self._dynamic_disable_conveyor_collision()
-        self._predictor.add_measurement(t_meas, x_now, y_now)
-        base_t = time.time()
-        # warm start: 用当前关节角作首航点种子, 保证第0点即伸展构型 (消除待机→伸展首跳)
-        warm_q = None
-        if self.current_joints:
-            warm_q = np.array([self.current_joints.get(f'joint{i}', 0.0) for i in range(1, 7)])
-        standby_q = np.zeros(6)
-        zz = np.linspace(z_shadow, grasp_z, CARTO_N)
-        joint_waypoints = []
-        seg_dur = DESCENT_TOTAL / CARTO_N
-        gx, gy = 0.0, 0.0
-        for _i in range(CARTO_N):
-            # 航点经时刻 = 轨道起点 + 覆盖下降耗时 + 额外拦截偏置 (整体前移, 追到物体前缘)
-            t_wp = base_t + (_i / (CARTO_N - 1)) * DESCENT_TOTAL + DELTA_INTERCEPT_S
-            wpx, wpy = self._predictor.predict(t_meas, x_now, y_now, t_wp)  # 物体那时位置
-            wpx, wpy = float(wpx), float(wpy)
-            # 可达性预检 (RC-1): 任一点径向超限 → 整条不可达, 回退静态
-            if math.hypot(wpx, wpy) > DYNAMIC_R_MAX:
-                self.get_logger().warn(
-                    f"⚠️ 动态: 下降航点#{_i} R=√(x²+y²)={math.hypot(wpx, wpy):.3f} > "
-                    f"{DYNAMIC_R_MAX}m, 超出工作空间, 回退静态")
-                self._dynamic_restore_conveyor_collision()
-                return False
-            # 主姿态候选: PCA 短轴径向直下 (与生产 move_arm_via_ik 一致)
-            ori_wp = self._build_pick_orientations_multi({'x': wpx, 'y': wpy})[0]
-            if isinstance(ori_wp, Quaternion):
-                q_quat = np.array([ori_wp.x, ori_wp.y, ori_wp.z, ori_wp.w])
-            else:
-                q_quat = np.array([float(ori_wp[0]), float(ori_wp[1]), float(ori_wp[2]), float(ori_wp[3])])
-            target_pos = np.array([wpx, wpy, float(zz[_i])])
-            # 多种子求解 (镜像 move_arm_via_ik): warm start → 待机 → 大偏移 → 全随机, 取最优
-            seeds = []
-            if warm_q is not None:
-                seeds.append(warm_q.astype(float))
-            seeds.append(standby_q.astype(float))
-            if warm_q is not None:
-                for _ in range(3):
-                    seeds.append((warm_q + np.random.uniform(-0.5, 0.5, 6)).astype(float))
-            for _ in range(2):
-                seeds.append(np.random.uniform(-np.pi, np.pi, 6).astype(float))
-            best_q, best_err = None, float('inf')
-            for _sd in seeds:
-                ok, q_sol, err, _ct = self.ik_solver.get_ik_solution(
-                    target_pos, q_quat, initial_guess=_sd)
-                if ok and err < best_err:
-                    best_err = err
-                    best_q = list(q_sol)
-                    if err < 0.010:
-                        break
-            if best_q is None:
-                self.get_logger().warn(
-                    f"⚠️ 动态: 下降航点#{_i} ({wpx:.3f},{wpy:.3f},z={float(zz[_i]):.3f}) IK 无解, 回退静态")
-                self._dynamic_restore_conveyor_collision()
-                return False
-            joint_waypoints.append(best_q)
-            warm_q = np.asarray(best_q, dtype=float)  # warm start 下一航点
-            if _i == CARTO_N - 1:
-                gx, gy = wpx, wpy
-        self.get_logger().info(
-            f"🎯 动态: 关节空间连续下降 {CARTO_N} 航点 (z={z_shadow:.3f}→{grasp_z:.3f}), "
-            f"拦截点=({gx:.3f},{gy:.3f}) 每段={seg_dur:.2f}s, 总量={DESCENT_TOTAL:.2f}s")
-        descent_ok = self.execute_multiwaypoint_joint_trajectory(
-            joint_waypoints, "动态-关节空间连续下降", per_point_dur=seg_dur)
-        if not descent_ok:
+        # 先到位悬停: 物体上方 (一次 move_arm_pose, 其后立即流式, 无长时间不动窗口)
+        ori_shadow = self._build_pick_orientation({'x': sx, 'y': sy})[0]
+        hover_ok = self.move_arm_pose(
+            {'x': sx, 'y': sy, 'z': z_shadow}, "动态-到位悬停",
+            continuous=False, planning_mode='normal', preferred_orientation=ori_shadow)
+        if not hover_ok:
             self._dynamic_restore_conveyor_collision()
-            self.get_logger().warn("⚠️ 动态: 关节空间连续下降失败")
+            self.get_logger().warn("⚠️ 动态: 到位悬停失败, 回退静态")
             return False
+        # 流式实时追踪下降 (从悬停 → grasp_z)
+        gx, gy = sx, sy  # 初始拦截点=悬停点, 流式内部每步实时更新, 返回最终抓取点
+        fx, fy, descent_ok = self._stream_track_to(pick_id, sx, sy, grasp_z,
+                                                   n_steps=8, step_dur=0.12)
+        if not descent_ok:
+            self.get_logger().warn("⚠️ 动态: 流式追踪下降失败")
+            return False
+        gx, gy = fx, fy  # 更新为流式末端实际抓取点, 供抬起/放置使用
 
         # ⚠️⚠️ 空跑模式临时开关 (Task 7 Step 2): 只验证下降轨迹, 不夹取/不放料.
         # 用后请删除本段, 恢复真实夹取流程. 对照相机画面检查下降目标点
