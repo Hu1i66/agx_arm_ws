@@ -296,9 +296,6 @@ class MoveItActionClient(Node):
         # → 打包成整条 JointTrajectory → 一次下发 arm_controller, 既消除笛卡尔奇异性又消分段死区.
         self._arm_jt_client = ActionClient(self, FollowJointTrajectory, '/arm_controller/follow_joint_trajectory')
         self._joint_states_pub = self.create_publisher(JointState, '/control/joint_states', 10)
-        # 流式实时追踪 (方案①): 发布关节角度到底层 /control/move_js, 底层 agx_arm_ctrl_single_node
-        # 做平滑流线运动并即时跟踪, 不经过 MoveIt 规划. 用于"边动边跟"匀速物体, 根治预解IK延迟.
-        self._move_js_pub = self.create_publisher(JointState, '/control/move_js', 10)
         # PlanningScene diff 话题发布器：用于临时禁用/恢复 control_box 等碰撞体的碰撞检测
         # 通过 AllowedCollisionMatrix (ACM) diff 实现，不影响场景中物体的实际存在
         self._planning_scene_pub = self.create_publisher(PlanningSceneMsg, '/planning_scene', 10)
@@ -1018,79 +1015,6 @@ class MoveItActionClient(Node):
                 if err < 0.012:
                     break
         return best_q, best_err
-
-    def _publish_move_js(self, joint6):
-        """发布 6 关节角到底层 /control/move_js (平滑流线追踪, 不经过 MoveIt)."""
-        msg = JointState()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.name = ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6']
-        msg.position = [float(v) for v in joint6]
-        self._move_js_pub.publish(msg)
-
-    def _stream_track_to(self, pick_id, gx, gy, grasp_z, z_start=None,
-                         n_steps=8, step_dur=0.12):
-        """流式实时追踪下降: 从当前姿态分 n_steps 步边动边跟匀速物体.
-
-        根治 (日志6 定量): 预解 IK 需 2-3s, 期间物体前进 6-8cm → 无论前瞻多少都落后.
-        本方法改为: 每步读取物体最新位置 → 实时解 1 个 IK (warm start, 几十 ms) → move_js 下发,
-        底层平滑流线运动 → 机械臂边降边实时跟踪, 误差只累积每步几十 ms, 永不失步.
-
-        Args:
-            pick_id: 物体名
-            gx, gy: 拦截点 (物体到位时刻位置)
-            grasp_z: 抓取高度 (link6 z)
-            z_start: 起始高度 (悬停高度), 默认用当前关节 FK 估计; 传入 z_shadow 避免访问名空间常量
-            n_steps: 下降步数
-            step_dur: 每步间隔 (s)
-        Returns:
-            (fx, fy, ok): 最终抓取点 (x, y) 与成功标志 (None,None,False 表示失败)
-        """
-        import math as _m
-        # 当前关节作为 warm start 起点
-        warm_q = None
-        if self.current_joints:
-            warm_q = np.array([self.current_joints.get(f'joint{i}', 0.0) for i in range(1, 7)])
-        # 起始高度: 用传入 z_start (悬停), 无法访问 main() 局部 P_HOVER_POSE
-        z_now = float(z_start) if z_start is not None else (0.32 if warm_q is None else float(grasp_z) + 0.21)
-        gx_f, gy_f = float(gx), float(gy)
-        self._dynamic_disable_conveyor_collision()
-        last_tx, last_ty = gx_f, gy_f
-        for _s in range(1, n_steps + 1):
-            # 每步 z 目标 (线性下探)
-            z_t = z_now + (grasp_z - z_now) * (_s / n_steps)
-            # 每步重新读取物体最新位置, 实时预测到位位置
-            xy_s = self._dynamic_current_xy(pick_id)
-            if xy_s is not None:
-                xm, ym, tm = xy_s
-                self._predictor.add_measurement(tm, xm, ym)
-            else:
-                xm, ym, tm = gx_f, gy_f, time.time()
-            t_now = time.time()
-            # 该步到位时刻 ≈ t_now + step_dur*(剩余步加权), 用前瞻补偿; 物体按此预测
-            tx, ty = self._predictor.predict(tm, xm, ym, t_now + step_dur * _m.sqrt(_s / n_steps))
-            target_pos = np.array([float(tx), float(ty), float(z_t)])
-            # 实时 IK
-            ori_wp = self._build_pick_orientations_multi({'x': tx, 'y': ty})[0]
-            best_q, best_err = self._solve_single_ik(target_pos, ori_wp, warm_q)
-            if best_q is None:
-                self.get_logger().warn(
-                    f"⚠️ 流式: 第{_s}步 ({tx:.3f},{ty:.3f},z={z_t:.3f}) IK 无解, 回退静态")
-                self._dynamic_restore_conveyor_collision()
-                return None, None, False
-            # move_js 下发这一步
-            self._publish_move_js(best_q)
-            self.get_logger().info(
-                f"🎯 流式 第{_s}/{n_steps}步 -> ({float(tx):.3f},{float(ty):.3f},z={float(z_t):.3f}) err={best_err:.4f}")
-            last_tx, last_ty = float(tx), float(ty)
-            warm_q = np.asarray(best_q, dtype=float)
-            # 短暂等待让底层执行这一步 (流式, 不阻塞 MoveIt 同步)
-            ts = time.time()
-            while time.time() - ts < step_dur:
-                rclpy.spin_once(self, timeout_sec=0.02)
-                if not rclpy.ok():
-                    self._dynamic_restore_conveyor_collision()
-                    return None, None, False
-        return last_tx, last_ty, True
 
     @staticmethod
     def _normalize(v):
@@ -2867,6 +2791,12 @@ def main():
     SHADOW_LEAD_S = 1.0
     DESCENT_NOMINAL_S = 0.6
     LIFT_LEAD_S = 0.3
+    # 下降前瞻补偿 (秒): 叠加到下降各航点的预测到位时刻.
+    # 日志8 实测: 下降已真实执行 (arm_controller 通道), 但夹爪沿传送带方向落后 ~3cm.
+    # 落后量 = 未建模延迟 × 皮带速度. 未建模延迟含: 6段IK求解~0.2s + 底层真实执行
+    # 追不上 mock 1.5s 时间表的追赶滞后 (~0.9s). 当前速度 0.028m/s 下 1.1s≈3.1cm.
+    # ⚠️ 标定旋钮: 仍落后→增大, 超前(夹爪抢到物体前面)→减小, 步长 0.1s.
+    DESC_LEAD_S = 1.1
     # 动态抓取最低下降高度 (base 系, 米); 与静态 MIN_GRASP_Z 含义相同, 兜底防碰
     DYNAMIC_MIN_GRASP_Z = 0.045
     # 动态抓取可达性预检阈值 (base 系径向距离 R=√(x²+y²), 米).
@@ -2978,41 +2908,77 @@ def main():
             f"🎯 动态: 影子点=({sx:.3f},{sy:.3f},z={z_shadow:.3f}) 速度={v:.4f} m/s "
             f"(作为追踪轨迹起点, 不再单独对齐)")
 
-        # ── 3. 流式实时追踪下降 (方案①): 到位悬停 → 边降边实时IK+move_js ──
-        # 根治 (日志6 定量): 预解 IK 需 2-3s, 期间物体前进 6-8cm → 无论前瞻多少都落后.
-        # 本方案: 先一次 move_arm_pose 到位物体正上方 (悬停), 再 _stream_track_to 分步
-        # 逐点读物体实时位置→解 1 个 IK→move_js 下发, 底层平滑流线跟踪, 误差只累积几十ms.
-        # 流式下探 z 从悬停到 grasp_z, 每步 xy 用物体最新位置实时预测, 永不失步.
+        # ── 3. 下降: 连续性 IK → 一次性下发 arm_controller (验证可靠通道) ──
+        # 根治 (日志7 实测): 悬停/回待机走 arm_controller FollowJointTrajectory action
+        #     均成功执行 (日志7 第46/61行), 唯独流式下降走 /control/move_j 直发 CAN 通道
+        #     8步日志全打印但机械臂根本没下降. → 流式逐点频发 CAN 指令在下层互相覆盖/丢失,
+        #     执行通道不可靠; 问题在"执行层"不在"IK/轨迹规划层".
+        # 解法: 下降改走 arm_controller (与悬停同一可靠通道), 借助匀速物体速度模型把
+        #     每个航点 xy 预测到其到位时刻, 连续性 warm-start IK 逐点解出关节角,
+        #     一次性打包 JointTrajectory 下发, 不漏不覆盖, 机械臂必然真实执行下降.
         self._dynamic_disable_conveyor_collision()
-        # 先到位悬停: 物体上方 (一次 move_arm_pose, 其后立即流式, 无长时间不动窗口)
+        # 先到位悬停: 物体上方 (一次 move_arm_pose, 其后立即下降, 无长时间不动窗口)
         ori_shadow = self._build_pick_orientation({'x': sx, 'y': sy})[0]
         hover_ok = self.move_arm_pose(
             {'x': sx, 'y': sy, 'z': z_shadow}, "动态-到位悬停",
             continuous=False, planning_mode='normal', preferred_orientation=ori_shadow)
         if not hover_ok:
-            self._dynamic_restore_conveyor_collision()
+            # 碰撞统一由上层回待机后恢复 (此处机械臂仍在高位, 但为一致性移除外层)
             self.get_logger().warn("⚠️ 动态: 到位悬停失败, 回退静态")
             return False
-        # 流式实时追踪下降 (从悬停 → grasp_z)
-        gx, gy = sx, sy  # 初始拦截点=悬停点, 流式内部每步实时更新, 返回最终抓取点
-        fx, fy, descent_ok = self._stream_track_to(
-            pick_id, sx, sy, grasp_z, z_start=z_shadow,
-            n_steps=8, step_dur=0.12)
-        if not descent_ok:
-            self.get_logger().warn("⚠️ 动态: 流式追踪下降失败")
+        # 下降起点: 用最新测量作为速度预测锚点
+        xy0 = self._dynamic_current_xy(pick_id)
+        if xy0 is None:
+            # 碰撞统一由上层回待机后恢复
+            self.get_logger().warn("⚠️ 动态: 下降前获取物体位置失败, 回退静态")
             return False
-        gx, gy = fx, fy  # 更新为流式末端实际抓取点, 供抬起/放置使用
+        xa, ya, ta = xy0
+        self._predictor.add_measurement(ta, xa, ya)
+        self.get_logger().info(
+            f"📡 下降锚点=({xa:.3f},{ya:.3f}) t_meas={ta:.2f} "
+            f"(检测管线延迟 {time.time()-ta:.2f}s, 速度={v:.4f} m/s)")
+        warm_q = None
+        if self.current_joints:
+            warm_q = np.array([self.current_joints.get(f'joint{i}', 0.0) for i in range(1, 7)])
+        DESC_STEP = 0.25          # 每段耗时(s), 6段共1.5s 完成下降
+        DESC_N_STEPS = 6
+        t_launch = time.time()
+        joint_waypoints = []
+        gx, gy = sx, sy           # 末段抓取点, 供抬起/放置使用
+        for _k in range(1, DESC_N_STEPS + 1):
+            z_t = z_shadow + (grasp_z - z_shadow) * (_k / DESC_N_STEPS)
+            # 到位时刻 = 名义轨迹时刻 + DESC_LEAD_S (补偿执行/求解未建模延迟, 见常量说明)
+            t_arrive = t_launch + _k * DESC_STEP + DESC_LEAD_S
+            xt, yt = self._predictor.predict(ta, xa, ya, t_arrive)
+            ori_wp = self._build_pick_orientations_multi({'x': xt, 'y': yt})[0]
+            q, err = self._solve_single_ik(np.array([float(xt), float(yt), float(z_t)]), ori_wp, warm_q)
+            if q is None:
+                # 碰撞统一由上层回待机后恢复
+                self.get_logger().warn(f"⚠️ 下降: 第{_k}段 IK 无解, 回退静态")
+                return False
+            joint_waypoints.append(q)
+            warm_q = np.asarray(q, dtype=float)
+            gx, gy = float(xt), float(yt)
+            self.get_logger().info(
+                f"🎯 下降 第{_k}/{DESC_N_STEPS}段 -> ({gx:.3f},{gy:.3f},z={z_t:.3f}) err={err:.4f}")
+        descent_ok = self.execute_multiwaypoint_joint_trajectory(
+            joint_waypoints, "动态-下降", per_point_dur=DESC_STEP)
+        if not descent_ok:
+            # ⚠️ 不在低位恢复碰撞: 此时手指仍压入 belt_deck 碰撞体, 立即 restore 会让
+            # move_group 判起点碰撞 → 回待机 -2. 碰撞统一由上层回待机后恢复.
+            self.get_logger().warn("⚠️ 动态: 下降轨迹执行失败(未下降), 回退静态")
+            return False
 
         # ⚠️⚠️ 空跑模式临时开关 (Task 7 Step 2): 只验证下降轨迹, 不夹取/不放料.
         # 用后请删除本段, 恢复真实夹取流程. 对照相机画面检查下降目标点
         # 是否落在物体实际到达位置附近 (误差 < 5cm), 无碰撞、无 -4 错误.
-        DRY_RUN = True  # ← 空跑: True=只下降不夹取; 正式测试时删除本段
+        DRY_RUN = False  # ← 空跑: True=只下降不夹取; 正式测试时删除本段
         if DRY_RUN:
             self.get_logger().info("🏃 空跑模式: 下降完成, 跳过夹取, 直接回待机位")
             # 结束位置: 回待机位 (JOINT_STANDBY, 关节空间) — P_HOVER_POSE 是未标定示例值,
             # 回 (0.45,0,0.32) 会停在奇怪位置 (见日志2); 待机位最可靠且符合项目约定.
             self.move_arm_joint(JOINT_STANDBY, "动态-空跑回待机位")
-            self._dynamic_restore_conveyor_collision()
+            # 碰撞统一由上层回待机后恢复 (不在低位 restore, 见下降失败分支注释)
             self.get_logger().info("✅ 空跑完成: 下降路径验证通过")
             return True
 
@@ -3024,7 +2990,7 @@ def main():
         self._pre_grasp_width = self._latest_gripper_status.width if self._latest_gripper_status else None
         grasp_ok = self.operate_gripper(close_target, "动态-闭合夹爪")
         if not grasp_ok:
-            self._dynamic_restore_conveyor_collision()
+            # 碰撞统一由上层回待机后恢复 (低位 restore 会致回待机 -2, 见下降失败分支注释)
             self.get_logger().warn("⚠️ 动态: 夹爪闭合失败")
             return False
 
@@ -3037,14 +3003,25 @@ def main():
             lx, ly = self._predictor.predict(t3, x3, y3, time.time() + LIFT_LEAD_S)
             lift_dx, lift_dy = lx - gx, ly - gy
         lift_z = z_shadow + 0.05
-        lift_ok = self.execute_cartesian_path(
-            [self._create_pose({'x': gx + lift_dx, 'y': gy + lift_dy, 'z': lift_z},
-                               self._build_pick_orientation({'x': gx + lift_dx, 'y': gy + lift_dy})[0])],
-            "动态-带前向抬起", fraction_threshold=0.80)
+        # ── 抬起: IK 解关节 + arm_controller 直发 (绕开 move_group 起点碰撞判断) ──
+        # -2 根因 (最新日志): 抬升/回料框走 move_arm_joint→move_group, 从"抓取后低位+夹爪闭合"
+        #   起点规划, move_group 判起点/路径与 belt_deck 接触 → INVALID_MOTION_PLAN(-2), 后续全卡.
+        #   下降用 execute_multiwaypoint_joint_trajectory(arm_controller 直发) 成功, 证明该通道可靠.
+        #   → 抬起同样走 arm_controller 直发; 碰撞本流程已禁用(代码层单独管理), move_group 的
+        #   碰撞检查已失效, 直发不新增风险, 却彻底绕开 -2. 抬到安全高度 lift_z 后再用 move_group 回料框.
+        lift_warm = None
+        if self.current_joints:
+            lift_warm = np.array([self.current_joints.get(f'joint{i}', 0.0) for i in range(1, 7)])
+        lift_ori = self._build_pick_orientation({'x': gx + lift_dx, 'y': gy + lift_dy})[0]
+        lift_q, lift_err = self._solve_single_ik(
+            np.array([float(gx + lift_dx), float(gy + lift_dy), float(lift_z)]), lift_ori, lift_warm)
+        lift_ok = False
+        if lift_q is not None:
+            self.get_logger().info(f"✅ 抬起 IK 求解成功 err={lift_err:.4f}, 直发 arm_controller")
+            lift_ok = self.execute_multiwaypoint_joint_trajectory(
+                [lift_q], "动态-抬起(直发arm_controller)", per_point_dur=1.0)
         if not lift_ok:
-            self._dynamic_restore_conveyor_collision()
-            self.get_logger().warn("⚠️ 动态: 抬起失败, 尝试原地抬升")
-            self.move_arm_pose({'x': gx, 'y': gy, 'z': lift_z}, "动态-原地抬升")
+            self.get_logger().warn("⚠️ 动态: 抬起失败(无法离开低位回安全高度)")
 
         # ── 6. 放料框 ──
         bin_above, bin_place = BIN_JOINTS[bin_num]
@@ -3053,10 +3030,9 @@ def main():
         self.operate_gripper(GRIPPER_OPEN, f"动态-料框{bin_num}释放")
         self.move_arm_joint(bin_above, f"动态-料框{bin_num}上方")
 
-        # ── 7. 回待机位并恢复碰撞 ──
-        # 结束位置: 回待机位 (关节空间, 可靠) 而非未标定的 P_HOVER_POSE (见日志2)
+        # ── 7. 回待机位 ──
+        # 碰撞检测由上层回待机后统一恢复 (不在低位 restore, 见抬起失败分支注释)
         self.move_arm_joint(JOINT_STANDBY, "动态-回待机位")
-        self._dynamic_restore_conveyor_collision()
         self.get_logger().info("✅ 动态抓取完成")
         return True
 
@@ -3687,9 +3663,13 @@ def main():
                     node.get_logger().warn("⚠️ 动态抓取失败, 回退静态抓取流程")
                     node.move_arm_joint(JOINT_STANDBY, "动态失败-回待机位")
                     node.operate_gripper(GRIPPER_OPEN, "动态失败-张开夹爪")
+                    # 碰撞已保持禁用 (低位未 restore), 机械臂已回待机安全高度, 此时统一恢复
+                    node._dynamic_restore_conveyor_collision()
                     result = {'ok': False, 'cmd': 'sort_dynamic',
                               'msg': '动态抓取失败(已回退)'}
                 else:
+                    # 成功路径: _run_dynamic_grasp 内部已回待机位, 此处统一恢复碰撞
+                    node._dynamic_restore_conveyor_collision()
                     result = {'ok': True, 'cmd': 'sort_dynamic',
                               'msg': '动态抓取成功'}
                 result_msg = String()

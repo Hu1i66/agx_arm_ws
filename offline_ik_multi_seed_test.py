@@ -149,6 +149,8 @@ def main():
                     help='手动指定测试点 "x1,y1;x2,y2;..." (优先级最高, 覆盖回放)')
     ap.add_argument('--z', type=str, default='both',
                     choices=['both', 'shadow', 'grasp'], help='测试高度: both=影子+抓取, shadow=仅悬停, grasp=仅抓取')
+    ap.add_argument('--zval', type=float, default=None,
+                    help='显式指定抓取高度 (m), 覆盖 --z 的 grasp 计算值, 用于验证实际下降点可达性')
     args = ap.parse_args()
 
     if args.seed is not None:
@@ -206,7 +208,7 @@ def main():
         if args.z in ('both', 'shadow'):
             targets.append((f"影子Z={SHADOW_Z}", np.array([gx, gy, SHADOW_Z])))
         if args.z in ('both', 'grasp'):
-            gz = max(SHADOW_Z - GRASP_Z_OFFSET, DYNAMIC_MIN_GRASP_Z)
+            gz = args.zval if args.zval is not None else max(SHADOW_Z - GRASP_Z_OFFSET, DYNAMIC_MIN_GRASP_Z)
             targets.append((f"抓取Z={gz:.3f}", np.array([gx, gy, gz])))
 
         for label, pos in targets:
