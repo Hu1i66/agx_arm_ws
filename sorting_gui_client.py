@@ -406,8 +406,8 @@ def main():
             # ── 动态抓取模式 (传送带持续运行, 移动拦截) ──
             self.dynamic_mode = False
             self._dynamic_state = 'OFF'      # OFF/RUNNING/MISS_STOP/STOPPING
-            self._dynamic_trigger_line_u = 200   # 上游触发线: 物体越线进入跟踪区
-            self._dynamic_miss_line_u = 560      # 下游漏抓分界线 (可调): 越线即漏抓
+            self._dynamic_trigger_line_u = 130   # 上游触发线: 物体越线进入跟踪区
+            self._dynamic_miss_line_u = 510      # 下游漏抓分界线 (可调): 越线即漏抓
             self._dynamic_busy = False
             self._dyn_trig_line_id = None        # 上游触发线 canvas 线对象
             self._dyn_trig_label_id = None       # 上游触发线 canvas 文本对象
