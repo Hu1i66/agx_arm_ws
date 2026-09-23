@@ -407,12 +407,17 @@ def main():
             self.dynamic_mode = False
             self._dynamic_state = 'OFF'      # OFF/RUNNING/MISS_STOP/STOPPING
             self._dynamic_trigger_line_u = 130   # 上游触发线: 物体越线进入跟踪区
-            self._dynamic_miss_line_u = 510      # 下游漏抓分界线 (可调): 越线即漏抓
+            self._dynamic_miss_line_u = 510      # 漏抓放弃线 (可调): 越线即放弃抓取
+            self._dynamic_stop_line_u = 490      # 停带触发线 (视觉为主): 右侧识别到物体(u≥490)即停传送带
+            self._dynamic_abandon_ts = 0.0       # 上次放弃时间戳, 用于短忽略避免反复停带
+            self._dynamic_abandon_cooldown = 2.5 # 放弃后冷却 (s): 期间不再因该区物体反复停带
             self._dynamic_busy = False
             self._dyn_trig_line_id = None        # 上游触发线 canvas 线对象
             self._dyn_trig_label_id = None       # 上游触发线 canvas 文本对象
-            self._dyn_miss_line_id = None        # 下游漏抓分界线 canvas 线对象
-            self._dyn_miss_label_id = None       # 下游漏抓分界线 canvas 文本对象
+            self._dyn_miss_line_id = None        # 漏抓放弃线 canvas 线对象
+            self._dyn_miss_label_id = None       # 漏抓放弃线 canvas 文本对象
+            self._dyn_stop_line_id = None        # 停带触发线 canvas 线对象
+            self._dyn_stop_label_id = None       # 停带触发线 canvas 文本对象
             self._auto_sort_tick_id=None       # after 句柄
             self._conv_stop_retry=0            # 传送带停止重试计数
             self._conv_stopped_ts=0            # 传送带停止完成时间戳 (用于观察 1s 等物体静止)
@@ -1548,9 +1553,10 @@ def main():
             self.dyn_start_btn.config(state=tk.DISABLED)
             self.dyn_stop_btn.config(state=tk.NORMAL)
             self._set_manual_buttons_state(tk.DISABLED)
-            # 显示上游触发线与下游漏抓分界线
+            # 显示上游触发线、停带触发线、漏抓放弃线
             for cid in (self._dyn_trig_line_id, self._dyn_trig_label_id,
-                        self._dyn_miss_line_id, self._dyn_miss_label_id):
+                        self._dyn_miss_line_id, self._dyn_miss_label_id,
+                        self._dyn_stop_line_id, self._dyn_stop_label_id):
                 if cid is not None:
                     self.camera_canvas.itemconfig(cid, state='normal')
             self._auto_sort_log(f"动态抓取启动: 传送带持续运行, 移动拦截物体")
@@ -1623,9 +1629,10 @@ def main():
                         self.dyn_start_btn.config(state=tk.NORMAL)
                         self.dyn_stop_btn.config(state=tk.DISABLED)
                         self._restore_manual_buttons()
-                        # 隐藏上游触发线与下游漏抓分界线
+                        # 隐藏上游触发线、停带触发线、漏抓放弃线
                         for cid in (self._dyn_trig_line_id, self._dyn_trig_label_id,
-                                    self._dyn_miss_line_id, self._dyn_miss_label_id):
+                                    self._dyn_miss_line_id, self._dyn_miss_label_id,
+                                    self._dyn_stop_line_id, self._dyn_stop_label_id):
                             if cid is not None:
                                 self.camera_canvas.itemconfig(cid, state='hidden')
                         self._auto_sort_log("动态抓取已停止")
@@ -1637,30 +1644,41 @@ def main():
                     elif self.current_status == 'busy':
                         pass  # 机械臂忙碌(未置 _dynamic_busy 的其它任务), 等待完成
                     else:
-                        # ── idle: 检查漏抓分界线 (优先) 与上游触发线 ──
-                        # 1) 下游漏抓: 分界线右侧有物体 → 停带静态兜底 (仅在 RUNNING 下进入, 避免重复停带)
-                        miss_obj = self._pick_object_right_of_line(
-                            line_u=self._dynamic_miss_line_u, require_base=True)
-                        if st != 'MISS_STOP' and miss_obj is not None and self.conveyor_state == True:
-                            self._dynamic_state = 'MISS_STOP'
-                            self._auto_sort_log(f"漏抓检测: 物体越过下游分界线 u={self._dynamic_miss_line_u}, 停带静态抓取")
-                            self._conveyor_set(False)
-                        elif st == 'MISS_STOP':
-                            # 2) 漏抓静态兜底: 等传送带停稳后对下游物体执行静态 sort
+                        # ── idle: 检查停带触发 (视觉为主) 与上游触发线 ──
+                        # 1) 下游停带: 视觉检测到物体右侧 ≥ 停带线(490) → 停传送带 (视觉为主判定).
+                        #    放弃冷却期内 (刚放弃超510物体) 暂不因该区物体反复停带.
+                        if (time.time() - self._dynamic_abandon_ts) < self._dynamic_abandon_cooldown:
+                            pass  # 放弃冷却中, 不触发停带, 让被放弃物体继续移出画面
+                        else:
+                            miss_obj = self._pick_object_right_of_line(
+                                line_u=self._dynamic_stop_line_u, require_base=True)
+                            if st != 'MISS_STOP' and miss_obj is not None and self.conveyor_state == True:
+                                self._dynamic_state = 'MISS_STOP'
+                                self._auto_sort_log(f"漏抓检测: 视觉识别右侧物体越停带线 u={self._dynamic_stop_line_u}, 停带")
+                                self._conveyor_set(False)
+                        if st == 'MISS_STOP':
+                            # 2) 停带后: 等传送带停稳 → 判断"超510放弃"或"490~510静态兜底"
                             if self.conveyor_state != False:
                                 pass  # 传送带尚未停稳, 继续等待
                             else:
-                                # 传送带已停: 对下游物体执行静态 sort (miss_obj 可能因检测抖动为 None,
-                                # 此时不派发, 直接走重启带路径回到 RUNNING, 下轮若仍在检测区会重新命中)
-                                if miss_obj is not None:
-                                    self._dispatch_sort_cmd(miss_obj, static_mode=True)
-                                    self._auto_sort_log("漏抓兜底: 对下游物体执行静态 sort, 完成后重启传送带")
+                                # 传送带已停: 最新视觉若物体已越过放弃线(510) → 放弃抓取(短忽略)
+                                abandon = self._pick_object_right_of_line(
+                                    line_u=self._dynamic_miss_line_u, require_base=True)
+                                cur_stop_obj = self._pick_object_right_of_line(
+                                    line_u=self._dynamic_stop_line_u, require_base=True)
+                                if abandon is not None:
+                                    self._dynamic_abandon_ts = time.time()
+                                    self._auto_sort_log(
+                                        f"漏抓: 物体已越放弃线 u={self._dynamic_miss_line_u}, 放弃抓取(短忽略)")
+                                elif cur_stop_obj is not None:
+                                    self._dispatch_sort_cmd(cur_stop_obj, static_mode=True)
+                                    self._auto_sort_log(
+                                        f"漏抓兜底: 对 {self._dynamic_stop_line_u}~{self._dynamic_miss_line_u} 物体执行静态 sort")
                                 self._dynamic_state = 'RUNNING'  # 等待 busy→idle 后重启带
                         else:
-                            # 3) 兜底后恢复: 上次兜底 sort 已确认完成 (not _dynamic_busy) 且传送带已停 → 重启带
+                            # 3) 非 MISS_STOP: 兜底恢复 + 上游触发派发
                             if not self._dynamic_busy and self.conveyor_state != True and not self._conveyor_busy:
                                 self._conveyor_set(True)
-                            # 4) 上游触发: 触发线右侧有物体且传送带运行中 → 下发 sort_dynamic
                             trig_obj = self._pick_object_right_of_line(
                                 line_u=self._dynamic_trigger_line_u, require_base=True)
                             if trig_obj is not None and self.conveyor_state == True:
@@ -1750,10 +1768,17 @@ def main():
                 self._dyn_miss_line_id = self.camera_canvas.create_line(
                     x_miss, 0, x_miss, self._canvas_h, fill='blue', dash=(6, 4), width=2)
                 self._dyn_miss_label_id = self.camera_canvas.create_text(
-                    x_miss + 5, 26, text=f"漏抓线 u={self._dynamic_miss_line_u}",
+                    x_miss + 5, 26, text=f"放弃线 u={self._dynamic_miss_line_u}",
                     fill='blue', anchor=tk.NW, font=("Arial", 9, "bold"))
+                x_stop = int(self._canvas_w * self._dynamic_stop_line_u / 640)
+                self._dyn_stop_line_id = self.camera_canvas.create_line(
+                    x_stop, 0, x_stop, self._canvas_h, fill='red', dash=(4, 4), width=2)
+                self._dyn_stop_label_id = self.camera_canvas.create_text(
+                    x_stop + 5, 50, text=f"停带线 u={self._dynamic_stop_line_u}",
+                    fill='red', anchor=tk.NW, font=("Arial", 9, "bold"))
                 for cid in (self._dyn_trig_line_id, self._dyn_trig_label_id,
-                            self._dyn_miss_line_id, self._dyn_miss_label_id):
+                            self._dyn_miss_line_id, self._dyn_miss_label_id,
+                            self._dyn_stop_line_id, self._dyn_stop_label_id):
                     self.camera_canvas.itemconfig(cid, state='hidden')
             except Exception as e:
                 _log(f"画分界线失败: {e}")

@@ -251,7 +251,7 @@ D455 相机 (固定) ──→ realsense_yolo_node (YOLO检测 + D455深度)
 2. **机械臂已使能**: `python3 /home/lxf/agx_arm_ws/activate_robot.py`
 3. **D455 相机已连接** (固定安装在传送带上方)
 4. **CH340 继电器已连接** (传送带控制)
-5. **手眼标定数据**: `/home/lxf/handeye/result/2026-07-26_16-17-46_calibration.json`
+5. **手眼标定数据**: `/home/lxf/handeye/result/2026-09-15_21-25-46_calibration.json`
 6. **GraspNet checkpoint**: `/home/lxf/graspnet/checkpoints/checkpoint-rs.tar`
 
 ### 一键前置检查
@@ -293,7 +293,7 @@ ros2 launch /home/lxf/agx_arm_ws/launch/eye_to_hand_camera_tf.launch.py
 ```
 
 发布 `base_link → camera_color_optical_frame` 静态变换, 供 RViz/MoveIt 可视化。
-验证: `ros2 run tf2_ros tf2_echo base_link camera_color_optical_frame` 应显示平移 `[0.673, 0.011, 0.597]`。
+验证: `ros2 run tf2_ros tf2_echo base_link camera_color_optical_frame` 应显示平移 `[0.649, -0.054, 0.596]`。
 
 #### T3 — YOLO 检测节点 (D455 深度)
 
@@ -310,8 +310,8 @@ python3 realsense_yolo_node.py \
 
 **在线调参** (标定偏差补偿, 无需重启):
 ```bash
-ros2 param set /object_detector x_offset_m -0.045   # X 补偿 (负=减)
-ros2 param set /object_detector y_offset_m -0.010    # Y 补偿 (负=减)
+ros2 param set /object_detector x_offset_m -0.015   # X 补偿 (负=减)
+ros2 param set /object_detector y_offset_m -0.025   # Y 补偿 (负=减)
 ros2 param set /object_detector z_offset_m 0.030     # Z 补偿 (正=抬高, 防撞台面)
 ros2 param set /object_detector depth_offset_m 0.0   # 深度补偿 (默认0)
 ```
@@ -372,8 +372,8 @@ python3 sorting_gui_client.py
 
 | 参数 | 位置 | 默认值 | 说明 |
 |------|------|--------|------|
-| `x_offset_m` | YOLO 节点 | -0.045 | X 标定偏差补偿 (负=减) |
-| `y_offset_m` | YOLO 节点 | -0.010 | Y 标定偏差补偿 (负=减) |
+| `x_offset_m` | YOLO 节点 | -0.015 | X 标定偏差补偿 (负=减) |
+| `y_offset_m` | YOLO 节点 | -0.025 | Y 标定偏差补偿 (负=减) |
 | `z_offset_m` | YOLO 节点 | +0.030 | Z 标定偏差补偿 (正=抬高) |
 | `MIN_GRASP_Z` | action 节点 | 0.045 | 夹持点 Z 安全下限 (防撞台面) |
 | `GRIPPER_PICK_Z_OFFSET` | action 节点 | 0.064 | link6 到夹持点 Z 距离 |

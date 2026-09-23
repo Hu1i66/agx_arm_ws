@@ -3,7 +3,7 @@
 发布 base_link → camera_color_optical_frame 静态变换,
 使 RViz/MoveIt 等工具能在机器人坐标系中可视化相机数据。
 
-标定来源: /home/lxf/handeye/result/2026-07-26_16-17-46_calibration.json
+标定来源: /home/lxf/handeye/result/2026-09-15_21-25-46_calibration.json
 
 变换方向分析:
   - 标定文件的 position/orientation 表示 camera_color_optical_frame 在 base_link 系中的位姿
@@ -24,22 +24,22 @@ import launch_ros.actions
 
 def generate_launch_description():
     # 标定数据 (camera_color_optical_frame → base_link)
-    # 来源: /home/lxf/handeye/result/2026-07-26_16-17-46_calibration.json
-    # position:  [0.6647111267257422, 0.0081521692571569, 0.567034342682776]
-    # orientation: [-0.6897711805628746, -0.7087083420930345, 0.11849101960225547, 0.08892740064939907]
+    # 来源: /home/lxf/handeye/result/2026-09-15_21-25-46_calibration.json
+    # position:  [0.6490691434509585, -0.05381643112008146, 0.5963265498171803]
+    # orientation: [-0.6924182483257096, -0.7044102901442802, 0.08488321314295422, 0.1309883683803036]
     return launch.LaunchDescription([
         launch_ros.actions.Node(
             package='tf2_ros',
             executable='static_transform_publisher',
             name='camera_color_optical_frame_broadcaster',
             arguments=[
-                '--x', '0.6647111267257422',
-                '--y', '0.0081521692571569',
-                '--z', '0.567034342682776',
-                '--qx', '-0.6897711805628746',
-                '--qy', '-0.7087083420930345',
-                '--qz', '0.11849101960225547',
-                '--qw', '0.08892740064939907',
+                '--x', '0.6490691434509585',
+                '--y', '-0.05381643112008146',
+                '--z', '0.5963265498171803',
+                '--qx', '-0.6924182483257096',
+                '--qy', '-0.7044102901442802',
+                '--qz', '0.08488321314295422',
+                '--qw', '0.1309883683803036',
                 '--frame-id', 'base_link',
                 '--child-frame-id', 'camera_color_optical_frame',
             ],

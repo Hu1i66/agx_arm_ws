@@ -6,11 +6,11 @@ robot_status_bridge:
   ros__parameters:
     # ── MQTT Broker 连接参数 ──
     # Broker 地址
-    broker_host: "10.155.99.253"
+    broker_host: "10.13.61.101"
     # Broker 端口 (默认 1883)
     broker_port: 1883
     # 发布的 MQTT Topic (B组约定: sensor/{device_type}/{device_id})
-    topic: "sensor/robot/ROBOT-01"
+    topic: "sensor/robot/robot01"
     # QoS 等级 (0/1/2)
     qos: 1
     # MQTT Client ID (唯一标识)
@@ -24,6 +24,6 @@ robot_status_bridge:
 
     # ── 设备标识参数 ──
     # 设备编号
-    device_id: "ROBOT-01"
+    device_id: "robot01"
     # 设备类型
     device_type: "robot"

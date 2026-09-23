@@ -2815,13 +2815,21 @@ def main():
     DESCENT_NOMINAL_S = 0.6
     LIFT_LEAD_S = 0.3
     # 下降前瞻补偿 (秒): 叠加到下降各航点的预测到位时刻.
-    # 日志8 实测: 下降已真实执行 (arm_controller 通道), 但夹爪沿传送带方向落后 ~3cm.
-    # 落后量 = 未建模延迟 × 皮带速度. 未建模延迟含: 6段IK求解~0.2s + 底层真实执行
-    # 追不上 mock 1.5s 时间表的追赶滞后 (~0.9s). 当前速度 0.028m/s 下 1.1s≈3.1cm.
-    # ⚠️ 标定旋钮: 仍落后→增大, 超前(夹爪抢到物体前面)→减小, 步长 0.1s.
-    DESC_LEAD_S = 1.1
+    # ⚠️ 标定旋钮: 仍落后→增大, 超前(夹爪抢到物体前面)→减小, 步长 0.05s.
+    # 日志14 定量: 抓取点明显比物体快 (夹爪戳到物体前侧).
+    #   下降已改用 arm_controller 直发, 轨迹严格按 1.5s 时间表执行 (无底层追赶滞后);
+    #   IK 求解也已提速 (<0.1s). 旧 DESC_LEAD_S=1.1 是为"日志8 机械臂落后 3cm"场景补偿,
+    #   在当前架构下已多余: 第6段预测 t_arrive=t_launch+1.5+1.1, 而轨迹第6段实际在
+    #   t_send+1.5(≈t_launch+1.7) 到达 → 抓取点比物体超前 1.1s×0.0214≈2.4cm → 戳到前侧.
+    #   正确值应只覆盖"t_launch→轨迹真正开始执行"的延迟 (6段IK求解~0.2s+下发), 取 0.2.
+    DESC_LEAD_S = 0.2
     # 动态抓取最低下降高度 (base 系, 米); 与静态 MIN_GRASP_Z 含义相同, 兜底防碰
     DYNAMIC_MIN_GRASP_Z = 0.045
+    # 动态抓取抓取高度抬升量 (米): 叠加到 grasp_z, 用于"防碰台面"微调.
+    # 日志14: clamping_z 被钳位到 0.045 → grasp_z=0.109, 手指底部=0.109-0.1358=-27mm,
+    # 已插入台面. 此处 +5mm (0.005) 抬高抓取点, 手指底部≈-22mm→若仍碰再逐步调大.
+    # ⚠️ 标定旋钮: 仍碰台→增大, 空抓(离物体太远)→减小, 步长 0.002~0.005.
+    DYNAMIC_GRASP_Z_LIFT = 0.005
     # 动态抓取可达性预检阈值 (base 系径向距离 R=√(x²+y²), 米).
     # 影子对齐/下降目标点若 R 超过该值, 判定为工作空间外 (Piper 悬停高度下满伸约 0.85m,
     # 保持直下手腕姿态有效可达约 0.55m), 直接回退, 避免白等 IK 时间预算 / MoveIt 全失败.
@@ -2908,7 +2916,7 @@ def main():
                 f"⚠️ 动态 夹持点 z={clamping_z:.3f}m 低于安全下限 {DYNAMIC_MIN_GRASP_Z}m, "
                 f"钳位 (防碰台面)")
             clamping_z = DYNAMIC_MIN_GRASP_Z
-        grasp_z = clamping_z + GRIPPER_PICK_Z_OFFSET
+        grasp_z = clamping_z + GRIPPER_PICK_Z_OFFSET + DYNAMIC_GRASP_Z_LIFT
         self.get_logger().info(
             f"📐 动态 夹持点 clamping_z={clamping_z:.3f}m (质心顶面) → "
             f"link6_z={grasp_z:.3f}m, 手指底部≈{(grasp_z - 0.1358)*1000:.0f}mm (台面=0)")
@@ -3018,11 +3026,10 @@ def main():
             self.get_logger().info("✅ 空跑完成: 下降路径验证通过")
             return True
 
-        # ── 4. 夹取: 一次性闭合 + 力矩判定 ──
-        if object_diameter_m:
-            _, close_target = compute_gripper_targets(object_diameter_m)
-        else:
-            close_target = GRIPPER_CLOSE
+        # ── 4. 夹取: 完全闭合 (与静态抓取一致 GRIPPER_GRAB=0) ──
+        # 用户要求: 动态抓取夹爪也要完全闭合 (像静态一样), 不再按物体直径留缝.
+        # 完全闭合依赖夹爪结构/力矩自然贴合物体, 防止夹不紧/夹偏.
+        close_target = GRIPPER_GRAB
         self._pre_grasp_width = self._latest_gripper_status.width if self._latest_gripper_status else None
         grasp_ok = self.operate_gripper(close_target, "动态-闭合夹爪")
         if not grasp_ok:
