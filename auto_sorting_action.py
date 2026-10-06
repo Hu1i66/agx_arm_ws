@@ -424,7 +424,7 @@ class MoveItActionClient(Node):
                 f"time={time.strftime('%Y-%m-%dT%H:%M:%S')}")
             try:
                 self.move_arm_joint([0.0]*6, "复位-回待机位")
-                self._set_bin_collision_allowed(allowed=False)
+                self._set_conveyor_collision_allowed(allowed=False)
                 self.get_logger().info("✅ 复位完成, 机械臂已回待机位")
             except Exception as e:
                 self.get_logger().error(f"❌ 复位异常: {e}")
@@ -459,7 +459,7 @@ class MoveItActionClient(Node):
             else:
                 # standby: 回待机位 + 恢复碰撞 + 清除标志
                 self.move_arm_joint([0.0]*6, "急停-回待机位")
-                self._set_bin_collision_allowed(allowed=False)
+                self._set_conveyor_collision_allowed(allowed=False)
                 self.get_logger().info(f"✅ 安全停机完成 (req={req})")
                 self._emergency_flag = False
                 self._emergency_req_type = ""
@@ -623,18 +623,18 @@ class MoveItActionClient(Node):
             except Exception:
                 pass
 
-    def _set_bin_collision_allowed(self, allowed=True, obj_ids=None):
+    def _set_conveyor_collision_allowed(self, allowed=True, obj_ids=None):
         """临时允许/恢复指定碰撞体与机械臂所有连杆的碰撞检测。
 
         通过 /planning_scene 话题发布 AllowedCollisionMatrix (ACM) diff 实现。
-        料框放置位规划失败时调用此方法临时绕过传送带碰撞体，
+        放置目标点规划失败时调用此方法临时绕过传送带碰撞体，
         让 RRTConnect 能在原本"碰撞"的目标状态采样成功。
 
         ⚠️ 关键：必须先调用 /get_planning_scene 获取当前 ACM，只修改 obj_ids 相关条目，
         保留所有原有碰撞对（包括夹爪自碰撞对 gripper_base-gripper_link1 等）。
         否则 ACM diff 会替换整个 ACM，导致夹爪自碰撞检测被启用，所有规划都失败。
 
-        ⚠️ 料框1放置位有多个碰撞体（move_group 日志确认）：
+        ⚠️ 放置目标点附近有多个碰撞体（move_group 日志确认）：
         - 'control_box' (Object, conveyor.scene) 与 link5 碰撞
         - 'rail_ny' (Object, conveyor.scene) 与 gripper_link2 碰撞
         - 'conveyor_control_box' (Robot link, conveyor_cell.urdf.xacro) 与 gripper_link1 碰撞
@@ -1807,15 +1807,15 @@ class MoveItActionClient(Node):
     def _dynamic_disable_conveyor_collision(self):
         """动态抓取: 临时禁用传送带碰撞体与机械臂的碰撞检测 (供斜线下降).
 
-        复用既有 _set_bin_collision_allowed: 通过 /get_planning_scene 合并当前 ACM,
+        复用既有 _set_conveyor_collision_allowed: 通过 /get_planning_scene 合并当前 ACM,
         以真实碰撞体名称 (belt_deck/rail_ny/... 共 12 个) 作为矩阵键,
         只修改传送带相关条目并保留夹爪自碰撞对. 调用前需 sleep 0.15s 供 move_group 处理."""
-        self._set_bin_collision_allowed(allowed=True)
+        self._set_conveyor_collision_allowed(allowed=True)
         self.get_logger().info("🧩 动态抓取: 已禁用传送带碰撞体碰撞检测")
 
     def _dynamic_restore_conveyor_collision(self):
         """动态抓取: 恢复传送带碰撞检测 (回 P_HOVER 后调用)."""
-        self._set_bin_collision_allowed(allowed=False)
+        self._set_conveyor_collision_allowed(allowed=False)
         self.get_logger().info("🧩 动态抓取: 已恢复传送带碰撞检测")
 
     def _try_gripper_action(self, joint_names, positions, timeout_sec=1.0):
@@ -1902,15 +1902,15 @@ class MoveItActionClient(Node):
             self.get_logger().warn(f"TF lookup base_link→link6 失败: {e}")
             return [0.0, 0.0, 0.0]
 
-    def _get_bin_place_position(self, bin_place_joints):
-        """通过 FK 计算料框放置位坐标字符串."""
+    def _get_place_position(self, place_joints):
+        """通过 FK 计算放置目标点坐标字符串."""
         try:
             if self.ik_solver is None or _pin is None:
                 return "(0.000, 0.000, 0.000)"
             q_full = _pin.neutral(self.ik_solver.model)
             for i, idx in enumerate(self.ik_solver.joint_q_indices):
-                if i < len(bin_place_joints):
-                    q_full[idx] = bin_place_joints[i]
+                if i < len(place_joints):
+                    q_full[idx] = place_joints[i]
             _pin.forwardKinematics(self.ik_solver.model, self.ik_solver.data, q_full)
             _pin.updateFramePlacements(self.ik_solver.model, self.ik_solver.data)
             pos = self.ik_solver.data.oMf[self.ik_solver.ee_frame_id].translation
@@ -1925,7 +1925,7 @@ class MoveItActionClient(Node):
         source_position = f"({src['x']:.3f}, {src['y']:.3f}, {src['z']:.3f})"
 
         # target_position 通过 FK 计算
-        target_position = self._get_bin_place_position(target_joints)
+        target_position = self._get_place_position(target_joints)
 
         # actual_position
         actual_position = target_position if success else "NONE"
@@ -2287,19 +2287,19 @@ class MoveItActionClient(Node):
           - step0:   开夹爪
           - step0.5: 分层姿态预规划 (调用 _plan_blue_block_orientation)
           - step1:   关节空间移动到 POSE_PICK_UP, continuous=True
-          - step2:   笛卡尔直线下降到 POSE_PICK, 禁用传送带碰撞 (复用 _set_bin_collision_allowed)
+          - step2:   笛卡尔直线下降到 POSE_PICK, 禁用传送带碰撞 (复用 _set_conveyor_collision_allowed)
           - step3:   闭合夹爪, 目标宽度 = block_width_m - 0.002m (不是 GRIPPER_GRAB=0)
           - step4:   上提至 POSE_PICK_UP, continuous=True
           - step4.5: 抓取成功判定 = 闭合宽度 < block_width_m * 0.7 (不是固定 5mm)
-          - step5-9: 关节空间移动到料框放置位置 + 释放 + 回待机位
+          - step5:   关节空间直接移动到放置目标点 + 释放 + 回待机位
           - 碰撞检测恢复 (成功和错误路径均, 复用现有逻辑)
           - 失败时重试最多 2 次 (复用现有重试逻辑)
 
         Args:
             data: 命令 JSON dict, 含 pick/surface_z_m/block_width_m/block_height_m/block_rotation_deg
             config: 常量 dict {
-                'JOINT_STANDBY', 'JOINT_OBSERVE', 'BIN_JOINTS',
-                'GRIPPER_OPEN', 'GRIPPER_SETTLE_SEC',
+                'JOINT_STANDBY', 'JOINT_OBSERVE', 'JOINT_PLACE_TARGET',
+                'GRIPPER_PLACE_OPEN', 'GRIPPER_OPEN', 'GRIPPER_SETTLE_SEC',
                 'GRIPPER_PICK_Z_OFFSET', 'MIN_GRASP_Z', 'loop_count'
             }
 
@@ -2308,7 +2308,8 @@ class MoveItActionClient(Node):
         """
         JOINT_STANDBY = config['JOINT_STANDBY']
         JOINT_OBSERVE = config['JOINT_OBSERVE']
-        BIN_JOINTS = config['BIN_JOINTS']
+        JOINT_PLACE_TARGET = config['JOINT_PLACE_TARGET']
+        GRIPPER_PLACE_OPEN = config['GRIPPER_PLACE_OPEN']
         GRIPPER_OPEN = config['GRIPPER_OPEN']
         GRIPPER_SETTLE_SEC = config['GRIPPER_SETTLE_SEC']
         GRIPPER_PICK_Z_OFFSET = config['GRIPPER_PICK_Z_OFFSET']
@@ -2333,15 +2334,7 @@ class MoveItActionClient(Node):
         block_rotation_deg = float(data.get("block_rotation_deg", 0.0))
         pick_id = data.get("pick_name", "blue_block (detected)")
         cycle_id = str(data.get("cycle_id", ""))
-        try:
-            bin_num = int(data.get("bin", 1))
-        except (TypeError, ValueError):
-            bin_num = 1
-        if bin_num not in BIN_JOINTS:
-            self.get_logger().warn(f"⚠️ 蓝方块: 无效 bin={bin_num}, 默认使用料框1")
-            bin_num = 1
-        BIN_ABOVE_JOINTS, BIN_PLACE_JOINTS = BIN_JOINTS[bin_num]
-        place_id = f"料框{bin_num}"
+        place_id = "放置点"
         obj_class = "blue_block"
 
         # ── 计算抓取位姿 (顶面中位抓取) ──
@@ -2396,8 +2389,8 @@ class MoveItActionClient(Node):
             if self._check_emergency("blue_block-step1-上方过渡点"):
                 success = False; break
 
-            # ── 下降前禁用所有传送带碰撞体 (复用 _set_bin_collision_allowed) ──
-            self._set_bin_collision_allowed(allowed=True)
+            # ── 下降前禁用所有传送带碰撞体 (复用 _set_conveyor_collision_allowed) ──
+            self._set_conveyor_collision_allowed(allowed=True)
 
             # ═══════ 抓取重试循环 (最多 MAX_BLUE_BLOCK_RETRIES 次) ═══════
             grasp_ok = False
@@ -2461,7 +2454,7 @@ class MoveItActionClient(Node):
                         self.get_logger().warn("⚠️ 蓝方块重试: 上方过渡点移动失败, 跳过")
                         continue
                     pick_up_joints = self.current_joints.copy() if self.current_joints else None
-                    self._set_bin_collision_allowed(allowed=True)
+                    self._set_conveyor_collision_allowed(allowed=True)
                     if self._check_emergency(f"blue_block-retry{retry+1}-上方过渡点"):
                         success = False; break
 
@@ -2610,37 +2603,25 @@ class MoveItActionClient(Node):
                     pass  # 已安全停机
                 success = False; break
 
-            # 【第五步】 关节空间到料框上方 (需稳定后再下降)
-            # ⚠️ continuous=False: BIN_ABOVE完成后等0.15s稳定, 否则BIN_PLACE起点偏差→-4
-            self._set_bin_collision_allowed(allowed=True)
-            if not self.move_arm_joint(BIN_ABOVE_JOINTS, f"蓝方块-移动到{place_id}上方 (途径点)", continuous=False):
-                success = False; break
-            if self._check_emergency("blue_block-step5-料框上方"):
-                success = False; break
-
-            # 【第六步】 关节空间到料框放置位
-            if not self.move_arm_joint(BIN_PLACE_JOINTS, f"蓝方块-移动到{place_id}放置位 (关节空间)", continuous=True):
+            # 【第五步】 关节空间直接移动到放置目标点 (抓取抬起后直达, 无需中间途径点)
+            # ⚠️ continuous=False: 到达后等 0.15s 稳定, 再开夹爪
+            self._set_conveyor_collision_allowed(allowed=True)
+            if not self.move_arm_joint(JOINT_PLACE_TARGET, f"蓝方块-移动到{place_id} (关节空间)", continuous=False):
                 success = False; break
             place_reached_ok = True
-            if self._check_emergency("blue_block-step6-料框放置位"):
+            if self._check_emergency("blue_block-step5-放置点"):
                 success = False; break
 
-            # 【第七步】 松开夹爪释放物品
-            self.operate_gripper(GRIPPER_OPEN, f"蓝方块-松开夹爪(在{place_id}放置位释放)")
+            # 【第六步】 松开夹爪释放物品
+            self.operate_gripper(GRIPPER_PLACE_OPEN, f"蓝方块-松开夹爪(在{place_id}释放)")
             time.sleep(GRIPPER_SETTLE_SEC)
-            if self._check_emergency("blue_block-step7-松开夹爪"):
+            if self._check_emergency("blue_block-step6-松开夹爪"):
                 success = False; break
 
-            # 【第八步】 关节空间回到料框上方 (抬起脱离放置位, 途径点)
-            if not self.move_arm_joint(BIN_ABOVE_JOINTS, f"蓝方块-从{place_id}放置位抬起 (途径点)", continuous=True):
-                success = False; break
-            if self._check_emergency("blue_block-step8-料框抬起"):
-                success = False; break
-
-            # 【第九步】 关节空间回到待机位 (等待下一次抓取)
+            # 【第七步】 关节空间回到待机位 (等待下一次抓取)
             if not self.move_arm_joint(JOINT_STANDBY, "蓝方块-回到待机位 (关节空间)", continuous=True):
                 success = False; break
-            if self._check_emergency("blue_block-step9-回待机位"):
+            if self._check_emergency("blue_block-step7-回待机位"):
                 success = False; break
 
         # ── 碰撞检测恢复 (成功和错误路径均) ──
@@ -2696,23 +2677,23 @@ class MoveItActionClient(Node):
                 success=False, cargo_type=obj_class, confidence=0.95,
                 source_pos_dict={"x": float(POSE_PICK['x']), "y": float(POSE_PICK['y']),
                                  "z": float(POSE_PICK['z'])},
-                target_joints=BIN_PLACE_JOINTS, grasp_ok=False, error_code=99)
+                target_joints=JOINT_PLACE_TARGET, grasp_ok=False, error_code=99)
 
             # 安全回到待机位后恢复碰撞检测 (无论回待机位是否成功都恢复)
-            self._set_bin_collision_allowed(allowed=False)
+            self._set_conveyor_collision_allowed(allowed=False)
             self.operate_gripper(GRIPPER_OPEN, "蓝方块-张开夹爪(待机)")
             time.sleep(0.5)
             return {'success': False, 'cycle_id': cycle_id}
 
         # 成功完成分拣后恢复碰撞检测
-        self._set_bin_collision_allowed(allowed=False)
+        self._set_conveyor_collision_allowed(allowed=False)
 
         # ── 发布机械臂状态 (成功) ──
         self._publish_robot_status(
             success=True, cargo_type=obj_class, confidence=0.95,
             source_pos_dict={"x": float(POSE_PICK['x']), "y": float(POSE_PICK['y']),
                              "z": float(POSE_PICK['z'])},
-            target_joints=BIN_PLACE_JOINTS, grasp_ok=True, error_code=0)
+            target_joints=JOINT_PLACE_TARGET, grasp_ok=True, error_code=0)
 
         print(f"🎉 第 {loop_count} 次蓝方块分拣顺利完成！休整一下...")
         result_msg = String()
@@ -2760,25 +2741,14 @@ def main():
     # 对应末端位姿: x=0.1864, y=0.0, z=0.3782, q=(~0, 0.9643, ~0, 0.2650)
     JOINT_OBSERVE = [0.0, 1.0669023184516138, -1.1636808254746993, 0.0, 1.2184841639873214, 0.0]
 
-    # ========== 料框关节点位 (用户标定, 关节空间) ==========
-    # 抓取后流程: pick_up_joints -> bin_above -> bin_place -> 开夹爪 -> bin_above -> standby
-    # 料框1上方 (末端 x=-0.086, y=0.317, z=0.173)
-    JOINT_BIN1_ABOVE = [1.8195755583741684, 1.7968862780982422, -1.0943388942929646,
-                        0.07860962950982461, 0.8454898495436131, 0.10438814256178085]
-    # 料框1放置位 (末端 x=-0.109, y=0.329, z=-0.107)
-    JOINT_BIN1_PLACE = [1.8810635079219287, 2.641887435451297, -1.1993728086779836,
-                        0.2364746603527117, 0.1650732406536237, 0.060702551384362785]
-    # 料框2上方 (末端 x=-0.141, y=-0.314, z=0.106)
-    JOINT_BIN2_ABOVE = [-1.980896341136004, 1.9832350823336766, -1.06501736285946,
-                        -0.07853981633974483, 0.6292086486364757, 0.0]
-    # 料框2放置位 (末端 x=-0.145, y=-0.333, z=-0.093)
-    JOINT_BIN2_PLACE = [-1.980721808210805, 2.621257643692724, -1.2797103141472823,
-                        0.0, 0.31895892080196375, 0.0]
-    # 料框编号 -> (上方关节, 放置位关节)
-    BIN_JOINTS = {
-        1: (JOINT_BIN1_ABOVE, JOINT_BIN1_PLACE),
-        2: (JOINT_BIN2_ABOVE, JOINT_BIN2_PLACE),
-    }
+    # ========== 放置目标点 (用户标定, 关节空间) ==========
+    # 抓取后流程: pick_up_joints -> 直接移动到放置目标点 -> 开夹爪 -> standby
+    # 关节顺序: joint1, joint2, joint3, joint4, joint5, joint6
+    # (gripper_joint1/2 由 GRIPPER_PLACE_OPEN 控制, 对应 +0.04475 / -0.04475)
+    JOINT_PLACE_TARGET = [1.9992746581595044, 1.5727510955571302, -1.0801144608892108,
+                          -0.008045967851693859, 1.0517179539592632, 0.022270401255447644]
+    # 放置点开夹爪宽度: gripper_joint1 = 0.0895*0.5 = 0.04475, gripper_joint2 = -0.04475
+    GRIPPER_PLACE_OPEN = 0.0895
 
     GRIPPER_OPEN = 0.090
     GRIPPER_CLOSE = 0.060
@@ -2866,16 +2836,15 @@ def main():
             close_target = max(0.022, open_target - 0.028)
         return open_target, close_target
 
-    def _run_dynamic_grasp(self, pick_id, bin_num, object_diameter_m, start_pose,
+    def _run_dynamic_grasp(self, pick_id, object_diameter_m, start_pose,
                            compute_gripper_targets, _continuation=False):
         """动态抓取核心序列: 影子对齐 → 斜线随动下降 → 夹取 → 抬起 → 放置.
 
         Args:
             pick_id: 物体名称 (如 "apple (detected)")
-            bin_num: 料框编号 1/2
             object_diameter_m: 物体直径 (m), 用于夹爪开度
             start_pose: {'x','y','z'} 命令下发时的检测位置 (备用)
-            _continuation: True=连续续抓模式 (放置后停在高位待命不回落态位, 碰撞保持禁用,
+            _continuation: True=连续续抓模式 (放置后不回待机位, 碰撞保持禁用,
                           供循环下一次直接续抓); False=单次模式 (完成后回待机位).
         Returns:
             bool: 本次动态抓取是否成功
@@ -3047,11 +3016,11 @@ def main():
             lift_dx, lift_dy = lx - gx, ly - gy
         lift_z = z_shadow + 0.05
         # ── 抬起: IK 解关节 + arm_controller 直发 (绕开 move_group 起点碰撞判断) ──
-        # -2 根因 (最新日志): 抬升/回料框走 move_arm_joint→move_group, 从"抓取后低位+夹爪闭合"
+        # -2 根因 (最新日志): 抬升/放置走 move_arm_joint→move_group, 从"抓取后低位+夹爪闭合"
         #   起点规划, move_group 判起点/路径与 belt_deck 接触 → INVALID_MOTION_PLAN(-2), 后续全卡.
         #   下降用 execute_multiwaypoint_joint_trajectory(arm_controller 直发) 成功, 证明该通道可靠.
         #   → 抬起同样走 arm_controller 直发; 碰撞本流程已禁用(代码层单独管理), move_group 的
-        #   碰撞检查已失效, 直发不新增风险, 却彻底绕开 -2. 抬到安全高度 lift_z 后再用 move_group 回料框.
+        #   碰撞检查已失效, 直发不新增风险, 却彻底绕开 -2. 抬到安全高度 lift_z 后再走放置.
         lift_warm = None
         if self.current_joints:
             lift_warm = np.array([self.current_joints.get(f'joint{i}', 0.0) for i in range(1, 7)])
@@ -3090,24 +3059,20 @@ def main():
             lift_ok = self.execute_multiwaypoint_joint_trajectory(
                 [lift_q], "动态-抬起(直发arm_controller)", per_point_dur=0.5)
         if not lift_ok:
-            self.get_logger().warn(f"⚠️ 动态: 抬起 IK 超时/无解 ({time.time()-_lift_t0:.2f}s), 直接走料框路径")
+            self.get_logger().warn(f"⚠️ 动态: 抬起 IK 超时/无解 ({time.time()-_lift_t0:.2f}s), 直接走放置路径")
 
-        # ── 6. 放料框 (统一走 arm_controller 直发, 避免 move_group 状态不同步 → -4) ──
+        # ── 6. 放置 (统一走 arm_controller 直发, 避免 move_group 状态不同步 → -4) ──
         # 日志11: 抬起用 arm_controller 直发后, move_group 的 robot state 未同步到抬起位,
-        # 回料框 move_arm_joint 轨迹起点与真实位置不一致 → CONTROL_FAILED(-4), 随后仍释放
-        # 夹爪导致物体中途掉落. 故料框/回待机也改走 execute_multiwaypoint 直发, 全程单通道无切换.
-        # ⚠️ 动态抓取放置点统一改为料框1 (用户要求): 不论 bin_num 输入多少, 都放到料框1.
-        bin_above, bin_place = BIN_JOINTS[1]
-        place_id = 1
-        # BIN_ABOVE/BIN_PLACE/JOINT_STANDBY 是关节空间目标, 直接作为单航点直发
-        self.execute_multiwaypoint_joint_trajectory([bin_above], f"动态-料框{place_id}上方", per_point_dur=1.2)
-        self.execute_multiwaypoint_joint_trajectory([bin_place], f"动态-料框{place_id}放置", per_point_dur=1.2)
-        self.operate_gripper(GRIPPER_OPEN, f"动态-料框{place_id}释放")
-        self.execute_multiwaypoint_joint_trajectory([bin_above], f"动态-料框{place_id}上方", per_point_dur=1.2)
+        # 走 move_arm_joint 的轨迹起点与真实位置不一致 → CONTROL_FAILED(-4), 随后仍释放
+        # 夹爪导致物体中途掉落. 故放置/回待机也改走 execute_multiwaypoint 直发, 全程单通道无切换.
+        # 抓取抬起后直接移动到放置目标点, 到达后开夹爪.
+        place_id = "放置点"
+        # JOINT_PLACE_TARGET/JOINT_STANDBY 是关节空间目标, 直接作为单航点直发
+        self.execute_multiwaypoint_joint_trajectory([JOINT_PLACE_TARGET], f"动态-移动到{place_id}", per_point_dur=1.2)
+        self.operate_gripper(GRIPPER_PLACE_OPEN, f"动态-{place_id}释放")
         # ── 7. 返回 (区分续抓/结束) ──
         if _continuation:
-            # 续抓模式: 当前已停在"料框1上方"安全高位, 不回待机位; 碰撞保持禁用,
-            # 供循环直接发起下一次续抓 (从料框1上方去下一个抓取区).
+            # 续抓模式: 不回待机位; 碰撞保持禁用, 供循环直接发起下一次续抓.
             self.get_logger().info("✅ 动态抓取完成(续抓待命, 待下一次)")
         else:
             # 单次模式: 回待机位 (直发), 碰撞由调用方在回待机后统一恢复
@@ -3115,7 +3080,7 @@ def main():
             self.get_logger().info("✅ 动态抓取完成")
         return True
 
-    # _run_dynamic_grasp 引用 main() 局部常量 (P_HOVER_POSE/SHADOW_LEAD_S/GRIPPER_PICK_Z_OFFSET/BIN_JOINTS 等),
+    # _run_dynamic_grasp 引用 main() 局部常量 (P_HOVER_POSE/SHADOW_LEAD_S/GRIPPER_PICK_Z_OFFSET/JOINT_PLACE_TARGET 等),
     # 类方法无法访问 main() 局部作用域, 故定义为 main() 内闭包并绑定到 node 供命令分发调用.
     node._run_dynamic_grasp = _run_dynamic_grasp
 
@@ -3239,16 +3204,7 @@ def main():
                 if z_correction:
                     print(f"📏 物体='{obj_class}', z 修正={z_correction:+.3f}m (叠加在 GRIPPER_PICK_Z_OFFSET 上)")
 
-                # 料框编号 (1 或 2), 决定放置关节点位
-                try:
-                    bin_num = int(data.get("bin", 1))
-                except (TypeError, ValueError):
-                    bin_num = 1
-                if bin_num not in BIN_JOINTS:
-                    print(f"⚠️ 无效的 bin={bin_num}, 默认使用料框1")
-                    bin_num = 1
-                BIN_ABOVE_JOINTS, BIN_PLACE_JOINTS = BIN_JOINTS[bin_num]
-                place_id = f"料框{bin_num}"
+                place_id = "放置点"
 
                 POSE_PICK = pick_pose.copy()
                 # ── eye-to-hand 标定 X/Y 系统性偏差补偿 ──
@@ -3442,7 +3398,7 @@ def main():
                     # 日志确认两种碰撞: belt_deck↔gripper_link1, conveyor_belt_col↔gripper_link1。
                     # 物理上物体在台面上方 7cm，夹爪不会真撞台面，仅碰撞模型偏保守。
                     # 恢复在回待机位之后(下方错误处理/成功路径)。
-                    node._set_bin_collision_allowed(allowed=True)
+                    node._set_conveyor_collision_allowed(allowed=True)
 
                     # ═══════ 抓取重试循环 (最多 MAX_GRASP_RETRIES 次) ═══════
                     grasp_ok = False
@@ -3488,7 +3444,7 @@ def main():
                             # 记录新过渡点关节角 + 禁用碰撞
                             pick_up_joints = (node.current_joints.copy()
                                               if node.current_joints else None)
-                            node._set_bin_collision_allowed(allowed=True)
+                            node._set_conveyor_collision_allowed(allowed=True)
                             node.get_logger().info("📡 重试: 已到达新坐标上方, 准备下降")
                             if node._check_emergency(f"retry{retry+1}-上方过渡点"):
                                 success = False; break
@@ -3594,37 +3550,25 @@ def main():
                             pass  # 已安全停机
                         success = False; break
 
-                    # 【第五步】 关节空间到料框上方 (需稳定后再下降)
-                    # ⚠️ continuous=False: BIN_ABOVE完成后等0.15s稳定, 否则BIN_PLACE起点偏差→-4
-                    node._set_bin_collision_allowed(allowed=True)
-                    if not node.move_arm_joint(BIN_ABOVE_JOINTS, f"移动到{place_id}上方 (途径点)", continuous=False):
-                        success = False; break
-                    if node._check_emergency("step5-料框上方"):
-                        success = False; break
-
-                    # 【第六步】 关节空间到料框放置位
-                    if not node.move_arm_joint(BIN_PLACE_JOINTS, f"移动到{place_id}放置位 (关节空间)", continuous=True):
+                    # 【第五步】 关节空间直接移动到放置目标点 (抓取抬起后直达, 无需中间途径点)
+                    # ⚠️ continuous=False: 到达后等 0.15s 稳定, 再开夹爪
+                    node._set_conveyor_collision_allowed(allowed=True)
+                    if not node.move_arm_joint(JOINT_PLACE_TARGET, f"移动到{place_id} (关节空间)", continuous=False):
                         success = False; break
                     place_reached_ok = True
-                    if node._check_emergency("step6-料框放置位"):
+                    if node._check_emergency("step5-放置点"):
                         success = False; break
 
-                    # 【第七步】 松开夹爪释放物品
-                    node.operate_gripper(dynamic_open, f"松开夹爪(在{place_id}放置位释放)")
+                    # 【第六步】 松开夹爪释放物品
+                    node.operate_gripper(GRIPPER_PLACE_OPEN, f"松开夹爪(在{place_id}释放)")
                     time.sleep(GRIPPER_SETTLE_SEC)
-                    if node._check_emergency("step7-松开夹爪"):
+                    if node._check_emergency("step6-松开夹爪"):
                         success = False; break
 
-                    # 【第八步】 关节空间回到料框上方 (抬起脱离放置位, 途径点)
-                    if not node.move_arm_joint(BIN_ABOVE_JOINTS, f"从{place_id}放置位抬起 (途径点)", continuous=True):
-                        success = False; break
-                    if node._check_emergency("step8-料框抬起"):
-                        success = False; break
-
-                    # 【第九步】 关节空间回到待机位 (等待下一次抓取)
+                    # 【第七步】 关节空间回到待机位 (等待下一次抓取)
                     if not node.move_arm_joint(JOINT_STANDBY, f"回到待机位 (关节空间)", continuous=True):
                         success = False; break
-                    if node._check_emergency("step9-回待机位"):
+                    if node._check_emergency("step7-回待机位"):
                         success = False; break
 
                 # ⚠️ 碰撞检测恢复已下移至"回待机位之后"。
@@ -3694,20 +3638,20 @@ def main():
                         cargo_type=cargo_name,
                         confidence=conf,
                         source_pos_dict={"x": float(POSE_PICK['x']), "y": float(POSE_PICK['y']), "z": float(POSE_PICK['z'])},
-                        target_joints=BIN_PLACE_JOINTS,
+                        target_joints=JOINT_PLACE_TARGET,
                         grasp_ok=False,
                         error_code=99,
                     )
 
                     # 安全回到待机位后恢复碰撞检测 (无论回待机位是否成功都恢复，避免影响下一轮)
-                    node._set_bin_collision_allowed(allowed=False)
+                    node._set_conveyor_collision_allowed(allowed=False)
                     node.operate_gripper(GRIPPER_OPEN, "张开夹爪(待机)")
                     
                     time.sleep(0.5)
                     continue
 
                 # 成功完成分拣后恢复碰撞检测
-                node._set_bin_collision_allowed(allowed=False)
+                node._set_conveyor_collision_allowed(allowed=False)
 
                 # ── 发布机械臂状态 (成功) ──
                 conf = 0.0
@@ -3724,7 +3668,7 @@ def main():
                     cargo_type=cargo_name,
                     confidence=conf,
                     source_pos_dict={"x": float(POSE_PICK['x']), "y": float(POSE_PICK['y']), "z": float(POSE_PICK['z'])},
-                    target_joints=BIN_PLACE_JOINTS,
+                    target_joints=JOINT_PLACE_TARGET,
                     grasp_ok=True,
                     error_code=0,
                 )
@@ -3747,7 +3691,7 @@ def main():
                 time.sleep(0.5)
 
             elif data.get("cmd") == "sort_dynamic":
-                # 动态抓取: 传送带持续运行, 服务端自主连续循环拦截移动物体 (全放料框1).
+                # 动态抓取: 传送带持续运行, 服务端自主连续循环拦截移动物体 (统一放置到同一目标点).
                 # 依赖: conveyor_calib.json (方向标定) + /conveyor_status (STM32 速度)
                 # 流程: 检测工作区有物 → 抓放(续抓模式,不停待命) → 再检测... → 工作区无物
                 #       或达连续上限/单次失败 → 回待机 + 恢复碰撞, 结束本命令让 GUI 接管.
@@ -3771,9 +3715,8 @@ def main():
                             node.get_logger().info("✅ 工作区无待抓物品, 结束续抓")
                             break
                         pick_id = f"{tgt['name']} (detected)"
-                        # 全放料框1: 动态续抓不按类别分拣
                         ok = node._run_dynamic_grasp(
-                            node, pick_id, 1, tgt.get('diameter'), tgt['base_position_m'],
+                            node, pick_id, tgt.get('diameter'), tgt['base_position_m'],
                             compute_gripper_targets, _continuation=True)
                         grab_count += 1
                         if not ok:
@@ -3813,7 +3756,8 @@ def main():
                 blue_block_config = {
                     'JOINT_STANDBY': JOINT_STANDBY,
                     'JOINT_OBSERVE': JOINT_OBSERVE,
-                    'BIN_JOINTS': BIN_JOINTS,
+                    'JOINT_PLACE_TARGET': JOINT_PLACE_TARGET,
+                    'GRIPPER_PLACE_OPEN': GRIPPER_PLACE_OPEN,
                     'GRIPPER_OPEN': GRIPPER_OPEN,
                     'GRIPPER_SETTLE_SEC': GRIPPER_SETTLE_SEC,
                     'GRIPPER_PICK_Z_OFFSET': GRIPPER_PICK_Z_OFFSET,

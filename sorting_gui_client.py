@@ -380,8 +380,6 @@ def main():
             self.default_grasp_roll=tk.DoubleVar(value=180.0)
             self.default_grasp_pitch=tk.DoubleVar(value=0.0)
             self.default_grasp_yaw=tk.DoubleVar(value=0.0)
-            # 放置料框选择: 1=料框1, 2=料框2 (抓取前由用户选定, 决定放置关节点位)
-            self.bin_var=tk.IntVar(value=1)
             # 传送带(继电器)状态: True=运行, False=停止, None=未知
             self._conveyor_busy=False
             self.conveyor_state=None
@@ -598,10 +596,6 @@ def main():
             ft=tk.LabelFrame(self.right_frame,text="分拣任务下发",padx=10,pady=10); ft.pack(fill="x",pady=5)
             tk.Label(ft,text="夹取点 (Pick):").grid(row=0,column=0,pady=10)
             self.pick_combo=ttk.Combobox(ft,state="readonly",width=15); self.pick_combo.grid(row=0,column=1,padx=10)
-            tk.Label(ft,text="放置料框:").grid(row=0,column=2,pady=10)
-            bf=tk.Frame(ft); bf.grid(row=0,column=3,padx=10)
-            tk.Radiobutton(bf,text="料框1",variable=self.bin_var,value=1,font=("Arial",11,"bold")).pack(side=tk.LEFT)
-            tk.Radiobutton(bf,text="料框2",variable=self.bin_var,value=2,font=("Arial",11,"bold")).pack(side=tk.LEFT,padx=(8,0))
             tk.Button(ft,text="添加至分拣队列",command=self.add_to_queue,font=("Arial",11,"bold"),bg="lightblue",width=18).grid(row=1,column=0,columnspan=2,pady=10)
             tk.Button(ft,text="立即发送分拣指令",command=self.send_sort,font=("Arial",11,"bold"),bg="lightgreen",width=18).grid(row=1,column=2,columnspan=2,pady=10)
             self.update_comboboxes()
@@ -855,7 +849,6 @@ def main():
             if not d.get('detected'): return messagebox.showwarning("未检测到","当前未发现物体。")
             bp=d.get('base_position_m',{})
             if not bp or not all(k in bp for k in('x','y','z')): return messagebox.showerror("坐标缺失","缺少 base_position_m。")
-            bin_num=self.bin_var.get()
             try: r=float(self.default_grasp_roll.get()); p=float(self.default_grasp_pitch.get()); y=float(self.default_grasp_yaw.get())
             except ValueError: return messagebox.showerror("姿态错误","R/P/Y 必须是数字。")
             qx,qy,qz,qw=euler_to_quaternion(r,p,y)
@@ -867,16 +860,16 @@ def main():
             dia_str=f"物体直径: {dia} m\n\n" if dia else ""
             txt=(f"检测坐标夹取确认\n\nPick: {d.get('object_name','物体')} (detected)\n"
                  f"  坐标: ({pp['x']:.3f}, {pp['y']:.3f}, {pp['z']:.3f})\n  姿态: R={r}  P={p}  Y={y} \n\n"
-                 f"Place: 料框{bin_num} (关节空间预设点位)\n\n"
+                 f"Place: 放置目标点 (关节空间预设点位)\n\n"
                  f"{dia_str}确定发送？")
             if not messagebox.askyesno("确认",txt): return
-            cmd={"cmd":"sort","pick":pp,"bin":bin_num,"pick_name":f"{d.get('object_name','物体')} (detected)","place_name":f"料框{bin_num}"}
+            cmd={"cmd":"sort","pick":pp,"pick_name":f"{d.get('object_name','物体')} (detected)","place_name":"放置点"}
             if dia: cmd["object_diameter_m"]=float(dia)
             if self.current_status=='busy':
                 if messagebox.askyesno("忙碌","加入排队队列？"):
                     self.task_queue.append(cmd); self.refresh_queue_listbox()
                     messagebox.showinfo("已加入","任务已加入排队队列。")
-            else: self.last_dispatch_time=time.time(); self.cmd_queue.put(cmd); messagebox.showinfo("已发送",f"夹取指令已发送！\n检测物体 -> 【料框{bin_num}】")
+            else: self.last_dispatch_time=time.time(); self.cmd_queue.put(cmd); messagebox.showinfo("已发送","夹取指令已发送！\n检测物体 -> 【放置目标点】")
 
         # ── 两阶段精定位夹取 (D455 深度 + PCA 短轴对齐) ──
         def _pick_from_detection_two_stage(self):
@@ -885,7 +878,6 @@ def main():
             if not d.get('detected'): return messagebox.showwarning("未检测到","当前未发现物体。")
             bp=d.get('base_position_m',{})
             if not bp or not all(k in bp for k in('x','y','z')): return messagebox.showerror("坐标缺失","缺少 base_position_m。")
-            bin_num=self.bin_var.get()
             try: r=float(self.default_grasp_roll.get()); p=float(self.default_grasp_pitch.get()); y=float(self.default_grasp_yaw.get())
             except ValueError: return messagebox.showerror("姿态错误","R/P/Y 必须是数字。")
             qx,qy,qz,qw=euler_to_quaternion(r,p,y)
@@ -897,12 +889,12 @@ def main():
             dia_str=f"物体直径: {dia} m\n" if dia else ""
             txt=(f" 两阶段精定位夹取确认\n\n待机位检测坐标:\n  ({pp['x']:.3f}, {pp['y']:.3f}, {pp['z']:.3f})\n\n"
                  f"-> 机械臂移动到物体正上方\n-> YOLO 近距离二次检测 (D455 深度)\n-> PCA 短轴对齐生成夹爪朝向\n-> 以二次结果为准直接抓取\n\n"
-                 f"Place: 料框{bin_num} (关节空间预设点位)\n"
+                 f"Place: 放置目标点 (关节空间预设点位)\n"
                  f"{dia_str}\n确定发送？")
             if not messagebox.askyesno("确认两阶段精定位夹取",txt): return
-            cmd={"cmd":"sort_verify","pick":pp,"bin":bin_num,"pick_name":f"{d.get('object_name','物体')} (two-stage)","place_name":f"料框{bin_num}"}
+            cmd={"cmd":"sort_verify","pick":pp,"pick_name":f"{d.get('object_name','物体')} (two-stage)","place_name":"放置点"}
             if dia: cmd["object_diameter_m"]=float(dia)
-            sent_msg=f"两阶段精定位指令已发送！\n检测物体 -> 【料框{bin_num}】"
+            sent_msg="两阶段精定位指令已发送！\n检测物体 -> 【放置目标点】"
             queue_msg="两阶段精定位任务已加入排队队列。"
             if self.current_status=='busy':
                 if messagebox.askyesno("忙碌","加入排队队列？"):
@@ -917,7 +909,6 @@ def main():
             if not d.get('detected'): return messagebox.showwarning("未检测到","当前未发现物体。")
             bp=d.get('base_position_m',{})
             if not bp or not all(k in bp for k in('x','y','z')): return messagebox.showerror("坐标缺失","缺少 base_position_m。")
-            bin_num=self.bin_var.get()
             # pick 坐标仅作为 GraspNet 邻近过滤提示 (锁定目标物体), 最终位姿由 GraspNet 生成
             pp={'x':round(float(bp['x']),3),'y':round(float(bp['y']),3),'z':round(float(bp['z']),3)}
             # 直径优先用 D455 估计 (GraspNet 也会返回宽度, action 端以 GraspNet 宽度为准)
@@ -927,13 +918,13 @@ def main():
             txt=(f" GraspNet 6DoF 抓取确认\n\n待机位检测坐标 (邻近提示):\n  ({pp['x']:.3f}, {pp['y']:.3f}, {pp['z']:.3f})\n\n"
                  f"-> 机械臂回到待机位\n-> GraspNet 对 D455 深度图推理 (6DoF 位姿)\n"
                  f"-> 短边对齐 + 中心抓取 + approach 朝下安全检查\n-> 直接下降抓取\n\n"
-                 f"Place: 料框{bin_num} (关节空间预设点位)\n"
+                 f"Place: 放置目标点 (关节空间预设点位)\n"
                  f"{dia_str}\n⚠️ 需已启动 graspnet_service_node.py\n\n确定发送？")
             if not messagebox.askyesno("确认 GraspNet 抓取",txt): return
-            cmd={"cmd":"sort_graspnet","pick":pp,"bin":bin_num,
-                 "pick_name":f"{d.get('object_name','物体')} (graspnet)","place_name":f"料框{bin_num}"}
+            cmd={"cmd":"sort_graspnet","pick":pp,
+                 "pick_name":f"{d.get('object_name','物体')} (graspnet)","place_name":"放置点"}
             if dia: cmd["object_diameter_m"]=float(dia)
-            sent_msg=f"GraspNet 抓取指令已发送！\n检测物体 -> 【料框{bin_num}】"
+            sent_msg="GraspNet 抓取指令已发送！\n检测物体 -> 【放置目标点】"
             queue_msg="GraspNet 抓取任务已加入排队队列。"
             if self.current_status=='busy':
                 if messagebox.askyesno("忙碌","加入排队队列？"):
@@ -1074,7 +1065,6 @@ def main():
             bc = det.get('base_coords', {})
             if not bc or not all(k in bc for k in ('x', 'y', 'z')):
                 return messagebox.showerror("坐标缺失", "缺少 base_coords 字段, 无法发送抓取命令。")
-            bin_num = self.bin_var.get()
             pp = {'x': round(float(bc['x']), 3),
                   'y': round(float(bc['y']), 3),
                   'z': round(float(bc['z']), 3)}
@@ -1094,7 +1084,7 @@ def main():
             txt = (f"蓝方块抓取确认\n\nPick: blue_block (detected)\n"
                    f"  坐标: ({pp['x']:.3f}, {pp['y']:.3f}, {pp['z']:.3f})\n"
                    f"{surf_str}{size_str}{rot_str}\n"
-                   f"Place: 料框{bin_num} (关节空间预设点位)\n\n确定发送？")
+                   f"Place: 放置目标点 (关节空间预设点位)\n\n确定发送？")
             if not messagebox.askyesno("确认蓝方块抓取", txt):
                 return
             cmd = {
@@ -1105,11 +1095,10 @@ def main():
                 "block_length_m": block_l,
                 "block_height_m": block_h,
                 "block_rotation_deg": rot,
-                "bin": bin_num,
                 "pick_name": "blue_block (detected)",
-                "place_name": f"料框{bin_num}",
+                "place_name": "放置点",
             }
-            sent_msg = f"蓝方块抓取指令已发送！\nblue_block -> 【料框{bin_num}】"
+            sent_msg = "蓝方块抓取指令已发送！\nblue_block -> 【放置目标点】"
             queue_msg = "蓝方块抓取任务已加入排队队列。"
             if self.current_status == 'busy':
                 if messagebox.askyesno("忙碌", "加入排队队列？"):
@@ -1128,7 +1117,6 @@ def main():
             if not bc or not all(k in bc for k in ('x', 'y', 'z')):
                 self._auto_sort_log("蓝方块 base_coords 缺失, 跳过")
                 return
-            bin_num = self.bin_var.get()
             pp = {'x': round(float(bc['x']), 3),
                   'y': round(float(bc['y']), 3),
                   'z': round(float(bc['z']), 3)}
@@ -1140,13 +1128,12 @@ def main():
                 "block_length_m": det.get('block_length_m'),
                 "block_height_m": det.get('block_height_m'),
                 "block_rotation_deg": det.get('block_rotation_deg'),
-                "bin": bin_num,
                 "pick_name": f"blue_block (auto-sort{'-retry' if retry else ''})",
-                "place_name": f"料框{bin_num}",
+                "place_name": "放置点",
             }
             self.last_dispatch_time = time.time()
             self.cmd_queue.put(cmd)
-            self._auto_sort_log(f"蓝方块分拣: →料框{bin_num} {'[重试]' if retry else ''}")
+            self._auto_sort_log(f"蓝方块分拣: →放置目标点 {'[重试]' if retry else ''}")
 
         def _update_blue_block_detection_panel(self, det):
             """更新蓝方块检测信息面板 (蓝方块模式专用字段)。
@@ -1301,8 +1288,7 @@ def main():
         def add_to_queue(self):
             pn=self.pick_combo.get()
             if not pn: return messagebox.showerror("错误","请选择夹取点！")
-            bin_num=self.bin_var.get()
-            self.task_queue.append({"cmd":"sort","pick":self.poses[pn],"bin":bin_num,"pick_name":pn,"place_name":f"料框{bin_num}"})
+            self.task_queue.append({"cmd":"sort","pick":self.poses[pn],"pick_name":pn,"place_name":"放置点"})
             self.refresh_queue_listbox()
 
         def remove_from_queue(self):
@@ -1329,10 +1315,9 @@ def main():
             if self.current_status=='busy': return messagebox.showwarning("忙碌","机械臂正在执行动作。")
             pn=self.pick_combo.get()
             if not pn: return messagebox.showerror("错误","请选择夹取点！")
-            bin_num=self.bin_var.get()
             self.last_dispatch_time=time.time()
-            self.cmd_queue.put({"cmd":"sort","pick":self.poses[pn],"bin":bin_num,"pick_name":pn,"place_name":f"料框{bin_num}"})
-            messagebox.showinfo("已发送",f"分拣指令已发送！\n【{pn}】->【料框{bin_num}】")
+            self.cmd_queue.put({"cmd":"sort","pick":self.poses[pn],"pick_name":pn,"place_name":"放置点"})
+            messagebox.showinfo("已发送",f"分拣指令已发送！\n【{pn}】->【放置目标点】")
 
         def send_quit(self):
             if messagebox.askyesno("确认","让服务端回到待机位、关闭夹爪并结束程序。确定？"):
@@ -1501,15 +1486,6 @@ def main():
             try:
                 self.auto_sort_state_var.set(f"[{self.auto_sort_state}] {msg}")
             except: pass
-
-        def _bin_for_object(self, name):
-            """分拣规则: apple/green apple/strawberry/orange→料框1, lemon/honey peach/pear→料框2。"""
-            n = (name or '').lower().strip()
-            for k in ('apple', 'green apple', 'strawberry', 'orange'):
-                if k in n: return 1
-            for k in ('lemon', 'honey peach', 'pear'):
-                if k in n: return 2
-            return 1  # 未知默认料框1
 
         def _pick_object_right_of_line(self, line_u=None, require_base=True):
             """筛选 x2 ≥ 分界线 且有 base_position_m 的物体, 返回 center_u 最大的 (最右侧, 最远离分界线)。
@@ -1715,13 +1691,12 @@ def main():
             pick = {'x': round(float(bp['x']), 3), 'y': round(float(bp['y']), 3), 'z': round(float(bp['z']), 3),
                     'qx': round(qx, 6), 'qy': round(qy, 6), 'qz': round(qz, 6), 'qw': round(qw, 6)}
             name = obj.get('object_name', '物体')
-            bin_num = self._bin_for_object(name)
             # 优先用 D455 估计直径, fallback 预设尺寸
             dia = obj.get('estimated_diameter_m') or obj.get('size_m', {}).get('diameter')
             cmd = {"cmd": "sort" if static_mode else "sort_dynamic",
-                   "pick": pick, "bin": bin_num,
+                   "pick": pick,
                    "pick_name": f"{name} (auto-sort{'-retry' if retry else ''})",
-                   "place_name": f"料框{bin_num}"}
+                   "place_name": "放置点"}
             method_tag = "single" if static_mode else "dynamic"
             if dia: cmd["object_diameter_m"] = round(float(dia), 3)
             if not static_mode:
@@ -1733,7 +1708,7 @@ def main():
                 self._dynamic_busy = True
             self.last_dispatch_time = time.time()
             self.cmd_queue.put(cmd)
-            self._auto_sort_log(f"分拣[{method_tag}]: {name}→料框{bin_num} {'[重试]' if retry else ''}")
+            self._auto_sort_log(f"分拣[{method_tag}]: {name}→放置目标点 {'[重试]' if retry else ''}")
 
         def _set_manual_buttons_state(self, state):
             """批量禁用/启用手动按钮。state: tk.NORMAL 或 tk.DISABLED。"""
