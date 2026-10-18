@@ -52,6 +52,12 @@ class Calibration:
         if action=='stop':session['proc'].stop()
         else:session['proc'].write({'capture':'\n','undo':'d\n','solve':'q\n','finish':'c\n'}[action])
         return {'sent':action}
+    def stop_motion_verifications(self):
+        for session in list(self.sessions.values()):
+            if session['kind']=='verify-tcp':
+                try:session['proc'].stop()
+                except ProcessLookupError:pass
+        return {'state':'verification_stop_requested'}
     def poll(self):
         for sid,s in list(self.sessions.items()):
             code=s['proc'].proc.poll()
@@ -102,11 +108,14 @@ class Calibration:
             target=self.root/f'config/calibration/{camera_id}/intrinsics.yaml';affected=[('detector','dual')]
         elif kind=='handeye':
             finite(data['position'],3);finite(data['orientation'],4)
-            expected={'mode':'eye_to_hand' if camera_id=='d455' else 'eye_in_hand','transform_parent':'base_link' if camera_id=='d455' else 'link6','transform_child':'camera_color_optical_frame' if camera_id=='d455' else 'dabai_color_optical_frame','quaternion_order':'xyzw'}
+            expected={'mode':'eye_to_hand' if camera_id=='d455' else 'eye_in_hand','transform_parent':'base_link' if camera_id=='d455' else meta.get('robot_pose_frame','link6'),'transform_child':'camera_color_optical_frame' if camera_id=='d455' else 'dabai_color_optical_frame','quaternion_order':'xyzw'}
+            if camera_id=='dabai' and expected['transform_parent'] not in ('link6','tcp_link'):raise ValueError('Dabai 父坐标系须为 link6 或 tcp_link')
+            if camera_id=='dabai' and expected['transform_parent']=='tcp_link':finite(meta.get('tcp_offset'),6)
             for key,wanted in expected.items():
                 if meta.get(key,data.get(key,wanted))!=wanted:raise ValueError('标定坐标约定不一致: '+key)
             if sum(v*v for v in data['orientation'])<1e-12:raise ValueError('四元数不能为零')
             target=self.root/('config/calibration/d455_eye_to_hand.json' if camera_id=='d455' else 'config/calibration/dabai_eye_in_hand.json');affected=[('detector','dual'),('camera_tf',camera_id)]
+            if camera_id=='dabai':affected += [('arm','d455'),('workbench','d455')] # wrist collision body uses this calibration
         elif kind=='tcp':
             finite(data.get('tcp_offset'),6)
             if any(abs(v)>math.pi*2 for v in data['tcp_offset'][3:]):raise ValueError('TCP 姿态须为弧度')
@@ -158,7 +167,13 @@ class Calibration:
     def restore(self,backup):
         folder=pathlib.Path(backup);record=json.loads((folder/'selection.json').read_text());target=self.root/record['target']
         if not (folder/'active').exists():raise ValueError('该版本没有上一个活动副本')
-        target.write_bytes((folder/'active').read_bytes());(self.root/'config/calibration/manifest.json').write_bytes((folder/'manifest.json').read_bytes())
+        with self.lock:
+            target.write_bytes((folder/'active').read_bytes())
+            manifest_path=self.root/'config/calibration/manifest.json';current=json.loads(manifest_path.read_text());previous=json.loads((folder/'manifest.json').read_text());key=record['kind']+':'+record['camera_id']
+            old=previous.get('workbench_selections',{}).get(key)
+            if old:current.setdefault('workbench_selections',{})[key]=old
+            else:current.setdefault('workbench_selections',{}).pop(key,None)
+            atomic_json(manifest_path,current)
         return {'state':'pending_restart','affected':record['affected']}
 
 

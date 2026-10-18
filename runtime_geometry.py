@@ -205,8 +205,11 @@ def add_dabai_mount(robot_xml, semantic_xml):
     cfg=json.loads((rc.workspace_root()/'config/robot/dabai_mount.json').read_text())
     if not cfg['enabled']:return robot_xml,semantic_xml
     he=rc.load_handeye('dabai')
-    if he['parent']!='link6':raise ValueError('Mount model requires flange-relative Dabai calibration')
     C=transform(he['position'],he['orientation'])
+    if he['parent']=='tcp_link':
+        offset=np.asarray(he['raw']['metadata']['tcp_offset'],dtype=float)
+        C=transform(offset[:3],Rotation.from_euler('xyz',offset[3:]).as_quat())@C
+    elif he['parent']!='link6':raise ValueError('Dabai mount requires an actual flange/TCP parent')
     size=np.asarray(cfg['body_box_size_m'],float);centre=np.asarray(cfg['body_center_optical_m'],float)
     anchor=np.asarray(cfg['bracket_flange_anchor_m'],float);thickness=float(cfg['bracket_thickness_m'])
     if (size.shape!=(3,) or centre.shape!=(3,) or anchor.shape!=(3,) or

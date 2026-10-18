@@ -23,6 +23,7 @@ class RosAdapter(Node):
         self.subs.append(self.create_subscription(String,'/workbench/vision_geometry',self.geometry_cb,10))
         self.subs.extend([self.create_subscription(JointState,'/feedback/joint_states',self.feedback,qos_profile_sensor_data),
             self.create_subscription(PoseStamped,'/feedback/tcp_pose',self.pose,qos_profile_sensor_data),
+            self.create_subscription(String,'/workbench/task_ack',lambda m:self.s.tasks.acknowledge(json.loads(m.data)),10),
             self.create_subscription(String,'/sorting/cycle_result',self.result,10),
             self.create_subscription(String,'/sorting_status',lambda m:self.s.emit('task.status',{'action_state':m.data}),10),
             self.create_subscription(Log,'/rosout',self.rosout,100)])
@@ -34,7 +35,8 @@ class RosAdapter(Node):
             data=json.loads(msg.data)
             for cam,row in data.items():
                 if cam not in ('d455','dabai'):continue
-                parent='base_link' if cam=='d455' else 'link6'
+                import runtime_config
+                parent=runtime_config.load_handeye(cam)['parent']
                 child='camera_color_optical_frame' if cam=='d455' else 'dabai_color_optical_frame'
                 try:
                     t=self.tf_buffer.lookup_transform(parent,child,rclpy.time.Time()).transform

@@ -33,6 +33,6 @@ private:
  QJsonObject status_,placements_,teachDraft_;QMap<QString,QJsonObject> detections_;QJsonArray logRows_,calibrationFiles_;QJsonObject parameterGroups_;
  QMap<QString,QMap<QString,QDoubleSpinBox *>> parameterFields_;QMap<QString,QLabel *> componentStates_,healthBadges_;
  bool logsDirty_=false;
- QString calibrationSession_,lastBackup_,lastExport_,selectedSession_;QJsonArray affected_;int selectedTrack_=-1;bool syncing_=false;QVector<double> lastActual_;
+ QString calibrationSession_,lastBackup_,lastExport_,selectedSession_;QJsonArray affected_;int selectedTrack_=-1;bool syncing_=false;QVector<double> lastActual_,observedGoal_;
  QTimer *refreshTimer_;
 };

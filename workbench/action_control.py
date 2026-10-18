@@ -5,6 +5,16 @@ from .settings import JsonStore
 import runtime_config
 
 class WorkbenchControl:
+    def workbench_interrupted(self):
+        return getattr(self,'_workbench_recover',False) or getattr(self,'_workbench_cycle_epoch',getattr(self,'_workbench_epoch',0))!=getattr(self,'_workbench_epoch',0)
+    def validate_workbench_command(self,command):
+        import time
+        if command.get('workbench') and command.get('expires_at',float('inf'))<time.time():raise ValueError('该次派发已过期，请重新选择目标开始')
+    def workbench_ack(self,command,accepted,reason=''):
+        if command.get('workbench') and command.get('cycle_id'):
+            from std_msgs.msg import String
+            if not hasattr(self,'_workbench_ack_pub'):self._workbench_ack_pub=self.create_publisher(String,'/workbench/task_ack',10)
+            self._workbench_ack_pub.publish(String(data=json.dumps(dict(cycle_id=command['cycle_id'],accepted=accepted,error=reason))))
     def _workbench_control(self,msg):
         try:
             op=json.loads(msg.data)['op']
@@ -40,7 +50,7 @@ class WorkbenchControl:
         """Break an old action wait when its T1 is being replaced; normal algorithms unchanged."""
         epoch=getattr(self,'_workbench_epoch',0)
         while not future.done():
-            if getattr(self,'_workbench_recover',False) or epoch!=getattr(self,'_workbench_epoch',0):
+            if self.workbench_interrupted() or epoch!=getattr(self,'_workbench_epoch',0):
                 def cancel_late(f):
                     if not f.cancelled():
                         handle=f.result()

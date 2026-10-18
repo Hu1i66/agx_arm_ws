@@ -54,7 +54,7 @@ void Ui::ImageView::paintEvent(QPaintEvent *){
  }
 }
 void Ui::ImageView::mousePressEvent(QMouseEvent *event){
- auto r=imageRect();if(!r.contains(event->pos()))return;double x=(event->x()-r.x())*640./r.width(),y=(event->y()-r.y())*480./r.height();
+ auto r=imageRect();if(!r.contains(event->pos()))return;double x=(event->x()-r.x())*(frame.isNull()?640:frame.width())/double(r.width()),y=(event->y()-r.y())*(frame.isNull()?480:frame.height())/double(r.height());
  for(auto row:detection["objects"].toArray()){auto o=row.toObject(),b=o["bbox_pixel"].toObject();if(x>=b["x1"].toDouble()&&x<=b["x2"].toDouble()&&y>=b["y1"].toDouble()&&y<=b["y2"].toDouble()){selected=o["track_id"].toInt();if(picked)picked(selected);update();break;}}
 }
 

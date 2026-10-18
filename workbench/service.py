@@ -15,11 +15,12 @@ class Workbench:
         self.root=pathlib.Path(root);self.clients=set();self.clients_lock=threading.Lock()
         self.logs=Logs(self.root/'log/workbench');self.notice=ReconnectNotice();self.last_log_poll=0.
         self.capture=Capture(self.root/'data/datasets',self.emit,metadata=self.capture_sources)
-        self.settings=JsonStore(self.root/'config/workbench/settings.json',{'schema_version':1,'manual':{'velocity':.2,'acceleration':.2},'static':{'approach_height_m':.06,'soft_lift_m':.035,'gripper_force_n':1.5,'gripper_settle_s':.05},'camera':{},'vision':{}})
+        self.settings=JsonStore(self.root/'config/workbench/settings.json',{'schema_version':1,'manual':{'velocity':.2,'acceleration':.2},'static':{'approach_height_m':.06,'gripper_force_n':1.5,'gripper_settle_s':.05},'camera':{},'vision':{}})
         self.saved_poses=JsonStore(rc.resolve_resource('saved_poses'),{})
         self.placements=PlacementStore(self.root/'config/workbench/placements.json')
         self.ros=None;self.belt=None;self.belt_commanded=None;self.belt_lock=threading.RLock()
         self.tasks=Tasks(self.send,self.control,self.conveyor,self.emit)
+        self.tasks.receiver_alive=lambda:self.ros is not None and self.ros.count_subscribers('/sorting_cmds')>0
         self.calibration=Calibration(self.root,self.emit)
         self.components=Components(self.root,control=self.tasks.recovery,emit=self.emit,conveyor=self.conveyor)
         if with_ros:
@@ -135,7 +136,13 @@ class Workbench:
             if args.get('pick',{}).get('_reference_frame')=='legacy_link6':raise ValueError('旧法兰坐标缺少朝向，请从实际TCP反馈重新保存')
             cmd=args.get('cmd');topic='/emergency_stop' if cmd in ('emergency_stop','standby','reset') else '/sorting_cmds'
             if topic=='/emergency_stop':args=dict(args,req='estop' if cmd=='emergency_stop' else cmd)
-            if cmd=='emergency_stop':self.tasks.pause=True;self.tasks.continuous=False;self.conveyor('stop')
+            if cmd=='emergency_stop':
+                self.tasks.pause=True;self.tasks.continuous=False;self.tasks.queue_running=False
+                self.send(topic,args) # independent arm stop must precede serial IO
+                self.calibration.stop_motion_verifications()
+                try:self.conveyor('stop')
+                except Exception as exc:self.logs.add('急停传送带',str(exc));return {'state':'arm_stop_sent','conveyor_error':str(exc)}
+                return {'state':'sent'}
             self.send(topic,args);return {'state':'sent'}
         if op in ('motion.pause_after_cycle','session.close'):return self.tasks.request_pause_after_cycle()
         if op=='conveyor.send':return self.conveyor(args['action'])

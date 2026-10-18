@@ -5,9 +5,12 @@ class Tasks:
     def __init__(self,send,control,conveyor,emit):
         self.send=send;self.control=control;self.conveyor=conveyor;self.emit=emit
         self.lock=threading.RLock();self.mode='d455-static';self.continuous=False
-        self.pause=True;self.inflight=None;self.detections={};self.phase='paused';self.stopped_at=0.;self.failed=set();self.abandon_at=0.;self.queued=[];self.queue_running=False
+        self.pause=True;self.inflight=None;self.detections={};self.phase='paused';self.stopped_at=0.;self.failed=set();self.abandon_at=0.;self.queued=[];self.queue_running=False;self.sent_at=0.;self.acknowledged=False;self.receiver_alive=lambda:True;self.receiver_missing_at=None
     def detection(self,camera,data):
-        with self.lock:self.detections[camera]=(data,time.time())
+        with self.lock:
+            old=self.detections.get(camera,({},0))[0]
+            if camera=='d455' and old.get('motion_session')!=data.get('motion_session'):self.failed.clear()
+            self.detections[camera]=(data,time.time())
     def select(self,camera,track_id,session=None):
         data,at=self.detections.get(camera,({},0))
         if time.time()-at>1.:raise ValueError('等待当前相机的新检测结果')
@@ -23,10 +26,12 @@ class Tasks:
             motion_session=data.get('motion_session'),vision_target=True,detection_stamp=data.get('header_stamp',time.time()),
             object_name=name,pick_name=name,pick=dict(bp,qx=1.,qy=0.,qz=0.,qw=0.),
             grasp_geometry=obj.get('grasp_geometry'),object_diameter_m=obj.get('estimated_diameter_m'),
-            cycle_id=uuid.uuid4().hex,workbench=True,start_intent=True)
-        self.inflight=command['cycle_id'];self.send('/sorting_cmds',command);self.phase='grasping';return command
+            cycle_id=uuid.uuid4().hex,workbench=True,start_intent=True,expires_at=time.time()+3.)
+        self.sent_at=time.monotonic();self.acknowledged=False;self.receiver_missing_at=None
+        self.inflight_source=(camera,data.get('motion_session'));self.inflight=command['cycle_id'];self.send('/sorting_cmds',command);self.phase='grasping';return command
     def start(self,mode,continuous=False,track_id=None,session=None):
         with self.lock:
+            if self.inflight:raise ValueError('当前物体尚未结束，请等待完成或停止当前动作')
             self.mode=mode;self.pause=False;self.continuous=bool(continuous);self.failed.clear()
             self.control('clear_pause');self.phase='waiting'
             camera='dabai' if mode=='dabai-static' else 'd455'
@@ -47,19 +52,37 @@ class Tasks:
     def result(self,result):
         with self.lock:
             if not self.inflight:return
-            if result.get('cycle_id') and result['cycle_id']!=self.inflight:return
-            self.inflight=None;self.failed.update(result.get('failed_track_ids',[]))
-            if result.get('ok') is False:self.pause=True;self.continuous=False
+            if result.get('cycle_id')!=self.inflight:return
+            self.inflight=None
+            camera,session=getattr(self,'inflight_source',('d455',None))
+            if session==self.detections.get(camera,({},0))[0].get('motion_session'):self.failed.update(result.get('failed_track_ids',[]))
+            if result.get('ok') is False or result.get('cycle_success')==0:self.pause=True;self.continuous=False;self.queue_running=False
             if self.pause or not (self.continuous or self.queue_running):self.conveyor('stop');self.phase='paused'
             else:self.phase='waiting'
-            self.emit('task.status',dict(self.status(),result=result))
+            self.emit('task.status',dict(self.status(),result=result,**({'error':result['error']} if result.get('error') else {})))
+    def acknowledge(self,data):
+        with self.lock:
+            if data.get('cycle_id')!=self.inflight:return
+            if data.get('accepted'):self.acknowledged=True
+            else:self.result(dict(data,ok=False))
+    def _receiver_check(self):
+        if not self.inflight:return
+        now=time.monotonic();alive=self.receiver_alive()
+        if alive:self.receiver_missing_at=None
+        elif self.receiver_missing_at is None:self.receiver_missing_at=now
+        missing=not alive and (not self.acknowledged or now-self.receiver_missing_at>2.)
+        if now-self.sent_at>3. and (not self.acknowledged or missing):
+            reason='动作节点未确认接收或已断开，本次派发结束；由你明确重新开始'
+            self.result(dict(cycle_id=self.inflight,ok=False,error=reason))
     def tick(self):
         with self.lock:
+            self._receiver_check()
             if self.pause or self.inflight:return
             if self.queue_running:
                 if not self.queued:self.queue_running=False;self.pause=True;self.phase='paused';return
-                command=dict(self.queued.pop(0),cycle_id=uuid.uuid4().hex,workbench=True,start_intent=True)
+                command=dict(self.queued.pop(0),cycle_id=uuid.uuid4().hex,workbench=True,start_intent=True,expires_at=time.time()+3.)
                 if command.get('pick',{}).get('_reference_frame')=='legacy_link6':raise ValueError('旧法兰坐标缺少朝向，请从实际TCP反馈重新保存该点')
+                self.sent_at=time.monotonic();self.acknowledged=False;self.receiver_missing_at=None
                 self.inflight=command['cycle_id'];self.send('/sorting_cmds',command);self.phase='grasping';return
             if not self.continuous:return
             data,at=self.detections.get('d455',({},0))

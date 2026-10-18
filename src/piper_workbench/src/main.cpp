@@ -16,8 +16,9 @@ int main(int argc, char **argv) {
   auto args = app.arguments();
   if(args.contains("--size")){auto size=args.value(args.indexOf("--size")+1).split("x");if(size.size()==2)window->resize(size[0].toInt(),size[1].toInt());}
   if(args.contains("--page"))window->showPage(args.value(args.indexOf("--page")+1).toInt());
-  if (args.contains("--screenshot")) {
-    QString path = args.value(args.indexOf("--screenshot") + 1);
+  QString capturePath=args.contains("--screenshot")?args.value(args.indexOf("--screenshot")+1):QString::fromLocal8Bit(qgetenv("PIPER_WORKBENCH_SCREENSHOT"));
+  if (!capturePath.isEmpty()) {
+    QString path=capturePath;
     QTimer::singleShot(6500, window.get(), [&window, path] {
       window->raise();window->activateWindow();QApplication::processEvents();
       QTimer::singleShot(250,window.get(),[&window,path]{window->windowHandle()->screen()->grabWindow(window->winId()).save(path);
@@ -25,5 +26,6 @@ int main(int argc, char **argv) {
     });
     QTimer::singleShot(7500, &app, &QApplication::quit);
   }
+  QTimer rosShutdown;QObject::connect(&rosShutdown,&QTimer::timeout,&app,[&app]{if(!rclcpp::ok())app.quit();});rosShutdown.start(200);
   int result = app.exec(); window.reset(); rclcpp::shutdown(); return result;
 }

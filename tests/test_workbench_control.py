@@ -30,3 +30,11 @@ def test_recovery_abandons_wait_and_cancels_late_goal():
     calls=[];future=Future()
     assert n._wait_control_future(future) is False
     future.cb(future);assert calls==['cancel']
+
+def test_completed_recovery_does_not_revive_old_cycle():
+    n=Fake();n._workbench_epoch=0;n._workbench_cycle_epoch=0
+    n._workbench_control(types.SimpleNamespace(data=json.dumps({'op':'recovery_prepare'})))
+    n._workbench_control(types.SimpleNamespace(data=json.dumps({'op':'recovery_complete'})))
+    assert n.workbench_interrupted()
+    n._workbench_cycle_epoch=n._workbench_epoch
+    assert not n.workbench_interrupted()

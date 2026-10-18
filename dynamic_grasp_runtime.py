@@ -57,7 +57,7 @@ class DynamicGraspRunner:
 
     def spin(self):
         rclpy.spin_once(self.n, timeout_sec=0.01)
-        if not rclpy.ok() or self.n._emergency_flag or getattr(self.n, "_workbench_recover", False):
+        if not rclpy.ok() or self.n._emergency_flag or getattr(self.n, "workbench_interrupted", lambda:False)():
             raise RuntimeError('动态抓取已中断，不再派发后续动作')
 
     def actual_joints(self):

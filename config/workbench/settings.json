@@ -6,7 +6,6 @@
   },
   "static": {
     "approach_height_m": 0.06,
-    "soft_lift_m": 0.035,
     "gripper_force_n": 1.5,
     "gripper_settle_s": 0.05,
     "joint_velocity_scaling": 0.65,

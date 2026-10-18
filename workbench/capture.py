@@ -15,7 +15,7 @@ class Capture:
     def _session(self):
         if self.session is None:
             self.session=self.root/(datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')+'_'+uuid.uuid4().hex[:6]);self.session.mkdir(parents=True)
-    def once(self,cameras):
+    def once(self,cameras,emit=True):
         with self.lock:
             self._session();errors={}
             for camera in cameras:
@@ -28,7 +28,8 @@ class Capture:
                 self.records.append(dict(camera=camera,stamp_s=stamp,path=str(target.relative_to(self.session)),width=pixels.shape[1],height=pixels.shape[0],configuration=self.metadata()))
             atomic_json(self.session/'session.json',dict(kind='raw_rgb_dataset',images=self.records))
             result=dict(count=self.count,directory=str(self.session),errors=errors,images=self.records[-12:])
-            self.emit('capture.progress',result);return result
+            if emit:self.emit('capture.progress',result)
+            return result
     def next_frame(self,cameras,timeout=2.):
         if not cameras:raise ValueError('请选择至少一台相机')
         with self.condition:
@@ -38,8 +39,9 @@ class Capture:
                 self.condition.wait(max(0.,deadline-time.monotonic()))
             if generation!=self.generation:return {'state':'cancelled','count':self.count}
             fresh=[c for c in cameras if c in self.frames and self.frames[c][1]!=baseline[c]]
-            result=self.once(fresh)
+            result=self.once(fresh,emit=False)
             result['errors'].update({c:'等待下一张原始图像' for c in cameras if c not in fresh})
+            self.emit('capture.progress',result)
             return result
 
     def start(self,cameras,interval=2.):

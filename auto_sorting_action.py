@@ -436,7 +436,7 @@ class MoveItActionClient(WorkbenchControl, Node):
         """
         # 需要 spin_once 刷新订阅回调 (分拣序列内不会自动 spin)
         rclpy.spin_once(self, timeout_sec=0.01)
-        if self._workbench_recover:
+        if self.workbench_interrupted():
             return True  # recovery cancels only: no release or home motion
         if not self._emergency_flag and self._emergency_req_type != "reset":
             return False
@@ -734,14 +734,15 @@ class MoveItActionClient(WorkbenchControl, Node):
     def cmd_callback(self, msg):
         try:
             command=json.loads(msg.data);camera=command.get('camera_id','d455')
+            self.validate_workbench_command(command)
             if command.get("workbench") and command.get("start_intent"):
                 self._pause_after_cycle=False
             assert_visual_target_fresh(command)
             if camera not in ('d455','dabai'):raise ValueError('未知抓取相机')
             if camera=='dabai' and command.get('cmd')=='sort_dynamic':raise ValueError('Dabai首轮仅支持静态抓取')
         except (ValueError,TypeError) as exc:
-            self.get_logger().error(str(exc));return
-        self.cmd_queue.put(msg.data)
+            self.get_logger().error(str(exc));self.workbench_ack(locals().get('command',{}),False,str(exc));return
+        self.cmd_queue.put(msg.data);self.workbench_ack(command,True)
         
     def _check_calibrated_tool(self):
         if time.monotonic()-getattr(self,'_tool_check_at',-100.)>2.:
@@ -766,7 +767,7 @@ class MoveItActionClient(WorkbenchControl, Node):
         planning_attempts=3,
         allowed_planning_time=3.0,
     ):
-        if getattr(self, '_workbench_recover', False):return False
+        if self.workbench_interrupted():return False
         self._check_calibrated_tool()
         goal_msg = MoveGroup.Goal()
         goal_msg.request.workspace_parameters.header.stamp = self.get_clock().now().to_msg()
@@ -818,7 +819,7 @@ class MoveItActionClient(WorkbenchControl, Node):
 
         self.get_logger().info('⭕ 目标被接受，正在执行...')
         self._active_goal_handle = goal_handle
-        if self._workbench_recover:
+        if self.workbench_interrupted():
             goal_handle.cancel_goal_async();return False
         get_result_future = goal_handle.get_result_async()
         if not self._wait_control_future(get_result_future):return False
@@ -1005,7 +1006,7 @@ class MoveItActionClient(WorkbenchControl, Node):
         Returns:
             bool: 是否成功
         """
-        if getattr(self, '_workbench_recover', False):return False
+        if self.workbench_interrupted():return False
         self._check_calibrated_tool()
         if not joint_waypoints:
             return False
@@ -1053,7 +1054,7 @@ class MoveItActionClient(WorkbenchControl, Node):
             self.get_logger().error("❌ 关节轨迹被拒绝执行")
             return False
         self._active_goal_handle = goal_handle
-        if self._workbench_recover:
+        if self.workbench_interrupted():
             goal_handle.cancel_goal_async();return False
         get_result_future = goal_handle.get_result_async()
         if not self._wait_control_future(get_result_future):return False
@@ -1258,7 +1259,7 @@ class MoveItActionClient(WorkbenchControl, Node):
         return p
         
     def execute_cartesian_path(self, waypoints, desc, fraction_threshold=0.85, jump_threshold=1.6):
-        if getattr(self, '_workbench_recover', False):return False
+        if self.workbench_interrupted():return False
         self._check_calibrated_tool()
         self.get_logger().info(f"🚀 正在快速计算(笛卡尔直线连线) -> {desc}")
         if not self._cartesian_client.wait_for_service(timeout_sec=1.5):
@@ -1334,7 +1335,7 @@ class MoveItActionClient(WorkbenchControl, Node):
             return False
             
         self._active_goal_handle = goal_handle
-        if self._workbench_recover:
+        if self.workbench_interrupted():
             goal_handle.cancel_goal_async();return False
         res_future = goal_handle.get_result_async()
         if not self._wait_control_future(res_future):return False
@@ -1766,7 +1767,7 @@ class MoveItActionClient(WorkbenchControl, Node):
                 return False
             if approach_target_z is not None:
                 target = dict(pose_dict, z=float(approach_target_z))
-                plan = self._plan_tool_axis_approach(target, seed, original, auto_grasp)
+                plan = self._plan_tool_axis_approach(target, seed, original, auto_grasp, pregrasp_m=getattr(self,'_static_cycle_settings',{}).get('approach_height_m',.06))
                 if plan is None:
                     self.get_logger().warning(f'{self._active_camera}未找到可达且无碰撞的工具轴接近路径，目标={target}')
                     return False
@@ -1786,7 +1787,7 @@ class MoveItActionClient(WorkbenchControl, Node):
             self.get_logger().info(f'{self._active_camera}工具轴接近: 自动={auto_grasp} 倾角={tilt}deg '
                                    f'RPY={np.round(rpy, 1).tolist()} J6={np.degrees(joints[5]):.1f}deg '
                                    f'方向={getattr(self, "last_grasp_axis_mode", "固定姿态")} '
-                                   f'预抓取点={candidate}; 预留距离=0.06m 额外深入={self.last_grasp_extra_depth if approach_target_z is not None else 0.0}m')
+                                   f'预抓取点={candidate}; 预留距离={getattr(self, "_static_cycle_settings", {}).get("approach_height_m",.06)}m 额外深入={self.last_grasp_extra_depth if approach_target_z is not None else 0.0}m')
             return True
 
         if self.enable_ik and self.ik_solver is not None:
@@ -1870,7 +1871,7 @@ class MoveItActionClient(WorkbenchControl, Node):
         allow_position_only_fallback=True,
         planning_mode='normal',
     ):
-        if getattr(self, '_workbench_recover', False):return False
+        if self.workbench_interrupted():return False
         self._check_calibrated_tool()
         self.get_logger().info(f"🚀 正在规划(笛卡尔位置) -> {desc}")
 
@@ -2070,7 +2071,7 @@ class MoveItActionClient(WorkbenchControl, Node):
                 return False
                 
             self._active_goal_handle = goal_handle
-            if self._workbench_recover:
+            if self.workbench_interrupted():
                 goal_handle.cancel_goal_async();return False
             res_future = goal_handle.get_result_async()
             if not self._wait_control_future(res_future):return False
@@ -2091,7 +2092,7 @@ class MoveItActionClient(WorkbenchControl, Node):
         return False
 
     def _try_gripper_action(self, joint_names, positions, timeout_sec=1.0):
-        if getattr(self, '_workbench_recover', False):return False
+        if self.workbench_interrupted():return False
         if not self._gripper_action_client.wait_for_server(timeout_sec=timeout_sec):
             return False
 
@@ -2112,7 +2113,7 @@ class MoveItActionClient(WorkbenchControl, Node):
             return False
 
         self._active_goal_handle = goal_handle
-        if self._workbench_recover:
+        if self.workbench_interrupted():
             goal_handle.cancel_goal_async();return False
         get_result_future = goal_handle.get_result_async()
         if not self._wait_control_future(get_result_future):return False
@@ -2124,7 +2125,7 @@ class MoveItActionClient(WorkbenchControl, Node):
     def _publish_gripper_joint_state(self, target_pos, force=None):
         # Unified fallback for both real arm and simulation bridge.
         # effort 字段 = 夹持力 (N), agx_ctrl_single_node 读取后传给 gripper.move(width, force)
-        if getattr(self, '_workbench_recover', False):return False
+        if self.workbench_interrupted():return False
         msg = JointState()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.name = ['gripper']
@@ -2134,7 +2135,7 @@ class MoveItActionClient(WorkbenchControl, Node):
         self._joint_states_pub.publish(msg)
 
     def operate_gripper(self, target_pos, desc):
-        if getattr(self, '_workbench_recover', False):return False
+        if self.workbench_interrupted():return False
         self.get_logger().info(f"✊ 正在执行夹爪动作 -> {desc} (target: {target_pos})")
 
         # 记录操作前宽度 (抓取检测用, 在调用处设置 _pre_grasp_width)
@@ -3061,11 +3062,14 @@ def main():
                 
             try:
                 data = json.loads(cmd_data_str)
+                node.validate_workbench_command(data)
                 assert_visual_target_fresh(data)  # 出队重新查戳，不能只在ROS接收时检查
             except Exception as e:
                 print(f"❌ 收到无法解析的指令: {cmd_data_str}, 错误: {e}")
+                node.workbench_ack(locals().get("data",{}),False,str(e))
                 continue
                 
+            node._workbench_cycle_epoch=getattr(node,"_workbench_epoch",0)
             camera = data.get("camera_id", "d455")
             if camera != getattr(node,'_active_camera','d455'):
                 node._latest_detection = None
@@ -3169,13 +3173,14 @@ def main():
                         raise ValueError('XYZ包含非有限数值')
                 except (KeyError, TypeError, ValueError) as exc:
                     node.get_logger().error(f'本次抓取坐标无效，跳过并继续接收指令: {exc}')
+                    node.workbench_ack(data,False,str(exc))
                     continue
                 POSE_PICK.update(coordinates)
                 POSE_PICK_UP = POSE_PICK.copy()
                 approach_height = 0.13 if node._active_camera == 'dabai' and use_graspnet else static_settings.get('approach_height_m', 0.06)
                 POSE_PICK_UP['z'] += approach_height  # 普通水果抓取随后按工具轴重算预抓取XYZ
                 POSE_LIFT_SOFT = POSE_PICK.copy()
-                POSE_LIFT_SOFT['z'] += static_settings.get('soft_lift_m', 0.035)  # 先小幅抬起，降低惯性导致的滑脱
+                POSE_LIFT_SOFT['z'] += 0.035  # 先小幅抬起，降低惯性导致的滑脱
 
                 loop_count += 1
                 if use_graspnet:
@@ -3601,7 +3606,7 @@ def main():
                     }, ensure_ascii=False)
                     node.cycle_result_pub.publish(result_msg)
                     
-                    if node._workbench_recover:
+                    if node.workbench_interrupted():
                         node.is_busy = False
                         continue
                     node.operate_gripper(GRIPPER_OPEN, "防碰撞提前张开夹爪")
@@ -3691,7 +3696,7 @@ def main():
                 failed_tracks = []
                 attempted_tracks = set()
                 try:
-                    while rclpy.ok() and not node._emergency_flag and not node._workbench_recover and not node._pause_after_cycle:
+                    while rclpy.ok() and not node._emergency_flag and not node.workbench_interrupted() and not node._pause_after_cycle:
                         # 安全护栏: 达连续抓取上限即返回待机让位 (供 GUI 停止/急停).
                         if grab_count >= DYNAMIC_MAX_CONSECUTIVE:
                             node.get_logger().info(
@@ -3699,7 +3704,7 @@ def main():
                             break
                         # 暂时无目标时交回GUI检测循环，动态模式继续等待，不报失败。
                         rclpy.spin_once(node, timeout_sec=0.02)
-                        if node._pause_after_cycle or node._workbench_recover:break
+                        if node._pause_after_cycle or node.workbench_interrupted():break
                         det = node._latest_detection or {}
                         if data.get('motion_session') and data['motion_session'] != det.get('motion_session'):
                             raise ValueError('视觉会话已变化，结束本次动态任务')

@@ -5,10 +5,11 @@
 #include "piper_workbench/motion_controller.hpp"
 #include <moveit/motion_planning_rviz_plugin/motion_planning_display.h>
 #include <cmath>
+#include "piper_workbench/workbench_state.hpp"
 using namespace Ui;
 MainWindow::MainWindow(QWidget *parent):QMainWindow(parent){
  setWindowTitle("Piper 抓取工作台");resize(1600,900);setMinimumSize(1280,760);
- QFile css(QString::fromLocal8Bit(qgetenv("AGX_ARM_WS"))+"/src/piper_workbench/resources/workbench.qss");if(css.open(QFile::ReadOnly))qApp->setStyleSheet(css.readAll());
+ QFile css(QString::fromLocal8Bit(qgetenv("AGX_ARM_WS"))+"/src/piper_workbench/resources/workbench.qss");if(css.open(QFile::ReadOnly))qApp->setStyleSheet(css.readAll()+QString("\nQDoubleSpinBox::up-arrow,QSpinBox::up-arrow{image:url(%1/src/piper_workbench/resources/icons/up.svg);width:14px;height:14px;}QDoubleSpinBox::down-arrow,QSpinBox::down-arrow{image:url(%1/src/piper_workbench/resources/icons/down.svg);width:14px;height:14px;}").arg(QString::fromLocal8Bit(qgetenv("AGX_ARM_WS"))));
  backend_=new BackendClient(this);connect(backend_,&BackendClient::error,this,&MainWindow::showError);
  auto *root=new QWidget(this);auto *row=new QHBoxLayout(root);row->setContentsMargins(0,0,0,0);row->setSpacing(0);
  auto *side=new QFrame;side->setObjectName("sidebar");side->setFixedWidth(184);auto *sl=new QVBoxLayout(side);sl->setContentsMargins(0,0,0,0);
@@ -44,9 +45,11 @@ MainWindow::MainWindow(QWidget *parent):QMainWindow(parent){
  connect(bridge_,&RosViewBridge::detection,this,[this](QString cam,QJsonObject detection){detections_[cam]=detection;updateTargets();},Qt::QueuedConnection);
  connect(bridge_,&RosViewBridge::joints,this,[this](QVector<double> values){lastActual_=values;QStringList fields;for(int i=0;i<values.size();++i)fields<<QString("J%1  %2°").arg(i+1).arg(values[i]*180/M_PI,0,'f',1);jointFeedback_->setText(fields.join("    "));},Qt::QueuedConnection);
  connect(motion_,&MotionController::status,this,[this](QString value){motionState_->setText(value);});
- if(rviz_->planning())connect(rviz_->planning(),&moveit_rviz_plugin::MotionPlanningDisplay::queryGoalStateChanged,this,[this]{if(!syncing_){motion_->invalidate();syncGoal();}});
+ if(rviz_->planning())connect(rviz_->planning(),&moveit_rviz_plugin::MotionPlanningDisplay::queryGoalStateChanged,this,[this]{if(!syncing_&&rviz_->planning()->getRobotModel()&&rviz_->planning()->getQueryGoalState()){
+  std::vector<double> values;rviz_->planning()->getQueryGoalState()->copyJointGroupPositions("arm",values);QVector<double> target;for(double value:values)target<<value;
+  if(WorkbenchState::targetChanged(observedGoal_,target)){observedGoal_=target;motion_->invalidate();}syncGoal();}});
  auto *frames=new QTimer(this);connect(frames,&QTimer::timeout,this,[this]{for(auto it=images_.begin();it!=images_.end();++it){QString cam=it.key().section(':',0,0);bool raw=it.key().contains(":raw");it.value()->frame=bridge_->image(cam,!raw);if(cam=="calibration"&&it.value()->frame.isNull())it.value()->frame=bridge_->image(calibrationCamera_->currentIndex()==0?"d455":"dabai",false);it.value()->update();}});frames->start(100);
- refreshTimer_=new QTimer(this);connect(refreshTimer_,&QTimer::timeout,this,[this]{if(backend_->connected())refresh();});refreshTimer_->start(2000);
+ refreshTimer_=new QTimer(this);connect(refreshTimer_,&QTimer::timeout,this,[this]{if(backend_->connected()){refresh();if(pages_->currentIndex()==1&&debugTabs_->currentIndex()==3)refreshFiles();}});refreshTimer_->start(2000);
  if(backend_->connected()){refresh();refreshFiles();refreshParameters();toast_->setText("后台已连接 · 各组件可独立操作");}
  auto *logs=new QTimer(this);connect(logs,&QTimer::timeout,this,[this]{if(logsDirty_&&!logPause_->isChecked()&&pages_->currentIndex()==5){filterLogs();logsDirty_=false;}});logs->start(350);
 
@@ -104,6 +107,7 @@ void MainWindow::receive(QString event,QJsonValue value){
   if(event=="calibration.result")refreshFiles();
  }
  else if(event=="capture.progress"){
+  if(data.contains("error")){showError(data["error"].toString());captureState_->setText("采集未完成："+data["error"].toString());return;}
   captureState_->setText(QString("已保存 %1 张\n%2\n%3").arg(data["count"].toInt()).arg(data["directory"].toString(),QJsonDocument(data["errors"].toObject()).toJson(QJsonDocument::Compact)));
   captureImages_->clear();for(auto row:data["images"].toArray()){auto image=row.toObject();auto *item=new QListWidgetItem(image["camera"].toString()+"  "+image["path"].toString(),captureImages_);item->setIcon(QIcon(data["directory"].toString()+"/"+image["path"].toString()));}
  }
@@ -113,5 +117,5 @@ void MainWindow::showFile(QString path){QDesktopServices::openUrl(QUrl::fromLoca
 
 QJsonObject MainWindow::inspect() const{
  QJsonArray actual,model,target;for(double v:lastActual_)actual.append(v);for(double v:rviz_->actualJoints())model.append(v);for(auto *v:joints_)target.append(v->value()*M_PI/180.);
- return {{"actual_feedback_rad",actual},{"rviz_state_rad",model},{"goal_rad",target},{"logical_width",width()},{"logical_height",height()},{"device_pixel_ratio",devicePixelRatioF()}};
+ return {{"actual_feedback_rad",actual},{"rviz_state_rad",model},{"goal_rad",target},{"logical_width",width()},{"logical_height",height()},{"device_pixel_ratio",devicePixelRatioF()},{"interactive_end_effectors",rviz_->planning()&&rviz_->planning()->getRobotInteraction()?int(rviz_->planning()->getRobotInteraction()->getActiveEndEffectors().size()):0}};
 }
