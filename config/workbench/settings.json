@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "manual": {
+    "velocity": 0.2,
+    "acceleration": 0.2
+  },
+  "static": {
+    "approach_height_m": 0.06,
+    "soft_lift_m": 0.035,
+    "gripper_force_n": 1.5,
+    "gripper_settle_s": 0.05,
+    "joint_velocity_scaling": 0.65,
+    "joint_acceleration_scaling": 0.65
+  },
+  "camera": {},
+  "vision": {}
+}

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Piper 抓取工作台
+Comment=双相机抓取、调试、标定与图片采集
+Exec="@ROOT@/scripts/start_workbench.sh"
+Path=@ROOT@
+Icon=@ROOT@/src/piper_workbench/resources/icons/robot.svg
+Terminal=false
+Categories=Science;Engineering;
+StartupNotify=true
+StartupWMClass=piper_workbench

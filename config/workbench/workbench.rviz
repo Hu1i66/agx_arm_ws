@@ -1,0 +1,20 @@
+Panels: []
+Visualization Manager:
+  Class: ""
+  Displays: []
+  Global Options:
+    Background Color: 244; 246; 249
+    Fixed Frame: base_link
+    Frame Rate: 30
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 1.65
+      Pitch: 0.55
+      Yaw: 0.7
+Window Geometry:
+  Hide Left Dock: true
+  Hide Right Dock: true

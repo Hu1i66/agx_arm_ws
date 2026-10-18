@@ -41,12 +41,12 @@ KEY_CAMERA_TF = "camera_tf:{camera}"
 KEY_DETECTOR = "detector:{camera}"
 
 LAUNCHABLE = (
-    "arm", "camera", "camera_tf", "detector", "graspnet", "action", "gui",
+    "arm", "camera", "camera_tf", "detector", "graspnet", "action", "gui", "workbench", "workbench-service",
     "calibrate-intrinsics", "calibrate-handeye", "calibrate-tcp", "verify-tcp",
     "approve-intrinsics", "approve-handeye", "generate-board",
 )
 COMPONENTS = LAUNCHABLE + ("preflight", "stop", "status")
-STOPPABLE = ("arm", "camera", "camera_tf", "detector", "graspnet", "action", "gui")
+STOPPABLE = ("arm", "camera", "camera_tf", "detector", "graspnet", "action", "gui", "workbench", "workbench-service")
 
 
 class LauncherError(Exception):
@@ -72,6 +72,10 @@ def build_command(component: str, *, camera: str = "d455", mode: str = "fruit",
         if not any(a.startswith("tcp_offset:=") for a in ros_args):
             from runtime_geometry import load_tcp
             cmd.append("tcp_offset:="+json.dumps(load_tcp()))
+    elif component == "workbench":
+        cmd = ["ros2", "launch", "piper_workbench", "workbench.launch.py"]
+    elif component == "workbench-service":
+        cmd = [str(rc.resolve_resource("system_python")), "-m", "workbench.service"]
     elif component == "camera":
         if camera == "d455":
             # 冻结参数（计划 3.4）：手动与 GUI 共用
@@ -115,6 +119,12 @@ def build_command(component: str, *, camera: str = "d455", mode: str = "fruit",
             raise LauncherError(f"未知检测模式: {mode}")
         if mode == "blue_block":
             cmd += ["-p", "camera_id:="+camera]
+        if camera == "dual" and mode == "fruit":
+            cmd += ["-p", "d455.enabled:=true", "-p", "dabai.enabled:=true", "-p", "show_gui_window:=false"]
+            settings_file=ws/"config/workbench/settings.json"
+            if settings_file.is_file():
+                values=json.loads(settings_file.read_text()).get("vision",{})
+                for name,value in values.items():cmd += ["-p",name+":="+str(value).lower()]
         if camera == "dabai" and mode == "fruit":
             cmd += ["-p", "d455.enabled:=false", "-p", "dabai.enabled:=true",
                     "-r", "/dabai/detection_info:=/detection_info",
@@ -230,7 +240,7 @@ def build_env(camera: str = "d455") -> dict:
     dds_xml = rc.resolve_resource("dds_xml")
     rmw = cfg["ros"]["rmw_implementation"]
     parts = [f"source {shlex.quote(str(ros_setup))}"]
-    if camera == "dabai":
+    if camera in ("dabai", "dual"):
         orbbec = rc.resolve_resource("orbbec_setup")
         if orbbec.is_file():
             parts.append(f"source {shlex.quote(str(orbbec))}")
@@ -367,6 +377,16 @@ def check_ready(component: str, *, camera: str = "d455", mode: str = "fruit",
 
     区分"接口存在"与"模型就绪"；不发送真实抓取请求。
     """
+    if component in ("workbench", "workbench-service"):
+        return {"ready": False, "checks": [], "detail": "使用本工作树进程登记与本地套接字"}
+    if component == "detector" and camera == "dual":
+        # Do not reuse a single-camera node just because its root output exists.
+        enabled=True
+        for name in ("d455.enabled","dabai.enabled"):
+            code,out,_=_ros2(["param","get","/object_detector",name],camera="dual",timeout=3)
+            enabled=enabled and code==0 and "true" in out.lower()
+        enabled=enabled and (_topic_publisher_count("/dabai/detection_info",camera="dual") or 0)>0
+        return {"ready": enabled, "checks": [], "detail": "双路检测配置" if enabled else "旧单路检测器需要显式停止再启动双路"}
     cfg = rc.load_runtime_config()
     checks = []
 
@@ -1053,7 +1073,7 @@ def main(argv=None) -> int:
     parser.add_argument("target", nargs="?", default=None,
                         help="stop/status 的目标组件（arm/camera/camera_tf/detector/"
                              "graspnet/action/gui）")
-    parser.add_argument("--camera", default="d455", choices=["d455", "dabai"])
+    parser.add_argument("--camera", default="d455", choices=["d455", "dabai", "dual"])
     parser.add_argument("--mode", default="fruit", choices=["fruit", "blue_block"])
     parser.add_argument("--dry-run", action="store_true",
                         help="只输出解释器/argv/配置/关键环境，无任何副作用")

@@ -19,8 +19,9 @@ from runtime_geometry import transform
 
 
 class DynamicGraspRunner:
-    def __init__(self, node, target, place_joints):
+    def __init__(self, node, target, place_joints, placement=None):
         self.n, self.target, self.place = node, target, place_joints
+        self.placement = placement
         root = runtime_config.workspace_root()
         self.settings = json.loads((root/'config/dynamic_grasp.json').read_text())
         cfg = self.settings
@@ -56,7 +57,7 @@ class DynamicGraspRunner:
 
     def spin(self):
         rclpy.spin_once(self.n, timeout_sec=0.01)
-        if not rclpy.ok() or self.n._emergency_flag:
+        if not rclpy.ok() or self.n._emergency_flag or getattr(self.n, "_workbench_recover", False):
             raise RuntimeError('动态抓取已中断，不再派发后续动作')
 
     def actual_joints(self):
@@ -703,8 +704,13 @@ class DynamicGraspRunner:
             self.report['gripper_width_m'] = float(feedback.width)
             if feedback.width <= .005:
                 raise RuntimeError(f'夹爪空抓，实际宽度={feedback.width*1000:.1f}mm')
+            for i, via in enumerate(self.placement['via_joints_rad'] if self.placement else []):
+                self.move_joints(via, f'动态抓取：放置途经点 {i+1}', scaling=.8)
             self.move_joints(self.place, '动态抓取：移动到放置点', scaling=.8)
             self.gripper_wait(.09)
+            if self.placement is not None:
+                ready = getattr(self.n, '_dynamic_ready_joints', None)
+                if ready is not None:self.move_joints(list(ready), '动态抓取：释放后回准备位')
             self.report['success'] = True
             return True
         except (Exception, KeyboardInterrupt) as exc:

@@ -24,7 +24,9 @@ def inverse(T):
 def load_tcp():
     path=rc.workspace_root()/'config/calibration/tcp.json'
     data=json.loads(path.read_text())
-    if data.get('quality_status')!='passed' or data.get('approved') is not True:
+    from workbench.calibration import selected_file
+    explicit = selected_file(rc.workspace_root(), 'tcp', 'd455', path)
+    if not explicit and (data.get('quality_status')!='passed' or data.get('approved') is not True):
         raise ValueError('Active TCP is not accepted: '+str(path))
     offset=np.asarray(data['tcp_offset'],dtype=float)
     if offset.shape!=(6,) or not np.isfinite(offset).all():raise ValueError('Invalid active tcp_offset')

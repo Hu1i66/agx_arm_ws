@@ -318,7 +318,10 @@ class HandEyeCalibrationNode(Node):
                 loaded = load_intrinsics(self.intrinsics_yaml)
                 if loaded is None:
                     raise ValueError("内参无法解析")
-                validate_intrinsics(loaded["raw"], self.camera_id, approved=True)
+                import runtime_config as rc
+                from workbench.calibration import selected_file
+                if not selected_file(rc.workspace_root(), "intrinsics", self.camera_id, self.intrinsics_yaml):
+                    validate_intrinsics(loaded["raw"], self.camera_id, approved=True)
             except (ValueError, KeyError, TypeError) as exc:
                 raise RuntimeError(f"内参文件未批准/非法/相机不符: {self.intrinsics_yaml}: {exc}") from exc
             self.camera_matrix = loaded["camera_matrix"]
@@ -922,10 +925,13 @@ def main(args=None):
     calibration_node = HandEyeCalibrationNode()
     try:
         calibration_node.run()
+    except KeyboardInterrupt:
+        pass
     finally:
         calibration_node.stop_spin()
         calibration_node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

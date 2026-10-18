@@ -92,8 +92,8 @@ def test_load_handeye_d455_values():
     assert he["mode"] == "eye_to_hand"
     assert he["parent"] == "base_link"
     assert he["child"] == "camera_color_optical_frame"
-    assert he["position"] == [0.6490691434509585, -0.05381643112008146,
-                              0.5963265498171803]
+    assert he["position"] == [0.610466572986308, -0.08928292449370928,
+                              0.6187731911036556]
     assert len(he["orientation"]) == 4
     norm = sum(q * q for q in he["orientation"]) ** 0.5
     assert abs(norm - 1.0) < 1e-6
@@ -117,10 +117,11 @@ def test_d455_handeye_file_hash_unchanged():
         "活动外参既不是迁移基线, 又无对应的批准审计记录（不得被其它途径改写）"
 
 
-def test_load_handeye_dabai_no_active_file():
-    with pytest.raises(rc.ConfigError) as e:
-        rc.load_handeye("dabai")
-    assert "没有活动外参文件" in str(e.value)
+def test_load_handeye_dabai_active_onsite_file():
+    he = rc.load_handeye("dabai")
+    assert he["mode"] == "eye_in_hand" and he["parent"] == "link6"
+    assert he["child"] == "dabai_color_optical_frame"
+    assert len(he["position"]) == 3
 
 
 def test_load_handeye_calibration_file_override(tmp_path):

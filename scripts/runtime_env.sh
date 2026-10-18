@@ -44,7 +44,7 @@ else
 fi
 
 # Dabai 工具：Orbbec overlay 在主空间 overlay 之前
-if [ "$_RUNTIME_CAMERA_PROFILE" = "dabai" ]; then
+if [ "$_RUNTIME_CAMERA_PROFILE" = "dabai" ] || [ "$_RUNTIME_CAMERA_PROFILE" = "dual" ]; then
     if [ -f /home/lxf/orbbec_ros2_ws/install/setup.bash ]; then
         source /home/lxf/orbbec_ros2_ws/install/setup.bash
     else

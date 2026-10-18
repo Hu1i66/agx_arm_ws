@@ -10,6 +10,7 @@ import cv2
 import numpy as np
 import json
 import math
+import time
 import tf_transformations
 from collections import deque
 import os
@@ -426,7 +427,9 @@ class ObjectDetector(Node):
         self.get_logger().info(f"✅ 模型加载成功，类别: {self.model.names}")
 
         # 定时器: 单个定时器遍历所有启用相机 (无新帧则跳过, 避免重复推理同一帧)
-        self.create_timer(self.detect_period_s, self._detect_all)
+        self._detect_timer = self.create_timer(self.detect_period_s, self._detect_all)
+        self.geometry_pub = self.create_publisher(String, '/workbench/vision_geometry', 10)
+        self.geometry_timer = self.create_timer(1.0, self._publish_geometry)
         self.status_timer = self.create_timer(5.0, self.print_status)
         self._depth_status_timer = self.create_timer(5.0, self._depth_status_log)
 
@@ -465,7 +468,7 @@ class ObjectDetector(Node):
             if "." not in name:
                 continue
             cam_name, field = name.split(".", 1)
-            if cam_name not in self.cameras or field not in self._HOT_UPDATE_FIELDS:
+            if cam_name not in self.cameras or field not in self._HOT_UPDATE_FIELDS + ("yolo_conf", "yolo_iou", "detect_period_s"):
                 continue
             try:
                 val = float(p.value)
@@ -477,8 +480,12 @@ class ObjectDetector(Node):
             if not math.isfinite(val):
                 return SetParametersResult(
                     successful=False, reason=f"{name} 不能是 NaN/Inf")
-            if val != 0.0:
+            if field in self._HOT_UPDATE_FIELDS and val != 0.0:
                 return SetParametersResult(successful=False, reason="标定模式禁止人工坐标补偿，偏置必须为0")
+            if field in ("yolo_conf", "yolo_iou") and not 0.0 <= val <= 1.0:
+                return SetParametersResult(successful=False, reason="置信度和重叠阈值应在0到1之间")
+            if field == "detect_period_s" and val <= 0.:
+                return SetParametersResult(successful=False, reason="检测周期必须大于零")
             staged.setdefault(cam_name, {})[field] = val
         # 整套原子提交：任一非法则整体拒绝（staged 未写入）
         for cam_name, fields in staged.items():
@@ -495,7 +502,7 @@ class ObjectDetector(Node):
             if getattr(cam, field, None) != value:
                 setattr(cam, field, value)
                 changed = True
-        if changed:
+        if changed and any(field in self._HOT_UPDATE_FIELDS for field in pending):
             # 三维/深度平滑 track 清空: 下一帧体现完整补偿变化
             cam.tracks = {}
             cam.next_track_id = 0
@@ -521,6 +528,8 @@ class ObjectDetector(Node):
         # 腕载Dabai的水果容易出现多个重叠框；使用现有YOLO NMS去重。
         cam.yolo_conf = float(p("yolo_conf", 0.25))
         cam.yolo_iou = float(p("yolo_iou", 0.7))
+        cam.detect_period_s = float(p("detect_period_s", self.detect_period_s))
+        cam.last_detect_at = -100.
         cam.yolo_agnostic_nms = bool(p("yolo_agnostic_nms", False))
         cam.use_depth_camera = bool(p("use_depth_camera", d["use_depth_camera"]))
         cam.rgb_topic = str(p("rgb_topic", d["rgb_topic"]))
@@ -619,6 +628,14 @@ class ObjectDetector(Node):
         enabled = self._enabled_cameras()
         return enabled[0] if enabled else None
 
+    def _publish_geometry(self):
+        rows={}
+        for cam in self._enabled_cameras():
+            rows[cam.name]=dict(position=cam.cam_to_base_translation.tolist(),orientation=cam.cam_to_base_quat.tolist(),
+                k=cam.camera_matrix.ravel().tolist() if cam.cam_info_received else [],d=cam.dist_coeffs.ravel().tolist() if cam.cam_info_received else [],
+                vision={f'{cam.name}.{field}':getattr(cam,field) for field in ('yolo_conf','yolo_iou','detect_period_s')})
+        self.geometry_pub.publish(String(data=json.dumps(rows)))
+
     def _detect_all(self):
         """定时器入口: 遍历所有启用相机, 只对"有新帧"的相机做推理, 最后统一处理键盘。
 
@@ -631,26 +648,37 @@ class ObjectDetector(Node):
         "深度已追上"要求彩色已老 ~64ms, 时间窗口极窄, 实测吞吐会从 ~10Hz 崩到 1.4Hz。
         """
         for cam in self._enabled_cameras():
-            # 帧边界：先提交上一轮的热更新补偿（一帧内所有点使用同一快照）
-            self._apply_pending_offsets(cam)
-            if cam.latest_rgb is None:
-                continue
-            if self.depth_pair_delay and cam.use_depth_camera:
-                held = cam.held_rgb                       # 先取上一轮暂存的帧
-                cam.held_rgb = (cam.latest_rgb_stamp, cam.latest_rgb)
-                if held is None:
-                    continue                              # 第一轮只暂存, 下一轮才处理
-                stamp, img = held
+            try:
+                # 帧边界：先提交上一轮的热更新补偿（一帧内所有点使用同一快照）
+                self._apply_pending_offsets(cam)
+                period = min(c.detect_period_s for c in self._enabled_cameras())
+                if self._detect_timer.timer_period_ns != int(period*1e9):
+                    self._detect_timer.timer_period_ns = int(period*1e9)
+                now = time.monotonic()
+                if now-cam.last_detect_at < cam.detect_period_s*.95:
+                    continue
+                cam.last_detect_at = now
+                if cam.latest_rgb is None:
+                    continue
+                if self.depth_pair_delay and cam.use_depth_camera:
+                    held = cam.held_rgb                       # 先取上一轮暂存的帧
+                    cam.held_rgb = (cam.latest_rgb_stamp, cam.latest_rgb)
+                    if held is None:
+                        continue                              # 第一轮只暂存, 下一轮才处理
+                    stamp, img = held
+                    if stamp is None or stamp == cam.last_processed_stamp:
+                        continue
+                    cam.last_processed_stamp = stamp
+                    self.detect_and_publish(cam, rgb=img, rgb_stamp=stamp)
+                    continue
+                stamp = cam.latest_rgb_stamp
                 if stamp is None or stamp == cam.last_processed_stamp:
                     continue
                 cam.last_processed_stamp = stamp
-                self.detect_and_publish(cam, rgb=img, rgb_stamp=stamp)
-                continue
-            stamp = cam.latest_rgb_stamp
-            if stamp is None or stamp == cam.last_processed_stamp:
-                continue
-            cam.last_processed_stamp = stamp
-            self.detect_and_publish(cam)
+                self.detect_and_publish(cam)
+            except Exception as exc:
+                self.get_logger().error(f'[{cam.name}] 本帧处理失败: {exc}', throttle_duration_sec=2.)
+                self._publish_invalid(cam, 'camera_processing_error')
         if self.show_gui_window:
             self._handle_gui_keys()
 
@@ -1187,8 +1215,8 @@ class ObjectDetector(Node):
             k = np.array(msg.k, dtype=np.float64).reshape(3, 3)
             distortion = np.array(msg.d, dtype=np.float64) if len(msg.d) else np.zeros(5)
             source = "camera_info"
-            intrinsics_file = _rc.workspace_root() / "config/calibration/d455/intrinsics.yaml"
-            if cam.name == "d455" and intrinsics_file.is_file():
+            intrinsics_file = _rc.workspace_root() / f"config/calibration/{cam.name}/intrinsics.yaml"
+            if intrinsics_file.is_file():
                 # 复用手眼标定的文件格式和已有校验，不把候选当活动参数。
                 calibration_module = str(_WS_ROOT / "src/handeye_calibration_ros")
                 if calibration_module not in sys.path:
@@ -1198,7 +1226,9 @@ class ObjectDetector(Node):
                 loaded = load_intrinsics(str(intrinsics_file))
                 if loaded is None:
                     raise ValueError(f"无法读取批准内参: {intrinsics_file}")
-                validate_intrinsics(loaded["raw"], cam.name, approved=True)
+                from workbench.calibration import selected_file
+                if not selected_file(_WS_ROOT, "intrinsics", cam.name, intrinsics_file):
+                    validate_intrinsics(loaded["raw"], cam.name, approved=True)
                 if (loaded["image_width"], loaded["image_height"]) != (msg.width, msg.height):
                     raise ValueError("D455批准内参与当前图像分辨率不一致")
                 k = loaded["camera_matrix"]

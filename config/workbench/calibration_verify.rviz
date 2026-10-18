@@ -1,0 +1,26 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: 地面网格
+      Enabled: true
+    - Class: rviz_default_plugins/TF
+      Name: 标定坐标系
+      Enabled: true
+      Show Names: true
+  Global Options:
+    Fixed Frame: base_link
+    Background Color: 245; 247; 250
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 1.5
+Window Geometry:
+  Width: 1200
+  Height: 800

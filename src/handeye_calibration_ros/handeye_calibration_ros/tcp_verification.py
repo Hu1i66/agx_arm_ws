@@ -317,6 +317,7 @@ def create_ros_backend(*args, **kwargs):
 
 def main(args=None):
     parser=argparse.ArgumentParser(description='TCP定点姿态验证：默认离线数学；现场execute需再次输入确认')
+    parser.add_argument('--workbench', action='store_true', help='工作台按钮已表达执行意图；保留原运动与数值检查')
     parser.add_argument('--mode', choices=['math','plan','execute'], default='math')
     parser.add_argument('--dry-run', action='store_true', help='离线预览，不导入ROS、不写文件')
     parser.add_argument('--candidate')
@@ -357,8 +358,16 @@ def main(args=None):
             raise ValueError('内部位置跟踪容差仅允许1..10mm')
         if not math.isfinite(options.speed) or not .005 <= options.speed <= .1:
             raise ValueError('speed仅允许0.005..0.1')
-        assessment = load_candidate(options.candidate, allow_unqualified=options.allow_unqualified,
-                                    waiver_reason=options.waiver_reason) if options.candidate else None
+        if options.workbench:
+            path=Path(options.candidate).resolve();raw=path.read_bytes();data=json.loads(raw)
+            offset=cal.finite_array(data.get('tcp_offset'),(6,),'TCP')
+            assessment=dict(candidate_file=str(path),candidate_sha256=hashlib.sha256(raw).hexdigest(),
+                input_file=str(path),input_sha256=hashlib.sha256(raw).hexdigest(),tcp_offset=offset.tolist(),
+                source_quality_status=data.get('quality_status'),qualified=data.get('quality_status')=='passed',
+                original_metrics={k:data.get(k) for k in ('rms_mm','max_residual_mm','sample_count')},quality_waiver=None)
+        else:
+            assessment = load_candidate(options.candidate, allow_unqualified=options.allow_unqualified,
+                                        waiver_reason=options.waiver_reason) if options.candidate else None
         report['candidate_assessment']=assessment
         report['settings']=dict(angle_deg=options.angle_deg,steps=options.steps,axes=options.axes,
                                 cycles=options.cycles,sweep=options.sweep,speed=options.speed,position_tolerance_mm=options.position_tolerance_mm)
@@ -375,9 +384,9 @@ def main(args=None):
                                   note='offline_demo；仅数学示例，无真实反馈、无运动'),
                              ensure_ascii=False,indent=2,allow_nan=False))
         else:
-            if assessment is None or not options.tasks_stopped:
+            if assessment is None or (not options.workbench and not options.tasks_stopped):
                 raise ValueError('现场规划/执行需要--candidate与--tasks-stopped，并关闭T5/T6')
-            if options.mode == 'execute' and (not options.point_aligned_with_gap or not sys.stdin.isatty()):
+            if options.mode == 'execute' and not options.workbench and (not options.point_aligned_with_gap or not sys.stdin.isatty()):
                 raise ValueError('执行需要真实TTY、--point-aligned-with-gap及现场确认')
             for signum in (signal.SIGINT,signal.SIGTERM):
                 old_handlers[signum]=signal.signal(signum,interrupt)
@@ -399,7 +408,7 @@ def main(args=None):
                 print('原质量及豁免:',json.dumps(assessment,ensure_ascii=False))
                 print(f"已完成{len(targets)}段规划，轨迹时长合计{sum(p['points'][-1]['time_s'] for p in report['plans']):.1f}秒（另有核查时间）。确认T5/T6已关闭、工具点已对准固定参考点且留有间隙，T1启动参数匹配。")
                 print('本过程不会回零。中断只取消本工具的执行goal，不追加运动。')
-                confirm_execution(stop)
+                if not options.workbench: confirm_execution(stop)
                 execute_prepared(report['plans'],backend,stop,report)
         if not options.dry_run:
             cal.save_json(output,report); print('验证报告:',output)

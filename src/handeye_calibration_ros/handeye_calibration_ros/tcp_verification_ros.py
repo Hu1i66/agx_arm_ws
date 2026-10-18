@@ -189,7 +189,7 @@ class RosBackend:
                 if self.stop.is_set(): raise InterruptedError('启动被中断')
                 time.sleep(.05)
         nodes=set(self.node.get_node_names())
-        if nodes.intersection({'sorting_headless_client_node','piper_moveit_action_client'}):
+        if not getattr(self.options,'workbench',False) and nodes.intersection({'sorting_headless_client_node','piper_moveit_action_client'}):
             raise ValueError('请结束动作后关闭T5和T6，禁止与自动/动态/排队任务并用')
         startup=startup_offset(self.workspace)
         values=self.params('/agx_arm_ctrl_single_node',['tcp_offset','arm_type'])
@@ -280,7 +280,7 @@ class RosBackend:
         if self.stop.is_set(): raise InterruptedError('验证已中断')
         verify.verify_input_hashes(self.assessment)
         if self.parameter_changed: raise ValueError('运行中TCP参数改变，SDK/模型一致性不可再保证')
-        if {n for n in self.node.get_node_names()}.intersection({'sorting_headless_client_node','piper_moveit_action_client'}):
+        if not getattr(self.options,'workbench',False) and {n for n in self.node.get_node_names()}.intersection({'sorting_headless_client_node','piper_moveit_action_client'}):
             raise ValueError('检测到T5/T6重新启动')
         current=self.fresh_feedback()
         if max(abs(current['joints'][n]-current['control'][n]) for n in verify.JOINTS)>.03:

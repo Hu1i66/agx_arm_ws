@@ -1,0 +1,47 @@
+QWidget { font-family: 'Noto Sans CJK SC'; font-size:14px; color:#172238; }
+QMainWindow, QWidget#page { background:#F5F7FA; }
+QFrame#card { background:#FFFFFF; border:1px solid #E2E8F0; border-radius:9px; }
+QFrame#header, QFrame#sidebar { background:#FFFFFF; border:0; border-bottom:1px solid #E2E8F0; }
+QLabel { background:transparent; }
+QLabel#brand { font-size:19px; font-weight:700; }
+QLabel#pageTitle { font-size:26px; font-weight:700; padding-bottom:4px; }
+QLabel#cardTitle { font-size:17px; font-weight:600; }
+QLabel#muted { color:#64748B; font-size:13px; }
+QLabel#notice { color:#1769FF; background:#EEF5FF; border-radius:6px; padding:9px; }
+QListWidget#navigation { background:transparent; border:0; padding:10px 6px; outline:0; }
+QListWidget#navigation::item { height:48px; margin:3px 4px; padding-left:14px; border-radius:7px; color:#42546F; }
+QListWidget#navigation::item:selected { background:#E4EEFF; color:#1769FF; font-weight:600; }
+QListWidget#navigation::item:hover { background:#F0F5FD; }
+QPushButton { background:#FFFFFF; border:1px solid #D9E2EF; border-radius:6px; padding:7px 12px; }
+QPushButton:hover { background:#F0F6FF; border-color:#86ACF8; }
+QPushButton:pressed { background:#DBE9FF; }
+QPushButton#primary { background:#1769FF; color:#FFFFFF; border-color:#1769FF; font-weight:600; }
+QPushButton#primary:hover { background:#0B58E8; }
+QPushButton#danger { background:#DF2029; color:#FFFFFF; border-color:#DF2029; font-weight:600; }
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background:#FFFFFF; border:1px solid #DAE2ED; border-radius:5px; padding:6px 8px; min-height:22px; selection-background-color:#1769FF; }
+QComboBox::drop-down { border:0; width:22px; }
+QTabWidget::pane { border:0; background:transparent; }
+QTabBar::tab { padding:12px 18px; border:0; color:#53637C; border-bottom:2px solid transparent; }
+QTabBar::tab:selected { color:#1769FF; border-bottom:2px solid #1769FF; font-weight:600; }
+QTabBar::tab:hover { background:#EBF2FC; }
+QTableWidget { background:#FFFFFF; border:0; gridline-color:#EEF2F7; selection-background-color:#E7F0FF; selection-color:#1769FF; }
+QHeaderView::section { background:#F2F5F9; color:#64748B; padding:8px; border:0; font-weight:400; }
+QTableWidget::item { padding:6px; }
+QScrollArea { background:transparent; border:0; }
+QScrollBar:vertical { width:7px; background:transparent; }
+QScrollBar::handle:vertical { background:#CCD5E0; border-radius:3px; min-height:25px; }
+QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical { height:0; }
+QPlainTextEdit { background:#F7F9FC; border:1px solid #E2E8F0; border-radius:6px; padding:8px; font-family:'Noto Sans Mono CJK SC'; font-size:12px; }
+QSlider::groove:horizontal { height:5px; background:#DCE3EE; border-radius:2px; }
+QSlider::sub-page:horizontal { background:#1769FF; border-radius:2px; }
+QSlider::handle:horizontal { width:16px; margin:-6px 0; background:white; border:1px solid #B7C7DE; border-radius:8px; }
+QSplitter::handle { background:transparent; width:10px; }
+QToolTip { color:#172238; background:#FFFFFF; border:1px solid #D9E2EF; padding:6px; }
+QFrame#healthBadge { background:#FFFFFF; border:1px solid #E4EAF3; border-radius:7px; }
+QLabel#healthLabel { font-size:11px; color:#5B6D85; line-height:1.4; }
+QPushButton#modeButton { padding:5px 6px; color:#53637C; font-size:12px; }
+QPushButton#modeButton:checked { color:#1769FF; background:#EEF5FF; border:1px solid #1769FF; font-weight:600; }
+QDoubleSpinBox::up-button, QSpinBox::up-button { subcontrol-origin:border;subcontrol-position:top right;width:20px;border:0;background:#F3F6FB;border-top-right-radius:5px; }
+QDoubleSpinBox::down-button, QSpinBox::down-button { subcontrol-origin:border;subcontrol-position:bottom right;width:20px;border:0;background:#F3F6FB;border-bottom-right-radius:5px; }
+QDoubleSpinBox::up-arrow, QSpinBox::up-arrow { image:none;width:0;height:0;border-left:3px solid transparent;border-right:3px solid transparent;border-bottom:4px solid #64748B; }
+QDoubleSpinBox::down-arrow, QSpinBox::down-arrow { image:none;width:0;height:0;border-left:3px solid transparent;border-right:3px solid transparent;border-top:4px solid #64748B; }
