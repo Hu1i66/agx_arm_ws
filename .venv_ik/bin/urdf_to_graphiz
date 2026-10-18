@@ -1,3 +1,0 @@
-#!/home/lxf/agx_arm_ws/.venv_ik/bin/python
-from cmeel.run import cmeel_run
-cmeel_run()

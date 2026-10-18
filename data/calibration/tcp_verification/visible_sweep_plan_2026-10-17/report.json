@@ -1,0 +1,67 @@
+{
+  "kind": "tcp_fixed_point_verification",
+  "schema_version": 1,
+  "mode": "plan",
+  "execution_status": "aborted",
+  "executed_steps": [],
+  "plans": [],
+  "internal_feedback_note": "机器人内部模型/运动跟踪证据，不证明真实尖端漂移",
+  "external_observation": {
+    "status": "未完成物理精度验证",
+    "max_drift_mm": null
+  },
+  "report_file": "/home/lxf/agx_arm_ws/data/calibration/tcp_verification/visible_sweep_plan_2026-10-17/report.json",
+  "candidate_assessment": {
+    "candidate_file": "/home/lxf/agx_arm_ws/data/calibration/tcp/2026-10-16_22-42-05_c3296802/candidate.json",
+    "candidate_sha256": "3486699467a7bbcc61129f95a42a0bb7db6bc8e68dcce6b2faf81b1043b56e83",
+    "input_file": "/home/lxf/agx_arm_ws/data/calibration/tcp/2026-10-16_22-42-05_c3296802/solve_input_680d217bd0414c34855999abb4020719.json",
+    "input_sha256": "a9f7ad04d70a2742567cf3a383bc9c6b7fd2e37c9fb00ae14bb00b6be609b3a2",
+    "source_quality_status": "failed",
+    "qualified": false,
+    "quality_waiver": {
+      "scope": "verification_only",
+      "reason": "只规划较大幅度连续摆动，现场另行确认执行",
+      "source_quality_status": "failed",
+      "original_gates": {
+        "min_samples": 6,
+        "max_rms_mm": 2.0,
+        "max_residual_mm": 5.0,
+        "max_condition": 100.0
+      },
+      "failed_checks": [
+        "max_residual_mm",
+        "rms_mm"
+      ],
+      "production_qualified": false
+    },
+    "tcp_offset": [
+      0.014575441592672675,
+      -0.005306490263008168,
+      0.1457583484569631,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "original_metrics": {
+      "sample_count": 10,
+      "rank": 6,
+      "condition": 4.199976779490851,
+      "rms_mm": 5.358227754611016,
+      "max_residual_mm": 8.718494213648277
+    }
+  },
+  "settings": {
+    "angle_deg": 15.0,
+    "steps": 6,
+    "axes": [
+      "x",
+      "y"
+    ],
+    "cycles": 1,
+    "sweep": true,
+    "speed": 0.1,
+    "position_tolerance_mm": 5.0
+  },
+  "error": "真实反馈/控制状态过期: pose",
+  "cancellation_state": "no_owned_nonterminal_goal"
+}

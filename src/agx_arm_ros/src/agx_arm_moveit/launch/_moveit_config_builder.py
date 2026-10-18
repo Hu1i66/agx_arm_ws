@@ -89,6 +89,18 @@ def build_moveit_config(context):
         .to_moveit_configs()
     )
 
+    if arm_type == "piper":
+        import sys
+        from pathlib import Path
+        root = next((p for p in Path(__file__).resolve().parents if (p / 'runtime_geometry.py').is_file()), None)
+        if root is not None and str(root) not in sys.path:
+            sys.path.insert(0, str(root))
+        from runtime_geometry import add_dabai_mount
+        urdf, srdf = add_dabai_mount(moveit_config.robot_description["robot_description"],
+                                     moveit_config.robot_description_semantic["robot_description_semantic"])
+        moveit_config.robot_description["robot_description"] = urdf
+        moveit_config.robot_description_semantic["robot_description_semantic"] = srdf
+
     if arm_type == "nero":
         moveit_config.trajectory_execution[
             "moveit_simple_controller_manager"

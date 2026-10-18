@@ -1,0 +1,9 @@
+# 蓝方块检测 ROS 参数（blue_block_detector）
+# 冻结基线（计划 3.4）：蓝方块专用 x/y/z 补偿。
+# 本文件不重复存外参数值——外参统一读 config/calibration/d455_eye_to_hand.json。
+blue_block_detector:
+  ros__parameters:
+    # ── eye-to-hand 标定偏移补偿（米）──
+    x_offset_m: 0.0
+    y_offset_m: 0.0
+    z_offset_m: 0.0

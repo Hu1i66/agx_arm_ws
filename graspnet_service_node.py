@@ -19,10 +19,23 @@ import json
 import math
 import time
 import threading
+from collections import deque
 import traceback
 
-# ── sys.path 注入 graspnet-baseline (复用 verify_grasp_pose.py L37-42) ──
-ROOT = "/home/lxf/graspnet/graspnet-baseline"
+# ── 共享配置：从主空间根定位 runtime_config（外部实现与资源统一来源）──
+import pathlib
+_WS_ROOT = pathlib.Path(__file__).resolve().parent
+if str(_WS_ROOT) not in sys.path:
+    sys.path.insert(0, str(_WS_ROOT))
+try:
+    import runtime_config as _rc
+except ImportError as _exc:  # pragma: no cover
+    raise RuntimeError(
+        f"无法导入主空间 runtime_config（期望 {_WS_ROOT}/runtime_config.py）: {_exc}"
+    ) from _exc
+
+# ── sys.path 注入 graspnet-baseline（外部实现路径来自共享配置）──
+ROOT = str(_rc.resolve_resource("graspnet_baseline"))
 for _sub in ["", "models", "utils", "pointnet2", "knn"]:
     _p = os.path.join(ROOT, _sub) if _sub else ROOT
     if _p not in sys.path:
@@ -34,13 +47,17 @@ from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
 from sensor_msgs.msg import Image, CameraInfo
 from std_msgs.msg import String
+from cv_bridge import CvBridge
+from rclpy.qos import QoSProfile, ReliabilityPolicy
+from camera_geometry import CameraGeometry, image_qos
+from runtime_geometry import graspnet_tcp_target, object_centroid_from_rgbd
 
 
 # ========================================================================
 # 常量
 # ========================================================================
-_HANDEYE_JSON_PATH = "/home/lxf/handeye/result/2026-09-15_21-25-46_calibration.json"
-_GRASPNET_CHECKPOINT = "/home/lxf/graspnet/checkpoints/checkpoint-rs.tar"
+_HANDEYE_JSON_PATH = str(_rc.load_handeye("d455")["source"])
+_GRASPNET_CHECKPOINT = str(_rc.resolve_resource("graspnet_checkpoint"))
 _DEPTH_OFFSET_M = 0.0           # eye-to-hand: 相机在可靠深度范围 (0.5-0.8m), 无需近距校正
 _NUM_POINT = 20000
 _NUM_VIEW = 300
@@ -353,25 +370,20 @@ class GraspNetServiceNode(Node):
         global _logger
         _logger = self.get_logger()
 
-        # ── 手眼标定矩阵 (eye-to-hand: camera_color_optical_frame → base_link, 常量) ──
-        self.T_cam_to_base = _load_handeye_matrix()
-        self.get_logger().info(f"手眼标定 T_cam_to_base 平移: {self.T_cam_to_base[:3, 3]}")
-
-        # ── 数据缓存 (线程安全) ──
+        self.default_camera = self.declare_parameter('camera_id', 'd455').value
+        self.geometry = CameraGeometry(self)
+        self.bridge = CvBridge()
         self._lock = threading.Lock()
-        self._latest_depth = None
-        self._latest_color = None
-        self._latest_cam_info = None
-
-        # ── ROS2 订阅 (eye-to-hand: 无需 /feedback/tcp_pose, 相机变换是常量) ──
-        self.create_subscription(Image, "/camera/camera/aligned_depth_to_color/image_raw",
-                                  self._depth_cb, 10)
-        self.create_subscription(Image, "/camera/camera/color/image_raw",
-                                  self._color_cb, 10)
-        self.create_subscription(CameraInfo, "/camera/camera/color/camera_info",
-                                  self._cam_info_cb, 10)
-        self.create_subscription(String, "/graspnet/req", self._req_cb, 10)
-        self._result_pub = self.create_publisher(String, "/graspnet/result", 10)
+        self._detections = {}
+        self.create_subscription(String,'/detection_info',self._detection_cb,10)
+        self._frames = {name:dict(depth=deque(maxlen=40),color=deque(maxlen=15),info=None) for name in ('d455','dabai')}
+        cameras = _rc.load_runtime_config()['cameras']
+        for name,cfg in cameras.items():
+            self.create_subscription(Image,cfg['depth_topic'],lambda msg,n=name:self._image_cb(n,'depth',msg),image_qos(self,cfg['depth_topic'],name))
+            self.create_subscription(Image,cfg['rgb_topic'],lambda msg,n=name:self._image_cb(n,'color',msg),image_qos(self,cfg['rgb_topic'],name))
+            self.create_subscription(CameraInfo,cfg['camera_info_topic'],lambda msg,n=name:self._cam_info_cb(n,msg),QoSProfile(depth=1,reliability=ReliabilityPolicy.BEST_EFFORT))
+        self.create_subscription(String,'/graspnet/req',self._req_cb,10)
+        self._result_pub=self.create_publisher(String,'/graspnet/result',10)
 
         # ── 加载 GraspNet 模型 ──
         import torch
@@ -380,59 +392,86 @@ class GraspNetServiceNode(Node):
         self._net = load_graspnet(_GRASPNET_CHECKPOINT, _NUM_VIEW, self._device)
         self.get_logger().info("✅ graspnet_service_node 就绪, 等待请求...")
 
-    # ── 缓存回调 (加锁, 最小化处理) ──
-    def _depth_cb(self, msg):
-        arr = np.frombuffer(msg.data, dtype=np.uint16).reshape(msg.height, msg.width)
-        with self._lock:
-            self._latest_depth = arr
+    def _detection_cb(self,msg):
+        try:
+            data=json.loads(msg.data)
+            camera=data.get('camera')
+            if camera in ('d455','dabai'):
+                with self._lock:self._detections[camera]=data
+        except (ValueError,TypeError):pass
 
-    def _color_cb(self, msg):
-        arr = np.frombuffer(msg.data, dtype=np.uint8).reshape(msg.height, msg.width, -1)
-        with self._lock:
-            self._latest_color = arr
+    def _centroid_snapshot(self,request,camera,depth,info,T,stamp):
+        with self._lock:data=self._detections.get(camera,{})
+        target_id=request.get('target_track_id')
+        detection_stamp=float(data.get('header_stamp',0.))
+        if target_id is None or not np.isfinite(detection_stamp) or abs(detection_stamp-stamp)>.25:
+            raise ValueError('fresh_selected_object_detection_unavailable')
+        obj=next((o for o in data.get('objects',[]) if o.get('track_id')==target_id),None)
+        if obj is None:raise ValueError('selected_object_track_lost')
+        box=obj['bbox_pixel'];bbox=[box[k] for k in ('x1','y1','x2','y2')]
+        centre=object_centroid_from_rgbd(depth,bbox,[info.k[0],info.k[4],info.k[2],info.k[5]],T)
+        return centre['centroid']
 
-    def _cam_info_cb(self, msg):
+    def _image_cb(self,camera,kind,msg):
+        stamp=msg.header.stamp.sec+msg.header.stamp.nanosec*1e-9
+        array=self.bridge.imgmsg_to_cv2(msg,desired_encoding='rgb8' if kind=='color' else 'passthrough')
+        if kind=='depth' and array.dtype.kind=='f':
+            array=np.nan_to_num(array,nan=0.,posinf=0.,neginf=0.)
+            array=np.clip(array*1000.,0,65535).astype(np.uint16)
+        with self._lock:self._frames[camera][kind].append((stamp,array,time.monotonic()))
+
+    def _cam_info_cb(self,camera,msg):
+        with self._lock:self._frames[camera]['info']=(msg,time.monotonic())
+
+    def _snapshot(self,camera):
         with self._lock:
-            self._latest_cam_info = msg
+            frames=self._frames[camera]
+            colors=list(frames['color']);depths=list(frames['depth']);info=frames['info']
+        if not colors or not depths or info is None:raise ValueError('missing_rgb_depth_or_intrinsics')
+        stamp,color,received=colors[-1];ds,depth,dr=min(depths,key=lambda row:abs(row[0]-stamp))
+        if max(time.monotonic()-received,time.monotonic()-dr,time.monotonic()-info[1])>1.:
+            raise ValueError('stale_camera_snapshot')
+        now=self.get_clock().now().nanoseconds*1e-9
+        if stamp<=0 or not -.05<=now-stamp<=1. or abs(ds-stamp)>.05:raise ValueError('camera_timestamp_or_pair_mismatch')
+        ci=info[0]
+        if color.shape[:2]!=depth.shape[:2] or depth.shape[:2]!=(ci.height,ci.width):raise ValueError('rgb_depth_intrinsics_size_mismatch')
+        if not np.isfinite(ci.k).all() or ci.k[0]<=0 or ci.k[4]<=0:raise ValueError('invalid_camera_intrinsics')
+        T=self.geometry.camera(camera,stamp)
+        return depth.copy(),color.copy(),ci,T,stamp
 
     # ── 请求处理 ──
     def _req_cb(self, msg):
+        request_id = ''
+        camera = self.default_camera
         try:
             req = json.loads(msg.data)
-        except Exception:
-            self._publish_result({"success": False, "error": "bad_json"})
-            return
-        if req.get("cmd") != "get_grasp":
-            self._publish_result({"success": False, "error": "unknown_cmd"})
-            return
-
-        request_id = req.get("request_id", "")
-        pick = (float(req["pick_x"]), float(req["pick_y"]), float(req["pick_z"]))
-        self.get_logger().info(f"📥 收到抓取请求 (pick={pick})")
-
-        try:
-            result = self._handle_get_grasp(pick)
-        except Exception as e:
-            self.get_logger().error(f"get_grasp 失败: {e}\n{traceback.format_exc()}")
-            result = {"success": False, "error": str(e)}
-        result["request_id"] = request_id
+            if not isinstance(req, dict):
+                raise ValueError('request_must_be_object')
+            request_id = req.get('request_id', '')
+            camera = req.get('camera_id', self.default_camera)
+            if req.get('pick_semantics') != 'estimated_centroid':
+                raise ValueError('pick_must_be_estimated_centroid')
+            if req.get('cmd') != 'get_grasp':
+                raise ValueError('unknown_cmd')
+            if camera not in self._frames:
+                raise ValueError('unknown_camera')
+            pick = tuple(float(req[key]) for key in ('pick_x', 'pick_y', 'pick_z'))
+            if not np.isfinite(pick).all():
+                raise ValueError('invalid_pick')
+            self.get_logger().info(f'收到{camera}抓取请求 {request_id}: {pick}')
+            result = self._handle_get_grasp(pick, camera, req)
+        except Exception as exc:
+            self.get_logger().error(f'get_grasp失败: {exc}')
+            result = {'success': False, 'error': str(exc)}
+        result.update(request_id=request_id, camera_id=camera)
         self._publish_result(result)
 
-    def _handle_get_grasp(self, pick_base):
+    def _handle_get_grasp(self, pick_base, camera="d455", request=None):
         """主推理流水线: 深度图 → GraspNet → 过滤 → 坐标变换 → 返回 base 系位姿"""
         from graspnetAPI import GraspGroup
 
-        # 1. 快照最新数据 (eye-to-hand: 无需 tcp_pose, T_cam_to_base 是常量)
-        with self._lock:
-            depth = self._latest_depth
-            color = self._latest_color
-            cam_info = self._latest_cam_info
-
-        if depth is None or cam_info is None:
-            return {"success": False, "error": "missing_depth_or_cam_info"}
-
-        # 2. 变换链: eye-to-hand 下 T_cam_to_base 是常量 (相机固定)
-        T_cam_to_base = self.T_cam_to_base
+        depth,color,cam_info,T_cam_to_base,image_stamp = self._snapshot(camera)
+        pick_base = self._centroid_snapshot(request or {},camera,depth,cam_info,T_cam_to_base,image_stamp)
         T_base_to_cam = np.linalg.inv(T_cam_to_base)
         self.get_logger().info(f"T_cam_to_base 平移: {T_cam_to_base[:3, 3]}")
 
@@ -547,6 +586,9 @@ class GraspNetServiceNode(Node):
         T_base_grasp = T_cam_to_base @ T_cam_grasp
         R_base = T_base_grasp[:3, :3]
         t_base = T_base_grasp[:3, 3]
+        tcp_target = graspnet_tcp_target(T_cam_to_base,t_cam,R_cam,float(best.depth),self.geometry.S)
+        network_tip = tcp_target[:3,3].copy()
+        tcp_target[:3,3] = np.asarray(pick_base,dtype=float)  # 用户要求：TCP对准物体中心，网络仅提供朝向/宽度
 
         # 10. 列重排: GraspNet [approach,closing,ortho] → 机器人 [opening,ortho,approach]
         #     robot_R[:,0]=opening ← gn_R[:,1]=closing
@@ -561,7 +603,7 @@ class GraspNetServiceNode(Node):
                     "error": f"approach_not_downward: z={approach_z:.3f}"}
 
         # 12. robot_R → 四元数
-        quat = _rotmat_to_quat(robot_R)
+        quat = _rotmat_to_quat(tcp_target[:3,:3])
 
         # 13. 位置偏移诊断: GraspNet 抓取点 vs YOLO 检测点 (base 系)
         xy_offset = float(np.hypot(t_base[0] - pick_base[0],
@@ -573,7 +615,15 @@ class GraspNetServiceNode(Node):
         )
         return {
             "success": True,
-            "translation": [float(t_base[0]), float(t_base[1]), float(t_base[2])],
+            "translation": tcp_target[:3,3].tolist(),
+            "raw_grasp_translation_base": t_base.tolist(),
+            "network_fingertip_position_base": network_tip.tolist(),
+            "grasp_point_type": "estimated_centroid",
+            "depth": float(best.depth),
+            "target_frame": "tcp_link",
+            "reference_point": "midpoint_between_fingertips",
+            "image_stamp": image_stamp,
+            "camera_id": camera,
             "quaternion": quat,
             "width": width,
             "score": float(best.score),
@@ -596,7 +646,7 @@ def main():
     except KeyboardInterrupt:
         pass
     node.destroy_node()
-    rclpy.shutdown()
+    if rclpy.ok(): rclpy.shutdown()
 
 
 if __name__ == "__main__":

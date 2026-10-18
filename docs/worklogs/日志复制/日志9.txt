@@ -1,0 +1,194 @@
+ice response received for initialization
+[move_group-3] [INFO] [1787576585.701957569] [moveit_move_group_default_capabilities.move_action_capability]: Received request
+[move_group-3] [INFO] [1787576585.702189609] [moveit_move_group_default_capabilities.move_action_capability]: executing..
+[move_group-3] [INFO] [1787576585.705890366] [moveit_move_group_default_capabilities.move_action_capability]: Combined planning and execution request received for MoveGroup action. Forwarding to planning and execution pipeline.
+[move_group-3] [WARN] [1787576585.705912144] [moveit_move_group_capabilities_base.move_group_capability]: Execution of motions should always start at the robot's current state. Ignoring the state supplied as start state in the motion planning request
+[move_group-3] [WARN] [1787576585.705917614] [moveit_move_group_capabilities_base.move_group_capability]: Execution of motions should always start at the robot's current state. Ignoring the state supplied as difference in the planning scene diff
+[move_group-3] [INFO] [1787576585.705927311] [moveit_ros.plan_execution]: Planning attempt 1 of at most 1
+[move_group-3] [INFO] [1787576585.706766023] [moveit.ompl_planning.model_based_planning_context]: Planner configuration 'arm' will use planner 'geometric::RRTConnect'. Additional configuration parameters will be set when the planner is constructed.
+[move_group-3] [INFO] [1787576585.720288700] [moveit.plugins.moveit_simple_controller_manager]: Returned 2 controllers in list
+[move_group-3] [INFO] [1787576585.720307073] [moveit.plugins.moveit_simple_controller_manager]: Returned 2 controllers in list
+[move_group-3] [INFO] [1787576585.720345070] [moveit_ros.trajectory_execution_manager]: Validating trajectory with allowed_start_tolerance 0.01
+[move_group-3] [INFO] [1787576585.720864147] [moveit_ros.trajectory_execution_manager]: Starting trajectory execution ...
+[move_group-3] [INFO] [1787576585.720886857] [moveit.plugins.moveit_simple_controller_manager]: Returned 2 controllers in list
+[move_group-3] [INFO] [1787576585.720900060] [moveit.plugins.moveit_simple_controller_manager]: Returned 2 controllers in list
+[move_group-3] [INFO] [1787576585.721063769] [moveit.simple_controller_manager.follow_joint_trajectory_controller_handle]: sending trajectory to arm_controller
+[ros2_control_node-5] [INFO] [1787576585.721211630] [arm_controller]: Received new action goal
+[ros2_control_node-5] [INFO] [1787576585.721263752] [arm_controller]: Accepted new action goal
+[move_group-3] [INFO] [1787576585.721359632] [moveit.simple_controller_manager.follow_joint_trajectory_controller_handle]: arm_controller started execution
+[move_group-3] [INFO] [1787576585.721371803] [moveit.simple_controller_manager.follow_joint_trajectory_controller_handle]: Goal request accepted!
+[ros2_control_node-5] [INFO] [1787576585.809337251] [arm_controller]: Goal reached, success!
+[move_group-3] [INFO] [1787576585.821662153] [moveit.simple_controller_manager.follow_joint_trajectory_controller_handle]: Controller 'arm_controller' successfully finished
+[move_group-3] [INFO] [1787576585.835781885] [moveit_ros.trajectory_execution_manager]: Completed trajectory execution with status SUCCEEDED ...
+[move_group-3] [INFO] [1787576585.840980518] [moveit_move_group_default_capabilities.move_action_capability]: Solution was found and executed.
+[ros2_control_node-5] [INFO] [1787576585.993206801] [gripper_controller]: Received new action goal
+[ros2_control_node-5] [INFO] [1787576585.993243165] [gripper_controller]: Accepted new action goal
+[ros2_control_node-5] [INFO] [1787576586.999339089] [gripper_controller]: Goal reached, success!
+[move_group-3] [INFO] [1787576607.303443775] [moveit_move_group_default_capabilities.move_action_capability]: Received request
+[move_group-3] [INFO] [1787576607.303553746] [moveit_move_group_default_capabilities.move_action_capability]: executing..
+[move_group-3] [INFO] [1787576607.305900856] [moveit_move_group_default_capabilities.move_action_capability]: Combined planning and execution request received for MoveGroup action. Forwarding to planning and execution pipeline.
+[move_group-3] [WARN] [1787576607.305917744] [moveit_move_group_capabilities_base.move_group_capability]: Execution of motions should always start at the robot's current state. Ignoring the state supplied as start state in the motion planning request
+[move_group-3] [WARN] [1787576607.305923805] [moveit_move_group_capabilities_base.move_group_capability]: Execution of motions should always start at the robot's current state. Ignoring the state supplied as difference in the planning scene diff
+[move_group-3] [INFO] [1787576607.305928753] [moveit_ros.plan_execution]: Planning attempt 1 of at most 1
+[move_group-3] [INFO] [1787576607.306599496] [moveit.ompl_planning.model_based_planning_context]: Planner configuration 'arm' will use planner 'geometric::RRTConnect'. Additional configuration parameters will be set when the planner is constructed.
+[move_group-3] [INFO] [1787576607.319514811] [moveit.plugins.moveit_simple_controller_manager]: Returned 2 controllers in list
+[move_group-3] [INFO] [1787576607.319538393] [moveit.plugins.moveit_simple_controller_manager]: Returned 2 controllers in list
+[move_group-3] [INFO] [1787576607.319575682] [moveit_ros.trajectory_execution_manager]: Validating trajectory with allowed_start_tolerance 0.01
+[move_group-3] [INFO] [1787576607.320863402] [moveit_ros.trajectory_execution_manager]: Starting trajectory execution ...
+[move_group-3] [INFO] [1787576607.320886412] [moveit.plugins.moveit_simple_controller_manager]: Returned 2 controllers in list
+[move_group-3] [INFO] [1787576607.320896176] [moveit.plugins.moveit_simple_controller_manager]: Returned 2 controllers in list
+[move_group-3] [INFO] [1787576607.321016643] [moveit.simple_controller_manager.follow_joint_trajectory_controller_handle]: sending trajectory to arm_controller
+[ros2_control_node-5] [INFO] [1787576607.321128882] [arm_controller]: Received new action goal
+[ros2_control_node-5] [INFO] [1787576607.321166873] [arm_controller]: Accepted new action goal
+[move_group-3] [INFO] [1787576607.321249550] [moveit.simple_controller_manager.follow_joint_trajectory_controller_handle]: arm_controller started execution
+[move_group-3] [INFO] [1787576607.321259825] [moveit.simple_controller_manager.follow_joint_trajectory_controller_handle]: Goal request accepted!
+[ros2_control_node-5] [INFO] [1787576607.434351957] [arm_controller]: Goal reached, success!
+[move_group-3] [INFO] [1787576607.471729433] [moveit.simple_controller_manager.follow_joint_trajectory_controller_handle]: Controller 'arm_controller' successfully finished
+[move_group-3] [INFO] [1787576607.485788149] [moveit_ros.trajectory_execution_manager]: Completed trajectory execution with status SUCCEEDED ...
+[move_group-3] [INFO] [1787576607.490939010] [moveit_move_group_default_capabilities.move_action_capability]: Solution was found and executed.
+[ros2_control_node-5] [INFO] [1787576607.643067734] [gripper_controller]: Received new action goal
+[ros2_control_node-5] [INFO] [1787576607.643106478] [gripper_controller]: Accepted new action goal
+[ros2_control_node-5] [INFO] [1787576608.649318505] [gripper_controller]: Goal reached, success!
+[move_group-3] [INFO] [1787576619.100546389] [moveit_move_group_default_capabilities.move_action_capability]: Received request
+[move_group-3] [INFO] [1787576619.100663213] [moveit_move_group_default_capabilities.move_action_capability]: executing..
+[move_group-3] [INFO] [1787576619.100905154] [moveit_move_group_default_capabilities.move_action_capability]: Combined planning and execution request received for MoveGroup action. Forwarding to planning and execution pipeline.
+[move_group-3] [WARN] [1787576619.100916208] [moveit_move_group_capabilities_base.move_group_capability]: Execution of motions should always start at the robot's current state. Ignoring the state supplied as start state in the motion planning request
+[move_group-3] [WARN] [1787576619.100920009] [moveit_move_group_capabilities_base.move_group_capability]: Execution of motions should always start at the robot's current state. Ignoring the state supplied as difference in the planning scene diff
+[move_group-3] [INFO] [1787576619.100924312] [moveit_ros.plan_execution]: Planning attempt 1 of at most 1
+[move_group-3] [INFO] [1787576619.101419730] [moveit.ompl_planning.model_based_planning_context]: Planner configuration 'arm' will use planner 'geometric::RRTConnect'. Additional configuration parameters will be set when the planner is constructed.
+[move_group-3] [INFO] [1787576619.121509914] [moveit.plugins.moveit_simple_controller_manager]: Returned 2 controllers in list
+[move_group-3] [INFO] [1787576619.121543465] [moveit.plugins.moveit_simple_controller_manager]: Returned 2 controllers in list
+[move_group-3] [INFO] [1787576619.121579334] [moveit_ros.trajectory_execution_manager]: Validating trajectory with allowed_start_tolerance 0.01
+[move_group-3] [INFO] [1787576619.125874201] [moveit_ros.trajectory_execution_manager]: Starting trajectory execution ...
+[move_group-3] [INFO] [1787576619.125897873] [moveit.plugins.moveit_simple_controller_manager]: Returned 2 controllers in list
+[move_group-3] [INFO] [1787576619.125908716] [moveit.plugins.moveit_simple_controller_manager]: Returned 2 controllers in list
+[move_group-3] [INFO] [1787576619.126035228] [moveit.simple_controller_manager.follow_joint_trajectory_controller_handle]: sending trajectory to arm_controller
+[ros2_control_node-5] [INFO] [1787576619.126200278] [arm_controller]: Received new action goal
+[ros2_control_node-5] [INFO] [1787576619.126245003] [arm_controller]: Accepted new action goal
+[move_group-3] [INFO] [1787576619.126320000] [moveit.simple_controller_manager.follow_joint_trajectory_controller_handle]: arm_controller started execution
+[move_group-3] [INFO] [1787576619.126328074] [moveit.simple_controller_manager.follow_joint_trajectory_controller_handle]: Goal request accepted!
+[ros2_control_node-5] [INFO] [1787576620.624342842] [arm_controller]: Goal reached, success!
+[move_group-3] [INFO] [1787576620.628246010] [moveit.simple_controller_manager.follow_joint_trajectory_controller_handle]: Controller 'arm_controller' successfully finished
+[move_group-3] [INFO] [1787576620.640863060] [moveit_ros.trajectory_execution_manager]: Completed trajectory execution with status SUCCEEDED ...
+[move_group-3] [INFO] [1787576620.645975649] [moveit_move_group_default_capabilities.move_action_capability]: Solution was found and executed.
+[ros2_control_node-5] [INFO] [1787576621.674746157] [arm_controller]: Received new action goal
+[ros2_control_node-5] [INFO] [1787576621.674788011] [arm_controller]: Accepted new action goal
+[ros2_control_node-5] [INFO] [1787576623.184332149] [arm_controller]: Goal reached, success!
+[ros2_control_node-5] [INFO] [1787576623.227731439] [gripper_controller]: Received new action goal
+[ros2_control_node-5] [INFO] [1787576623.227758719] [gripper_controller]: Accepted new action goal
+[ros2_control_node-5] [INFO] [1787576624.229326776] [gripper_controller]: Goal reached, success!
+[move_group-3] [INFO] [1787576624.480617854] [moveit_move_group_default_capabilities.cartersian_path_service_capability]: Received request to compute Cartesian path
+[move_group-3] [INFO] [1787576624.480734881] [moveit_move_group_default_capabilities.cartersian_path_service_capability]: Attempting to follow 1 waypoints for link 'tcp_link' using a step of 0.010000 m and jump threshold 1.600000 (in global reference frame)
+[move_group-3] [INFO] [1787576624.984121186] [moveit_move_group_default_capabilities.cartersian_path_service_capability]: Computed Cartesian path with 48 points (followed 52.808989% of requested trajectory)
+[move_group-3] [INFO] [1787576625.487582144] [moveit_move_group_default_capabilities.move_action_capability]: Received request
+[move_group-3] [INFO] [1787576625.487688268] [moveit_move_group_default_capabilities.move_action_capability]: executing..
+[move_group-3] [INFO] [1787576625.490809352] [moveit_move_group_default_capabilities.move_action_capability]: Combined planning and execution request received for MoveGroup action. Forwarding to planning and execution pipeline.
+[move_group-3] [WARN] [1787576625.490823804] [moveit_move_group_capabilities_base.move_group_capability]: Execution of motions should always start at the robot's current state. Ignoring the state supplied as start state in the motion planning request
+[move_group-3] [WARN] [1787576625.490828176] [moveit_move_group_capabilities_base.move_group_capability]: Execution of motions should always start at the robot's current state. Ignoring the state supplied as difference in the planning scene diff
+[move_group-3] [INFO] [1787576625.490832438] [moveit_ros.plan_execution]: Planning attempt 1 of at most 1
+[move_group-3] [INFO] [1787576625.491090727] [moveit_collision_detection_fcl.collision_common]: Found a contact between 'belt_deck' (type 'Object') and 'gripper_link1' (type 'Robot link'), which constitutes a collision. Contact information is not stored.
+[move_group-3] [INFO] [1787576625.491100956] [moveit_collision_detection_fcl.collision_common]: Collision checking is considered complete (collision was found and 0 contacts are stored)
+[move_group-3] [INFO] [1787576625.491103945] [moveit_ros.fix_start_state_collision]: Start state appears to be in collision with respect to group arm
+[move_group-3] [INFO] [1787576625.491399420] [moveit_ros.fix_start_state_collision]: Found a valid state near the start state at distance 0.303090 after 1 attempts
+[move_group-3] [INFO] [1787576625.491782706] [moveit.ompl_planning.model_based_planning_context]: Planner configuration 'arm' will use planner 'geometric::RRTConnect'. Additional configuration parameters will be set when the planner is constructed.
+[move_group-3] [INFO] [1787576625.525196321] [moveit.ros_planning.planning_pipeline]: Planning adapters have added states at index positions: [ 0 ]
+[move_group-3] [ERROR] [1787576625.525900113] [moveit.ros_planning.planning_pipeline]: Computed path is not valid. Invalid states at index locations: [ 0 1 2 ] out of 13. Explanations follow in command line. Contacts are published on /display_contacts
+[move_group-3] [INFO] [1787576625.525977374] [moveit_collision_detection_fcl.collision_common]: Found a contact between 'belt_deck' (type 'Object') and 'gripper_link1' (type 'Robot link'), which constitutes a collision. Contact information is not stored.
+[move_group-3] [INFO] [1787576625.525983983] [moveit_collision_detection_fcl.collision_common]: Collision checking is considered complete (collision was found and 0 contacts are stored)
+[move_group-3] [INFO] [1787576625.526211805] [moveit_collision_detection_fcl.collision_common]: Found a contact between 'belt_deck' (type 'Object') and 'gripper_link1' (type 'Robot link'), which constitutes a collision. Contact information is not stored.
+[move_group-3] [INFO] [1787576625.526217160] [moveit_collision_detection_fcl.collision_common]: Collision checking is considered complete (collision was found and 0 contacts are stored)
+[move_group-3] [INFO] [1787576625.526350571] [moveit_collision_detection_fcl.collision_common]: Found a contact between 'belt_deck' (type 'Object') and 'gripper_link1' (type 'Robot link'), which constitutes a collision. Contact information is not stored.
+[move_group-3] [INFO] [1787576625.526353550] [moveit_collision_detection_fcl.collision_common]: Collision checking is considered complete (collision was found and 0 contacts are stored)
+[move_group-3] [ERROR] [1787576625.526463524] [moveit.ros_planning.planning_pipeline]: Completed listing of explanations for invalid states.
+[move_group-3] [INFO] [1787576625.526703340] [moveit_move_group_default_capabilities.move_action_capability]: Motion plan was found but it seems to be invalid (possibly due to postprocessing). Not executing.
+[move_group-3] [INFO] [1787576625.530613551] [moveit_move_group_default_capabilities.move_action_capability]: Received request
+[move_group-3] [INFO] [1787576625.530741658] [moveit_move_group_default_capabilities.move_action_capability]: executing..
+[move_group-3] [INFO] [1787576625.531028758] [moveit_move_group_default_capabilities.move_action_capability]: Combined planning and execution request received for MoveGroup action. Forwarding to planning and execution pipeline.
+[move_group-3] [WARN] [1787576625.531045155] [moveit_move_group_capabilities_base.move_group_capability]: Execution of motions should always start at the robot's current state. Ignoring the state supplied as start state in the motion planning request
+[move_group-3] [WARN] [1787576625.531050731] [moveit_move_group_capabilities_base.move_group_capability]: Execution of motions should always start at the robot's current state. Ignoring the state supplied as difference in the planning scene diff
+[move_group-3] [INFO] [1787576625.531055615] [moveit_ros.plan_execution]: Planning attempt 1 of at most 1
+[move_group-3] [INFO] [1787576625.531301719] [moveit_collision_detection_fcl.collision_common]: Found a contact between 'belt_deck' (type 'Object') and 'gripper_link1' (type 'Robot link'), which constitutes a collision. Contact information is not stored.
+[move_group-3] [INFO] [1787576625.531311256] [moveit_collision_detection_fcl.collision_common]: Collision checking is considered complete (collision was found and 0 contacts are stored)
+[move_group-3] [INFO] [1787576625.531314776] [moveit_ros.fix_start_state_collision]: Start state appears to be in collision with respect to group arm
+[move_group-3] [INFO] [1787576625.531685787] [moveit_ros.fix_start_state_collision]: Found a valid state near the start state at distance 0.511387 after 1 attempts
+[move_group-3] [INFO] [1787576625.532054672] [moveit.ompl_planning.model_based_planning_context]: Planner configuration 'arm' will use planner 'geometric::RRTConnect'. Additional configuration parameters will be set when the planner is constructed.
+[move_group-3] [INFO] [1787576625.556812155] [moveit.ros_planning.planning_pipeline]: Planning adapters have added states at index positions: [ 0 ]
+[move_group-3] [ERROR] [1787576625.557862549] [moveit.ros_planning.planning_pipeline]: Computed path is not valid. Invalid states at index locations: [ 0 1 2 ] out of 20. Explanations follow in command line. Contacts are published on /display_contacts
+[move_group-3] [INFO] [1787576625.557929149] [moveit_collision_detection_fcl.collision_common]: Found a contact between 'belt_deck' (type 'Object') and 'gripper_link1' (type 'Robot link'), which constitutes a collision. Contact information is not stored.
+[move_group-3] [INFO] [1787576625.557934525] [moveit_collision_detection_fcl.collision_common]: Collision checking is considered complete (collision was found and 0 contacts are stored)
+[move_group-3] [INFO] [1787576625.558207525] [moveit_collision_detection_fcl.collision_common]: Found a contact between 'belt_deck' (type 'Object') and 'gripper_link1' (type 'Robot link'), which constitutes a collision. Contact information is not stored.
+[move_group-3] [INFO] [1787576625.558210805] [moveit_collision_detection_fcl.collision_common]: Collision checking is considered complete (collision was found and 0 contacts are stored)
+[move_group-3] [INFO] [1787576625.558330437] [moveit_collision_detection_fcl.collision_common]: Found a contact between 'belt_deck' (type 'Object') and 'gripper_link1' (type 'Robot link'), which constitutes a collision. Contact information is not stored.
+[move_group-3] [INFO] [1787576625.558333245] [moveit_collision_detection_fcl.collision_common]: Collision checking is considered complete (collision was found and 0 contacts are stored)
+[move_group-3] [ERROR] [1787576625.558420966] [moveit.ros_planning.planning_pipeline]: Completed listing of explanations for invalid states.
+[move_group-3] [INFO] [1787576625.558673719] [moveit_move_group_default_capabilities.move_action_capability]: Motion plan was found but it seems to be invalid (possibly due to postprocessing). Not executing.
+[move_group-3] [INFO] [1787576625.561928616] [moveit_move_group_default_capabilities.move_action_capability]: Received request
+[move_group-3] [INFO] [1787576625.562074032] [moveit_move_group_default_capabilities.move_action_capability]: executing..
+[move_group-3] [INFO] [1787576625.565912558] [moveit_move_group_default_capabilities.move_action_capability]: Combined planning and execution request received for MoveGroup action. Forwarding to planning and execution pipeline.
+[move_group-3] [WARN] [1787576625.565942674] [moveit_move_group_capabilities_base.move_group_capability]: Execution of motions should always start at the robot's current state. Ignoring the state supplied as start state in the motion planning request
+[move_group-3] [WARN] [1787576625.565948461] [moveit_move_group_capabilities_base.move_group_capability]: Execution of motions should always start at the robot's current state. Ignoring the state supplied as difference in the planning scene diff
+[move_group-3] [INFO] [1787576625.565953084] [moveit_ros.plan_execution]: Planning attempt 1 of at most 1
+[move_group-3] [INFO] [1787576625.566186662] [moveit_collision_detection_fcl.collision_common]: Found a contact between 'belt_deck' (type 'Object') and 'gripper_link1' (type 'Robot link'), which constitutes a collision. Contact information is not stored.
+[move_group-3] [INFO] [1787576625.566195497] [moveit_collision_detection_fcl.collision_common]: Collision checking is considered complete (collision was found and 0 contacts are stored)
+[move_group-3] [INFO] [1787576625.566198235] [moveit_ros.fix_start_state_collision]: Start state appears to be in collision with respect to group arm
+[move_group-3] [INFO] [1787576625.566308239] [moveit_ros.fix_start_state_collision]: Found a valid state near the start state at distance 0.339920 after 0 attempts
+[move_group-3] [INFO] [1787576625.566596102] [moveit.ompl_planning.model_based_planning_context]: Planner configuration 'arm' will use planner 'geometric::RRTConnect'. Additional configuration parameters will be set when the planner is constructed.
+[move_group-3] [INFO] [1787576625.584816312] [moveit_kinematic_constraints.kinematic_constraints]: Constraint satisfied:: Joint name: 'joint1', actual value: 1.887893, desired value: 1.881064, tolerance_above: 0.010000, tolerance_below: 0.010000
+[move_group-3] [INFO] [1787576625.584852085] [moveit_kinematic_constraints.kinematic_constraints]: Constraint satisfied:: Joint name: 'joint2', actual value: 2.648336, desired value: 2.641887, tolerance_above: 0.010000, tolerance_below: 0.010000
+[move_group-3] [INFO] [1787576625.584855434] [moveit_kinematic_constraints.kinematic_constraints]: Constraint satisfied:: Joint name: 'joint3', actual value: -1.204112, desired value: -1.199373, tolerance_above: 0.010000, tolerance_below: 0.010000
+[move_group-3] [INFO] [1787576625.584858012] [moveit_kinematic_constraints.kinematic_constraints]: Constraint satisfied:: Joint name: 'joint4', actual value: 0.244632, desired value: 0.236475, tolerance_above: 0.010000, tolerance_below: 0.010000
+[move_group-3] [INFO] [1787576625.584860439] [moveit_kinematic_constraints.kinematic_constraints]: Constraint satisfied:: Joint name: 'joint5', actual value: 0.167820, desired value: 0.165073, tolerance_above: 0.010000, tolerance_below: 0.010000
+[move_group-3] [INFO] [1787576625.584862605] [moveit_kinematic_constraints.kinematic_constraints]: Constraint satisfied:: Joint name: 'joint6', actual value: 0.061118, desired value: 0.060703, tolerance_above: 0.010000, tolerance_below: 0.010000
+[move_group-3] [INFO] [1787576625.584881699] [moveit_collision_detection_fcl.collision_common]: Found a contact between 'control_box' (type 'Object') and 'link5' (type 'Robot link'), which constitutes a collision. Contact information is not stored.
+[move_group-3] [INFO] [1787576625.584887947] [moveit_collision_detection_fcl.collision_common]: Collision checking is considered complete (collision was found and 0 contacts are stored)
+[move_group-3] [ERROR] [1787576625.596981459] [ompl]: ./src/ompl/geometric/planners/rrt/src/RRTConnect.cpp:265 - arm/arm: Unable to sample any valid states for goal tree
+[move_group-3] [ERROR] [1787576625.597030639] [ompl]: ./src/ompl/geometric/planners/rrt/src/RRTConnect.cpp:265 - arm/arm: Unable to sample any valid states for goal tree
+[move_group-3] [ERROR] [1787576625.597054136] [ompl]: ./src/ompl/geometric/planners/rrt/src/RRTConnect.cpp:265 - arm/arm: Unable to sample any valid states for goal tree
+[move_group-3] [WARN] [1787576625.597101763] [ompl]: ./src/ompl/tools/multiplan/src/ParallelPlan.cpp:138 - ParallelPlan::solve(): Unable to find solution by any of the threads in 0.030425 seconds
+[move_group-3] [INFO] [1787576625.597114078] [moveit.ompl_planning.model_based_planning_context]: Unable to solve the planning problem
+[move_group-3] [INFO] [1787576625.597138708] [moveit_move_group_default_capabilities.move_action_capability]: Catastrophic failure
+[ros2_control_node-5] [INFO] [1787576625.598978028] [gripper_controller]: Received new action goal
+[ros2_control_node-5] [INFO] [1787576625.599013108] [gripper_controller]: Accepted new action goal
+[ros2_control_node-5] [INFO] [1787576626.599327541] [gripper_controller]: Goal reached, success!
+[move_group-3] [INFO] [1787576626.802604874] [moveit_move_group_default_capabilities.move_action_capability]: Received request
+[move_group-3] [INFO] [1787576626.802715056] [moveit_move_group_default_capabilities.move_action_capability]: executing..
+[move_group-3] [INFO] [1787576626.805830759] [moveit_move_group_default_capabilities.move_action_capability]: Combined planning and execution request received for MoveGroup action. Forwarding to planning and execution pipeline.
+[move_group-3] [WARN] [1787576626.805847998] [moveit_move_group_capabilities_base.move_group_capability]: Execution of motions should always start at the robot's current state. Ignoring the state supplied as start state in the motion planning request
+[move_group-3] [WARN] [1787576626.805851919] [moveit_move_group_capabilities_base.move_group_capability]: Execution of motions should always start at the robot's current state. Ignoring the state supplied as difference in the planning scene diff
+[move_group-3] [INFO] [1787576626.805855941] [moveit_ros.plan_execution]: Planning attempt 1 of at most 1
+[move_group-3] [INFO] [1787576626.806063459] [moveit_collision_detection_fcl.collision_common]: Found a contact between 'belt_deck' (type 'Object') and 'gripper_link1' (type 'Robot link'), which constitutes a collision. Contact information is not stored.
+[move_group-3] [INFO] [1787576626.806071592] [moveit_collision_detection_fcl.collision_common]: Collision checking is considered complete (collision was found and 0 contacts are stored)
+[move_group-3] [INFO] [1787576626.806074631] [moveit_ros.fix_start_state_collision]: Start state appears to be in collision with respect to group arm
+[move_group-3] [INFO] [1787576626.806185415] [moveit_ros.fix_start_state_collision]: Found a valid state near the start state at distance 0.326381 after 0 attempts
+[move_group-3] [INFO] [1787576626.806491302] [moveit.ompl_planning.model_based_planning_context]: Planner configuration 'arm' will use planner 'geometric::RRTConnect'. Additional configuration parameters will be set when the planner is constructed.
+[move_group-3] [INFO] [1787576626.834047252] [moveit.ros_planning.planning_pipeline]: Planning adapters have added states at index positions: [ 0 ]
+[move_group-3] [ERROR] [1787576626.835054257] [moveit.ros_planning.planning_pipeline]: Computed path is not valid. Invalid states at index locations: [ 0 1 2 ] out of 19. Explanations follow in command line. Contacts are published on /display_contacts
+[move_group-3] [INFO] [1787576626.835103216] [moveit_collision_detection_fcl.collision_common]: Found a contact between 'belt_deck' (type 'Object') and 'gripper_link1' (type 'Robot link'), which constitutes a collision. Contact information is not stored.
+[move_group-3] [INFO] [1787576626.835106836] [moveit_collision_detection_fcl.collision_common]: Collision checking is considered complete (collision was found and 0 contacts are stored)
+[move_group-3] [INFO] [1787576626.835258927] [moveit_collision_detection_fcl.collision_common]: Found a contact between 'belt_deck' (type 'Object') and 'gripper_link1' (type 'Robot link'), which constitutes a collision. Contact information is not stored.
+[move_group-3] [INFO] [1787576626.835261254] [moveit_collision_detection_fcl.collision_common]: Collision checking is considered complete (collision was found and 0 contacts are stored)
+[move_group-3] [INFO] [1787576626.835365710] [moveit_collision_detection_fcl.collision_common]: Found a contact between 'belt_deck' (type 'Object') and 'gripper_link1' (type 'Robot link'), which constitutes a collision. Contact information is not stored.
+[move_group-3] [INFO] [1787576626.835367725] [moveit_collision_detection_fcl.collision_common]: Collision checking is considered complete (collision was found and 0 contacts are stored)
+[move_group-3] [ERROR] [1787576626.835442207] [moveit.ros_planning.planning_pipeline]: Completed listing of explanations for invalid states.
+[move_group-3] [INFO] [1787576626.835641020] [moveit_move_group_default_capabilities.move_action_capability]: Motion plan was found but it seems to be invalid (possibly due to postprocessing). Not executing.
+[move_group-3] [INFO] [1787576626.838012624] [moveit_move_group_default_capabilities.move_action_capability]: Received request
+[move_group-3] [INFO] [1787576626.838099139] [moveit_move_group_default_capabilities.move_action_capability]: executing..
+[move_group-3] [INFO] [1787576626.840826481] [moveit_move_group_default_capabilities.move_action_capability]: Combined planning and execution request received for MoveGroup action. Forwarding to planning and execution pipeline.
+[move_group-3] [WARN] [1787576626.840844472] [moveit_move_group_capabilities_base.move_group_capability]: Execution of motions should always start at the robot's current state. Ignoring the state supplied as start state in the motion planning request
+[move_group-3] [WARN] [1787576626.840849837] [moveit_move_group_capabilities_base.move_group_capability]: Execution of motions should always start at the robot's current state. Ignoring the state supplied as difference in the planning scene diff
+[move_group-3] [INFO] [1787576626.840855313] [moveit_ros.plan_execution]: Planning attempt 1 of at most 1
+[move_group-3] [INFO] [1787576626.841091251] [moveit_collision_detection_fcl.collision_common]: Found a contact between 'belt_deck' (type 'Object') and 'gripper_link1' (type 'Robot link'), which constitutes a collision. Contact information is not stored.
+[move_group-3] [INFO] [1787576626.841104439] [moveit_collision_detection_fcl.collision_common]: Collision checking is considered complete (collision was found and 0 contacts are stored)
+[move_group-3] [INFO] [1787576626.841108671] [moveit_ros.fix_start_state_collision]: Start state appears to be in collision with respect to group arm
+[move_group-3] [INFO] [1787576626.841302972] [moveit_ros.fix_start_state_collision]: Found a valid state near the start state at distance 0.189148 after 0 attempts
+[move_group-3] [INFO] [1787576626.841613512] [moveit.ompl_planning.model_based_planning_context]: Planner configuration 'arm' will use planner 'geometric::RRTConnect'. Additional configuration parameters will be set when the planner is constructed.
+[move_group-3] [INFO] [1787576626.875605147] [moveit.ros_planning.planning_pipeline]: Planning adapters have added states at index positions: [ 0 ]
+[move_group-3] [ERROR] [1787576626.876592777] [moveit.ros_planning.planning_pipeline]: Computed path is not valid. Invalid states at index locations: [ 0 1 2 ] out of 19. Explanations follow in command line. Contacts are published on /display_contacts
+[move_group-3] [INFO] [1787576626.876648064] [moveit_collision_detection_fcl.collision_common]: Found a contact between 'belt_deck' (type 'Object') and 'gripper_link1' (type 'Robot link'), which constitutes a collision. Contact information is not stored.
+[move_group-3] [INFO] [1787576626.876651864] [moveit_collision_detection_fcl.collision_common]: Collision checking is considered complete (collision was found and 0 contacts are stored)
+[move_group-3] [INFO] [1787576626.876810033] [moveit_collision_detection_fcl.collision_common]: Found a contact between 'belt_deck' (type 'Object') and 'gripper_link1' (type 'Robot link'), which constitutes a collision. Contact information is not stored.
+[move_group-3] [INFO] [1787576626.876812389] [moveit_collision_detection_fcl.collision_common]: Collision checking is considered complete (collision was found and 0 contacts are stored)
+[move_group-3] [INFO] [1787576626.876917237] [moveit_collision_detection_fcl.collision_common]: Found a contact between 'belt_deck' (type 'Object') and 'gripper_link1' (type 'Robot link'), which constitutes a collision. Contact information is not stored.
+[move_group-3] [INFO] [1787576626.876919182] [moveit_collision_detection_fcl.collision_common]: Collision checking is considered complete (collision was found and 0 contacts are stored)
+[move_group-3] [ERROR] [1787576626.876997083] [moveit.ros_planning.planning_pipeline]: Completed listing of explanations for invalid states.
+[move_group-3] [INFO] [1787576626.877198384] [moveit_move_group_default_capabilities.move_action_capability]: Motion plan was found but it seems to be invalid (possibly due to postprocessing). Not executing.

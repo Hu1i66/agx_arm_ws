@@ -1,0 +1,260 @@
+{
+  "kind": "tcp_pivot_session",
+  "schema_version": 1,
+  "units": "m",
+  "quaternion_order": "xyzw",
+  "current_tcp_offset": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "robot_base_frame": "base_link",
+  "flange_frame": "link6",
+  "pose_source": "/feedback/tcp_pose",
+  "samples": [
+    {
+      "position_m": [
+        0.21223599999999998,
+        -0.072388,
+        0.167122
+      ],
+      "quaternion_xyzw": [
+        0.3695306215128774,
+        0.7064375851943536,
+        0.048574109090943784,
+        0.6016922917198606
+      ],
+      "frame_id": "",
+      "sequence": 17544,
+      "received_monotonic": 1151.49850274,
+      "header_stamp": {
+        "sec": 1792161813,
+        "nanosec": 429273206
+      },
+      "assumed_base_frame": true,
+      "window_samples": 50,
+      "stability_mm": 0.0,
+      "stability_deg": 0.0
+    },
+    {
+      "position_m": [
+        0.251552,
+        -0.08574799999999999,
+        0.226523
+      ],
+      "quaternion_xyzw": [
+        0.2584484516592176,
+        0.8809729119042883,
+        -0.048254013879478086,
+        0.3933988770578172
+      ],
+      "frame_id": "",
+      "sequence": 23526,
+      "received_monotonic": 1181.408515304,
+      "header_stamp": {
+        "sec": 1792161843,
+        "nanosec": 339306792
+      },
+      "assumed_base_frame": true,
+      "window_samples": 50,
+      "stability_mm": 0.0,
+      "stability_deg": 0.0
+    },
+    {
+      "position_m": [
+        0.286244,
+        -0.003862,
+        0.184326
+      ],
+      "quaternion_xyzw": [
+        0.15263000740532642,
+        0.8435391540400778,
+        -0.3779191580795967,
+        0.3497468890457908
+      ],
+      "frame_id": "",
+      "sequence": 28755,
+      "received_monotonic": 1207.55856213,
+      "header_stamp": {
+        "sec": 1792161869,
+        "nanosec": 489329283
+      },
+      "assumed_base_frame": true,
+      "window_samples": 50,
+      "stability_mm": 0.0,
+      "stability_deg": 0.0
+    },
+    {
+      "position_m": [
+        0.211109,
+        -0.168682,
+        0.17643599999999998
+      ],
+      "quaternion_xyzw": [
+        0.6499180732249719,
+        0.5425628078552278,
+        0.4796337280789431,
+        0.23061566407528727
+      ],
+      "frame_id": "",
+      "sequence": 31261,
+      "received_monotonic": 1220.088638263,
+      "header_stamp": {
+        "sec": 1792161882,
+        "nanosec": 19389606
+      },
+      "assumed_base_frame": true,
+      "window_samples": 49,
+      "stability_mm": 0.0,
+      "stability_deg": 0.0
+    },
+    {
+      "position_m": [
+        0.33518699999999996,
+        -0.116869,
+        0.25676299999999996
+      ],
+      "quaternion_xyzw": [
+        -0.11949658109576206,
+        -0.9910446339964887,
+        0.024141082395183852,
+        -0.054482186758414375
+      ],
+      "frame_id": "",
+      "sequence": 33681,
+      "received_monotonic": 1232.188557586,
+      "header_stamp": {
+        "sec": 1792161894,
+        "nanosec": 119303077
+      },
+      "assumed_base_frame": true,
+      "window_samples": 50,
+      "stability_mm": 0.0,
+      "stability_deg": 0.0
+    },
+    {
+      "position_m": [
+        0.355954,
+        -0.038894,
+        0.228351
+      ],
+      "quaternion_xyzw": [
+        -0.1883324764206994,
+        0.9408367728782145,
+        -0.27047832680185235,
+        -0.07873067925417547
+      ],
+      "frame_id": "",
+      "sequence": 36806,
+      "received_monotonic": 1247.818461145,
+      "header_stamp": {
+        "sec": 1792161909,
+        "nanosec": 749238802
+      },
+      "assumed_base_frame": true,
+      "window_samples": 50,
+      "stability_mm": 0.0,
+      "stability_deg": 0.0
+    },
+    {
+      "position_m": [
+        0.218604,
+        -0.200347,
+        0.15731399999999998
+      ],
+      "quaternion_xyzw": [
+        0.5862796770670241,
+        0.5686295688385291,
+        0.5561115983194699,
+        0.15387151755688644
+      ],
+      "frame_id": "",
+      "sequence": 39695,
+      "received_monotonic": 1262.2735498,
+      "header_stamp": {
+        "sec": 1792161924,
+        "nanosec": 204317889
+      },
+      "assumed_base_frame": true,
+      "window_samples": 50,
+      "stability_mm": 0.0,
+      "stability_deg": 0.0
+    },
+    {
+      "position_m": [
+        0.206752,
+        -0.071481,
+        0.144202
+      ],
+      "quaternion_xyzw": [
+        0.49346577394766256,
+        0.5698386501740268,
+        0.1823769009843761,
+        0.6312797388617923
+      ],
+      "frame_id": "",
+      "sequence": 42510,
+      "received_monotonic": 1276.348498327,
+      "header_stamp": {
+        "sec": 1792161938,
+        "nanosec": 279286622
+      },
+      "assumed_base_frame": true,
+      "window_samples": 50,
+      "stability_mm": 0.0,
+      "stability_deg": 0.0
+    },
+    {
+      "position_m": [
+        0.249377,
+        -0.047088,
+        0.204506
+      ],
+      "quaternion_xyzw": [
+        -0.03770942062656518,
+        0.8899283760426352,
+        -0.24499628266110607,
+        0.3828606882305445
+      ],
+      "frame_id": "",
+      "sequence": 45087,
+      "received_monotonic": 1289.233549159,
+      "header_stamp": {
+        "sec": 1792161951,
+        "nanosec": 164314692
+      },
+      "assumed_base_frame": true,
+      "window_samples": 50,
+      "stability_mm": 0.12913558765885413,
+      "stability_deg": 0.21923023962131208
+    },
+    {
+      "position_m": [
+        0.35148599999999997,
+        -0.047125,
+        0.23404
+      ],
+      "quaternion_xyzw": [
+        -0.14446992530563801,
+        0.9566870674860407,
+        -0.24849720256635524,
+        -0.04612413580587525
+      ],
+      "frame_id": "",
+      "sequence": 50452,
+      "received_monotonic": 1316.058494088,
+      "header_stamp": {
+        "sec": 1792161977,
+        "nanosec": 989272844
+      },
+      "assumed_base_frame": true,
+      "window_samples": 50,
+      "stability_mm": 0.0,
+      "stability_deg": 0.0
+    }
+  ],
+  "current_tcp_offset_source": "/agx_arm_ctrl_single_node/tcp_offset"
+}

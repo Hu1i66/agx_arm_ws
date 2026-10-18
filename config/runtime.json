@@ -1,0 +1,159 @@
+{
+  "config_version": 1,
+  "description": "Piper 工作空间共享运行时配置：外部依赖路径、ROS/DDS、相机参数、就绪超时。项目内路径相对 workspace_root；外部路径为绝对路径。",
+  "paths": {
+    "vision_python": "/home/lxf/orange_dataset/.venv/bin/python3",
+    "system_python": "/usr/bin/python3",
+    "ros_setup": "/opt/ros/humble/setup.bash",
+    "workspace_setup": "install/setup.bash",
+    "orbbec_setup": "/home/lxf/orbbec_ros2_ws/install/setup.bash",
+    "dds_xml": "config/dds/cyclonedds.xml",
+    "yolo_weights": "models/yolo/fruits12.pt",
+    "graspnet_checkpoint": "models/graspnet/checkpoint-rs.tar",
+    "graspnet_baseline": "/home/lxf/graspnet/graspnet-baseline",
+    "d455_handeye": "config/calibration/d455_eye_to_hand.json",
+    "ik_site_packages": "/home/lxf/.local/lib/python3.10/site-packages",
+    "cmeel_site_packages": "/home/lxf/.local/lib/python3.10/site-packages/cmeel.prefix/lib/python3.10/site-packages",
+    "ik_urdf": "src/agx_arm_ros/src/agx_arm_moveit/config/test2.urdf",
+    "saved_poses": "saved_poses.json",
+    "conveyor_calib": "conveyor_calib.json"
+  },
+  "ros": {
+    "distro": "humble",
+    "rmw_implementation": "rmw_cyclonedds_cpp",
+    "cyclonedds_uri_scheme": "file://",
+    "domain_id_default": 0,
+    "domain_id_note": "ROS_DOMAIN_ID 保留调用者值；未设置按 ROS 默认 0；不 source ~/.bashrc"
+  },
+  "cameras": {
+    "d455": {
+      "driver_package": "realsense2_camera",
+      "driver_launch": "rs_launch.py",
+      "namespace": "/camera/camera",
+      "color_profile": "640,480,30",
+      "depth_profile": "640,480,30",
+      "align_depth": true,
+      "publish_tf": false,
+      "spatial_filter": true,
+      "temporal_filter": true,
+      "hole_filling_filter": true,
+      "rgb_topic": "/camera/camera/color/image_raw",
+      "depth_topic": "/camera/camera/aligned_depth_to_color/image_raw",
+      "camera_info_topic": "/camera/camera/color/camera_info",
+      "optical_frame": "camera_color_optical_frame",
+      "tf_component_key": "camera_tf:d455"
+    },
+    "dabai": {
+      "driver_package": "orbbec_camera",
+      "driver_launch": "dabai.launch.py",
+      "namespace": "/dabai",
+      "color_format": "MJPG",
+      "color_width": 640,
+      "color_height": 480,
+      "color_fps": 15,
+      "depth_registration": true,
+      "align_mode": "HW",
+      "enable_point_cloud": false,
+      "enable_colored_point_cloud": false,
+      "enable_ir": false,
+      "rgb_topic": "/dabai/color/image_raw",
+      "depth_topic": "/dabai/depth/image_raw",
+      "camera_info_topic": "/dabai/color/camera_info",
+      "optical_frame": "dabai_color_optical_frame",
+      "note": "Dabai 驱动工作空间 /home/lxf/orbbec_ros2_ws 留原位；不指定深度 profile；不用 dabai_dcl.py 的 frame_sync",
+      "observation_joints": [
+        0.0,
+        1.0669023184516138,
+        -1.1636808254746993,
+        0.0,
+        1.2184841639873214,
+        0.0
+      ],
+      "observation_note": "沿用项目历史JOINT_OBSERVE，须在新TCP/安装几何下先检查规划与实物视野；不是已现场验收的新点",
+      "publish_tf": false,
+      "tf_component_key": "camera_tf:dabai"
+    }
+  },
+  "vision": {
+    "fruit": {
+      "node_name": "object_detector",
+      "script": "vision/realsense_yolo_node.py",
+      "params_file": "config/vision/fruit.yaml",
+      "detector_component_key": "detector:d455"
+    },
+    "blue_block": {
+      "node_name": "blue_block_detector",
+      "script": "vision/blue_block_detector.py",
+      "params_file": "config/vision/blue_block.yaml",
+      "detector_component_key": "detector:d455"
+    }
+  },
+  "graspnet": {
+    "script": "graspnet_service_node.py",
+    "req_topic": "/graspnet/req",
+    "result_topic": "/graspnet/result",
+    "model_ready_log": "就绪, 等待请求...",
+    "model_loaded_log": "GraspNet 模型加载成功"
+  },
+  "calibration": {
+    "manifest": "config/calibration/manifest.json",
+    "board": {
+      "squares_x": 7,
+      "squares_y": 5,
+      "square_length_m": 0.032,
+      "marker_length_m": 0.024,
+      "aruco_dict": "DICT_5X5_1000",
+      "full_markers": 17
+    },
+    "intrinsics_gate": {
+      "min_valid_frames": 15,
+      "recommended_frames": [
+        20,
+        25
+      ],
+      "max_reproj_rms_px": 0.5,
+      "coverage_grid": "3x3"
+    },
+    "handeye_gate": {
+      "min_poses": 15,
+      "recommended_poses": [
+        20,
+        25
+      ],
+      "min_markers": 14,
+      "min_corners": 20,
+      "max_reproj_rms_px": 0.5,
+      "min_square_px": 25.0,
+      "settle_delay_s": 0.8,
+      "max_time_diff_s": 0.05,
+      "holdout": 4,
+      "consistency_deg": 0.02,
+      "median_rel_angle_deg_min": 20,
+      "n_pairs_ge25deg_min": 10,
+      "median_holdout_mm_max": 15.0
+    }
+  },
+  "readiness": {
+    "camera": {
+      "timeout_s": 30,
+      "max_age_s": 3
+    },
+    "camera_tf": {
+      "timeout_s": 10,
+      "max_age_s": 3
+    },
+    "detector_fruit": {
+      "timeout_s": 60,
+      "max_age_s": 3
+    },
+    "detector_blue_block": {
+      "timeout_s": 30,
+      "max_age_s": 3
+    },
+    "graspnet": {
+      "timeout_s": 120
+    }
+  },
+  "runtime_state_dir": ".runtime",
+  "runtime_log_dir": "log/runtime"
+}

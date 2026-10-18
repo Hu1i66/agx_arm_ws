@@ -1,0 +1,14 @@
+{
+  "enabled": true,
+  "model_status": "approximate_user_authorized_not_measured",
+  "body_box_size_m": [0.20, 0.04, 0.06],
+  "body_center_optical_m": [0.0, 0.0, -0.025],
+  "bracket_flange_anchor_m": [0.0, 0.0, 0.025],
+  "bracket_thickness_m": 0.014,
+  "note": "用户授权按标定位置及外形近似建模。相机框覆盖不同Dabai外壳及未知镜头横向位置，支架仅为法兰至相机中心的14mm方梁代理；不是实测CAD，不保证覆盖任意支架/线缆，首次须在RViz与实物核对。仅豁免与link6固定相连的法兰、gripper_flange和gripper_base安装接触，不豁免活动手指、其他连杆或环境。",
+  "references": [
+    "https://github.com/agilexrobotics/piper_ros/blob/noetic/src/piper_description/urdf/piper_description_with_camera_right.xacro",
+    "https://developer-orbbec-oss.oss-cn-shenzhen.aliyuncs.com/kindeditor/20220805190815.pdf",
+    "https://orbbec.com.cn/index/Product/info.html?cate=38&id=49"
+  ]
+}

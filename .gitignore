@@ -13,6 +13,9 @@ __pycache__/
 *.pyd
 .venv/
 .venv_mjx/
+# IK 环境（计划 6.4）：物理保留、取消 Git 索引跟踪；fresh clone 不带环境，
+# 必须恢复部署资产（见备份/部署清单）
+.venv_ik/
 third_party/python/**/__pycache__/
 *.deb
 
@@ -24,3 +27,32 @@ third_party/python/**/__pycache__/
 
 # Third-party nested git repos (cloned, not part of this project)
 src/trac_ik/
+
+# 本机运行登记与锁（每台机器独立，不提交）
+.runtime/
+
+# 部署资产：大权重不进 Git 大文件历史（部署目录与完整备份另交付）
+models/yolo/*.pt
+models/graspnet/*.tar
+
+# legacy 大图像会话以明确资产归档交付；同目录小文本历史保留跟踪
+data/calibration/history/d455_intrinsics_legacy/*.png
+data/calibration/history/d455_intrinsics_legacy/*.tar.gz
+data/calibration/history/d455_intrinsics_legacy/rgb_1280x720_k3/
+
+# Parallel development workspaces and local recovery archives
+.worktrees/
+.local_backups/
+.pytest_cache/
+
+# Runtime outputs, collected samples and calibration promotion recovery copies
+Log/
+config/calibration/.promotion.lock
+config/calibration/approved_backup/
+data/diagnostics/
+data/calibration/d455/
+data/calibration/dabai/
+data/calibration/imported/
+data/calibration/tcp/
+data/calibration/tcp_verification/
+# Existing tracked history remains available; new samples stay local.

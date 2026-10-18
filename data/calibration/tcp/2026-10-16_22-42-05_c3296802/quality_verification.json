@@ -1,0 +1,150 @@
+{
+  "session": "/home/lxf/agx_arm_ws/data/calibration/tcp/2026-10-16_22-42-05_c3296802",
+  "sample_count": 10,
+  "source_sha256": "4705ec56fa524b59a2b9b1f4c5dc94086f60f0c7b54cb61fe7c8703938225e7e",
+  "candidate": "/home/lxf/agx_arm_ws/data/calibration/tcp/2026-10-16_22-42-05_c3296802/candidate.json",
+  "quality_status": "failed",
+  "independent_recomputation_matches": true,
+  "rank": 6,
+  "condition_number": 4.199976779490849,
+  "rms_mm": 5.358227754611013,
+  "max_residual_mm": 8.718494213648352,
+  "thresholds": {
+    "min_samples": 6,
+    "max_rms_mm": 2.0,
+    "max_residual_mm": 5.0,
+    "max_condition": 100.0
+  },
+  "diagnostic_estimated_xyz_m": [
+    0.014575441592672702,
+    -0.005306490263008112,
+    0.14575834845696312
+  ],
+  "diagnostic_xyz_note": "Unqualified fit only. Do not apply this offset.",
+  "fitted_fixed_point_base_m": [
+    0.33774603348058413,
+    -0.12245456803787315,
+    0.11204363832121625
+  ],
+  "contact_point_spread_mm": [
+    9.673478275520509,
+    12.670916243027907,
+    7.0678477053560815
+  ],
+  "pairwise_angle_deg": {
+    "min": 6.9916501693150845,
+    "median": 76.46447189182017,
+    "max": 152.20622554678766
+  },
+  "acquisition_stability": {
+    "max_translation_mm": 0.12913558765885413,
+    "max_angle_deg": 0.21923023962131208
+  },
+  "rows": [
+    {
+      "sample": 1,
+      "residual_mm": 1.486227025717617,
+      "heldout_error_mm": 1.8691958358089105,
+      "retained_rms_mm": 5.620752595842154,
+      "retained_max_mm": 8.639626171247413,
+      "retained_rank": 6,
+      "retained_condition": 4.345513269360476,
+      "offset_change_mm": 0.3702204413300106
+    },
+    {
+      "sample": 2,
+      "residual_mm": 5.145295585660625,
+      "heldout_error_mm": 5.994687828620338,
+      "retained_rms_mm": 5.336079459263626,
+      "retained_max_mm": 8.110973790470977,
+      "retained_rank": 6,
+      "retained_condition": 4.007703801660015,
+      "offset_change_mm": 0.636075409106508
+    },
+    {
+      "sample": 3,
+      "residual_mm": 8.718494213648352,
+      "heldout_error_mm": 11.347217138472516,
+      "retained_rms_mm": 4.576228580890872,
+      "retained_max_mm": 9.422071114856884,
+      "retained_rank": 6,
+      "retained_condition": 4.348317443928838,
+      "offset_change_mm": 2.5633418504704553
+    },
+    {
+      "sample": 4,
+      "residual_mm": 3.6009400603783455,
+      "heldout_error_mm": 4.084021060976667,
+      "retained_rms_mm": 5.501689362513025,
+      "retained_max_mm": 8.629197585883892,
+      "retained_rank": 6,
+      "retained_condition": 4.293369158083627,
+      "offset_change_mm": 0.3208927294581226
+    },
+    {
+      "sample": 5,
+      "residual_mm": 6.034775459877779,
+      "heldout_error_mm": 6.941359977991361,
+      "retained_rms_mm": 5.219912360307215,
+      "retained_max_mm": 7.841167703568209,
+      "retained_rank": 6,
+      "retained_condition": 4.248080429448732,
+      "offset_change_mm": 0.5248166295246599
+    },
+    {
+      "sample": 6,
+      "residual_mm": 3.652353870892181,
+      "heldout_error_mm": 4.3989137676354515,
+      "retained_rms_mm": 5.48822765580533,
+      "retained_max_mm": 8.190224255637963,
+      "retained_rank": 6,
+      "retained_condition": 4.230096730268011,
+      "offset_change_mm": 0.4464539423565851
+    },
+    {
+      "sample": 7,
+      "residual_mm": 5.462317478377825,
+      "heldout_error_mm": 6.839141212827849,
+      "retained_rms_mm": 5.274207834516112,
+      "retained_max_mm": 8.14193462324701,
+      "retained_rank": 6,
+      "retained_condition": 4.721576143656379,
+      "offset_change_mm": 1.0968970750590377
+    },
+    {
+      "sample": 8,
+      "residual_mm": 2.5114273540045016,
+      "heldout_error_mm": 3.1011158375481713,
+      "retained_rms_mm": 5.5710795657873,
+      "retained_max_mm": 8.7818381411745,
+      "retained_rank": 6,
+      "retained_condition": 4.3777575754514615,
+      "offset_change_mm": 0.34658567197388757
+    },
+    {
+      "sample": 9,
+      "residual_mm": 8.13244974226711,
+      "heldout_error_mm": 9.777082275772157,
+      "retained_rms_mm": 4.803132998555158,
+      "retained_max_mm": 9.777192285950626,
+      "retained_rank": 6,
+      "retained_condition": 4.172361754140784,
+      "offset_change_mm": 1.1371286613772729
+    },
+    {
+      "sample": 10,
+      "residual_mm": 4.171939182956746,
+      "heldout_error_mm": 5.07675122457824,
+      "retained_rms_mm": 5.436160851372322,
+      "retained_max_mm": 8.040143948634098,
+      "retained_rank": 6,
+      "retained_condition": 4.191399495631637,
+      "offset_change_mm": 0.5553296571923501
+    }
+  ],
+  "leave_one_out_note": "Each fit uses nine observations; heldout point is excluded from fitting. Diagnostic only, does not change full-data acceptance.",
+  "no_single_removal_meets_original_gates": true,
+  "input_snapshot": "/home/lxf/agx_arm_ws/data/calibration/tcp/2026-10-16_22-42-05_c3296802/solve_input_680d217bd0414c34855999abb4020719.json",
+  "input_snapshot_sha256": "a9f7ad04d70a2742567cf3a383bc9c6b7fd2e37c9fb00ae14bb00b6be609b3a2",
+  "applied": false
+}

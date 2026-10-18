@@ -8,6 +8,8 @@
 避免 multiprocessing spawn 子进程在无显示器环境中加载 Tcl/Tk C 库导致 SIGSEGV。
 """
 import json, os, math, multiprocessing, queue, subprocess, threading, time, io
+import runtime_launcher as _runtime
+from runtime_config import workspace_root
 
 _LOG = "/tmp/sorting_gui_startup.log"
 def _log(msg):
@@ -24,21 +26,43 @@ def euler_to_quaternion(roll_deg, pitch_deg, yaw_deg):
     return (sr*cp*cy - cr*sp*sy, cr*sp*cy + sr*cp*sy,
             cr*cp*sy - sr*sp*cy, cr*cp*cy + sr*sp*sy)
 
+def _cancel_telemetry_join(*queues):
+    """Discardable telemetry must never block worker exit on a full pipe.
+
+    The separate shutdown ACK queue is deliberately excluded by the caller.
+    """
+    for output in queues:
+        try:
+            output.cancel_join_thread()
+        except Exception:
+            pass
+
 # ═══════════════════════ ROS 子进程 ═══════════════════════
 
-def ros_process_worker(cmd_q, st_q, pose_q, img_q, det_q, conv_q, conv_status_q, mp_status_q):
+def ros_process_worker(cmd_q, st_q, pose_q, img_q, det_q, conv_q, conv_status_q,
+                       mp_status_q, shutdown_q, session_id, parent_pid=None, initial_camera="d455"):
     """ROS2 子进程 — camera/YOLO 回调即时推送 JPEG。 无 Tkinter 依赖。
 
-    ⚠️ auto_start_pipeline (相机/YOLO 自动拉起) 也在此子进程中以守护线程运行。
+    ⚠️ auto_start_pipeline (相机/TF/检测 自动拉起) 也在此子进程中以守护线程运行，
+    且在 rclpy.init + Node 创建之后启动；等待就绪期间 spinner 保持运转。
     原因: 主进程加载了 Tcl/Tk C 库, 多线程中 fork() (subprocess.run/Popen)
     会破坏 Tcl 引用计数 → "Tcl_Release couldn't find reference" → 段错误。
     本子进程无 Tcl 依赖, fork() 安全。
     """
-    # 在 ROS worker 子进程中启动自动启动管线 (此进程无 Tcl, fork 安全)
+    _ppid0 = parent_pid if parent_pid is not None else os.getppid()
+    if os.getppid() != _ppid0:
+        return  # Parent died before initialization; do not open devices.
+    _cancel_telemetry_join(st_q, pose_q, img_q, det_q, conv_q,
+                           conv_status_q, mp_status_q)
+    closing = threading.Event()
+    pipeline_lock = threading.Lock()
+    camera_state = {"active":initial_camera, "switching":False}
+    shutdown_lock = threading.Lock()
+    shutdown_done = threading.Event()
+
     def _mp_set_status(msg):
         try: mp_status_q.put_nowait(msg)
         except: pass
-    threading.Thread(target=auto_start_pipeline, args=(_mp_set_status,), daemon=True).start()
 
     # ═════════ STM32 传送带初始化 (串口 115200-8N1) ═════════
     # 取代原 CH340 继电器控制 (Modbus RTU 9600)
@@ -54,22 +78,47 @@ def ros_process_worker(cmd_q, st_q, pose_q, img_q, det_q, conv_q, conv_status_q,
 
     # ⚠️ 父进程监控: GUI 崩溃/退出后, worker 必须自动释放串口,
     # 否则变成孤儿进程持续抢占 /dev/ttyUSB0 → 下次 GUI 显示速度 0。
-    _ppid0 = os.getppid()
+    def _shutdown_worker(parent_lost=False):
+        closing.set()
+        with shutdown_lock:
+            if not shutdown_done.is_set():
+                # An in-flight ensure observes cancellation before spawning again.
+                with pipeline_lock:
+                    try:
+                        cleanup_session(session_id)
+                    except Exception as e:
+                        _log(f"shutdown cleanup_session 失败: {e}")
+                try:
+                    _conv.disconnect()
+                except Exception as e:
+                    _log(f"shutdown 断串口失败: {e}")
+                try:
+                    shutdown_q.put_nowait("__SHUTDOWN_ACK__")
+                except Exception:
+                    pass
+                try:
+                    rclpy.shutdown()
+                except Exception:
+                    pass
+                shutdown_done.set()
+        if parent_lost:
+            os._exit(0)
+
     def _parent_watchdog():
         while True:
             try:
                 if os.getppid() != _ppid0:
-                    _log(f"父进程已退出 (pid {_ppid0}), worker 自动退出")
-                    try: _conv.disconnect()
-                    except Exception: pass
-                    os._exit(0)
+                    # 父进程退出：同样走清理（本 session 组件 + 串口），避免孤儿抢占串口
+                    _log(f"父进程已退出 (pid {_ppid0}), worker 清理并退出")
+                    _shutdown_worker(parent_lost=True)
+                    return
             except Exception:
                 pass
             time.sleep(1.0)
     threading.Thread(target=_parent_watchdog, daemon=True).start()
     # 传送带状态监控线程: 每 250ms 推送一次状态到 conv_status_q
     def _conv_monitor():
-        while True:
+        while not closing.is_set():
             try:
                 if _conv_ok:
                     s = _conv.get_status()
@@ -107,36 +156,57 @@ def ros_process_worker(cmd_q, st_q, pose_q, img_q, det_q, conv_q, conv_status_q,
     # ═════════ 模式切换 (水果 YOLO ↔ 蓝方块检测) ═════════
     # 在 ROS worker 子进程中执行 kill/launch (fork 安全), 通过 mp_status_q 回报状态。
     # 主进程 (Tkinter) 禁止 fork, 所有 subprocess 调用均委托至此。
-    def _do_switch_mode(mode):
-        """切换检测节点 (在独立线程中执行, 不阻塞 ROS spinner)。
-        mode='blue_block': 停止 realsense_yolo_node.py, 启动 blue_block_detector.py
-        mode='fruit':      停止 blue_block_detector.py, 启动 realsense_yolo_node.py
+    def _do_switch_mode(mode, request_id, camera=None):
+        """切换检测节点（委托统一入口：停止旧 detector → 后台确保新 detector）。
+
+        完成判据由统一入口就绪检查给出：目标节点上线 + /detection_info 恰有一个
+        目标发布者 + 收到切换后新消息。成功上报 __MODE_OK__，失败上报 __MODE_FAIL__
+        （保持旧模式，不提前提交 active mode）。
         """
-        if mode == 'blue_block':
-            _mp_set_status("正在切换到蓝方块模式: 停止水果 YOLO 节点...")
-            _kill_by_pattern("realsense_yolo_node.py")
-            time.sleep(1.5)  # 等待 ROS 节点清理 (订阅/发布注销)
-            _mp_set_status("正在切换到蓝方块模式: 启动 blue_block_detector...")
-            _launch("BLUE_BLOCK", _BLUE_BLOCK_CMD)
-            # 等待 blue_block_detector 上线 (检测 /detection_info 话题有新发布者)
-            for i in range(15):
-                time.sleep(2); _mp_set_status(f"等待蓝方块节点上线... ({(i+1)*2}s)")
-                if _topic_ok('/detection_info'):
-                    _mp_set_status("已切换到蓝方块模式 (blue_block_detector 已上线)")
-                    return
-            _mp_set_status("蓝方块节点启动超时, 请检查 /tmp/sorting_gui_startup.log")
-        elif mode == 'fruit':
-            _mp_set_status("正在切换到水果模式: 停止 blue_block_detector...")
-            _kill_by_pattern("blue_block_detector.py")
-            time.sleep(1.5)
-            _mp_set_status("正在切换到水果模式: 启动 realsense_yolo_node...")
-            _launch("YOLO", _YOLO_CMD)
-            for i in range(20):
-                time.sleep(3); _mp_set_status(f"等待 YOLO 加载... ({(i+1)*3}s)")
-                if _topic_ok('/detection_info'):
-                    _mp_set_status("已切换到水果模式 (realsense_yolo_node 已上线)")
-                    return
-            _mp_set_status("YOLO 节点启动超时, 请检查 /tmp/sorting_gui_startup.log")
+        camera = camera or camera_state["active"]
+        target = "blue_block" if mode == "blue_block" else "fruit"
+        label = "蓝方块" if target == "blue_block" else "水果"
+        _mp_set_status(f"正在切换到{label}模式: 停止旧检测节点并启动新节点...")
+        with pipeline_lock:
+            if closing.is_set():
+                return
+            camera_state['switching']=True
+            try:
+                if camera != camera_state['active']:
+                    if getattr(node,'_robot_busy',False):raise RuntimeError('机械臂忙碌，拒绝切换相机')
+                    for comp in ('camera','camera_tf'):
+                        ready=ensure_component(comp,camera=camera,session_id=session_id,set_status=_mp_set_status,cancel_event=closing)
+                        if not ready.get('ready'):raise RuntimeError(str(ready))
+                    stopped=stop_component('detector',camera=camera_state['active'],allow_cross=True,session_id=session_id)
+                    if stopped.get('result') not in ('stopped','already_exited','stale_record_removed','not_registered'):
+                        raise RuntimeError(str(stopped))
+                res = ensure_component("detector", camera=camera, mode=target, session_id=session_id,
+                                       set_status=_mp_set_status, allow_cross_stop=True,cancel_event=closing)
+                if res.get('ready'):
+                    camera_state['active']=camera
+                    selection=String();selection.data=json.dumps(dict(cmd='select_camera',camera_id=camera))
+                    node._pub.publish(selection)
+                    for output in (img_q,det_q):
+                        while not output.empty():
+                            try:output.get_nowait()
+                            except queue.Empty:break
+            except Exception as exc:
+                res=dict(ready=False,detail=str(exc))
+            finally:camera_state['switching']=False
+        if closing.is_set():
+            return
+        if res.get("ready"):
+            _log(f"switch_mode {target}: ok ({res.get('result')})")
+            _mp_set_status({"type": "mode_result", "mode": target, "ok": True,
+                            "request_id": request_id, "camera":camera})
+        else:
+            detail = (res.get("ready_detail") or res.get("detail")
+                      or res.get("result") or "未知原因")
+            online = _online_detector_mode()
+            _log(f"switch_mode {target}: fail {res} online={online}")
+            _mp_set_status({"type": "mode_result", "mode": target, "ok": False,
+                            "request_id": request_id, "online": online,
+                            "detail": str(detail)[:150], "camera":camera})
 
     import rclpy
     from rclpy.node import Node
@@ -154,6 +224,7 @@ def ros_process_worker(cmd_q, st_q, pose_q, img_q, det_q, conv_q, conv_status_q,
             self._pub = self.create_publisher(String, '/sorting_cmds', 10)
             # 曝光控制命令发布器 (realsense_yolo_node.py 订阅 /camera/exposure_ctrl)
             self._exp_pub = self.create_publisher(String, '/camera/exposure_ctrl', 10)
+            self._dabai_exp_pub = self.create_publisher(String, '/dabai/exposure_ctrl', 10)
             # 急停/返回待机位 命令发布器 (auto_sorting_action.py 订阅 /emergency_stop)
             self._emergency_pub = self.create_publisher(String, '/emergency_stop', 10)
             # 传送带实时状态发布 (auto_sorting_action.py sort_dynamic 订阅): 速度/物体/电机
@@ -162,14 +233,22 @@ def ros_process_worker(cmd_q, st_q, pose_q, img_q, det_q, conv_q, conv_status_q,
             self._tf_buf = tf2_ros.Buffer()
             self._tf_lis = tf2_ros.TransformListener(self._tf_buf, self)
             self.create_subscription(CompressedImage, '/yolo/annotated_image/compressed', self._on_yolo, 10)
-            self.create_subscription(Image, '/camera/camera/color/image_raw', self._on_raw, 10)
+            self.create_subscription(Image, '/camera/camera/color/image_raw', lambda m:self._raw_camera('d455',m), 10)
+            self.create_subscription(Image, '/dabai/color/image_raw', lambda m:self._raw_camera('dabai',m), 10)
             self.create_subscription(String, '/detection_info', self._on_det, 10)
+            self._robot_busy = True  # 未收到动作节点idle前不允许切换
             self._yolo_ts = 0.0
             self.create_timer(0.05, self._cmd_tick)
             self.create_timer(0.2, self._tf_tick)
 
-        def _on_st(self, m): st_q.put(m.data)
+        def _on_st(self, m):
+            if m.data in ('idle','busy'):
+                self._robot_busy=m.data=='busy'
+            st_q.put(m.data)
+        def _raw_camera(self,camera,msg):
+            if not camera_state['switching'] and camera==camera_state['active']:self._on_raw(msg)
         def _on_yolo(self, m):
+            if camera_state["switching"]:return
             try:
                 self._yolo_ts = time.time()
                 _putq(img_q, m.data)
@@ -191,6 +270,8 @@ def ros_process_worker(cmd_q, st_q, pose_q, img_q, det_q, conv_q, conv_status_q,
             except: pass
         def _on_det(self, m):
             try:
+                payload=json.loads(m.data)
+                if camera_state['switching'] or payload.get('camera','d455')!=camera_state['active']:return
                 while not det_q.empty():
                     try: det_q.get_nowait()
                     except: break
@@ -198,12 +279,14 @@ def ros_process_worker(cmd_q, st_q, pose_q, img_q, det_q, conv_q, conv_status_q,
             except: pass
         def _tf_tick(self):
             try:
-                t = self._tf_buf.lookup_transform('base_link','link6',rclpy.time.Time())
+                t = self._tf_buf.lookup_transform('base_link','tcp_link',rclpy.time.Time())
                 _putq(pose_q, {'x':t.transform.translation.x,'y':t.transform.translation.y,'z':t.transform.translation.z})
             except: pass
         def _cmd_tick(self):
             while not cmd_q.empty():
                 cmd = cmd_q.get()
+                if closing.is_set():
+                    continue
                 # 传送带控制: STM32 串口协议 (115200-8N1, 取代原 CH340 继电器)
                 if cmd.get("cmd") == "conveyor":
                     relay_action = cmd.get("relay_action", "off")
@@ -229,12 +312,25 @@ def ros_process_worker(cmd_q, st_q, pose_q, img_q, det_q, conv_q, conv_status_q,
                 # 主进程有 Tcl, fork 会导致崩溃, 所有 subprocess 调用委托至此子进程
                 if cmd.get("cmd") == "switch_mode":
                     mode = cmd.get("mode")  # "blue_block" 或 "fruit"
-                    threading.Thread(target=_do_switch_mode, args=(mode,), daemon=True).start()
+                    threading.Thread(target=_do_switch_mode,
+                                     args=(mode, cmd.get("request_id"),cmd.get("camera_id")), daemon=True).start()
                     continue
+                # GUI 正常关闭请求：清理本 session 组件、释放串口并 ACK
+                # （正常路径不直接杀 worker，避免绕过 finally 清理）
+                if cmd.get("cmd") == "shutdown":
+                    _log("收到 GUI 关闭请求: 清理本 session 组件并释放串口")
+                    closing.set()
+                    threading.Thread(target=_shutdown_worker, daemon=True).start()
+                    return
+                if cmd.get('cmd','').startswith('sort') or cmd.get('cmd')=='observe':
+                    if camera_state['switching'] or cmd.get('camera_id',camera_state['active']) != camera_state['active']:
+                        _mp_set_status('拒绝切换期间或旧相机的抓取任务')
+                        continue
+                    cmd.setdefault('camera_id',camera_state['active'])
                 m = String(); m.data = json.dumps(cmd)
                 # 曝光控制命令发到 /camera/exposure_ctrl, 其他命令发到 /sorting_cmds
                 if cmd.get("cmd") == "exposure":
-                    self._exp_pub.publish(m)
+                    (self._dabai_exp_pub if camera_state["active"]=="dabai" else self._exp_pub).publish(m)
                 elif cmd.get("cmd") in ("emergency_stop", "standby"):
                     # 急停/返回待机位: 发布到独立 /emergency_stop topic
                     # auto_sorting_action.py 在分拣序列检查点中检测此信号并执行安全停机
@@ -243,12 +339,17 @@ def ros_process_worker(cmd_q, st_q, pose_q, img_q, det_q, conv_q, conv_status_q,
                     self._pub.publish(m)
 
     rclpy.init(); node = N()
+    # 自动管线线程在 rclpy.init 和 Node 创建之后开始；等待 ready 期间 spinner 保持运转
+    def _start_pipeline():
+        with pipeline_lock:
+            if not closing.is_set():
+                auto_start_pipeline(_mp_set_status, session_id, cancel_event=closing,camera=initial_camera)
+    threading.Thread(target=_start_pipeline, daemon=True).start()
     try: rclpy.spin(node)
     except: pass
     finally:
+        _shutdown_worker()  # Spin errors also release owned components and serial.
         node.destroy_node()
-        try: rclpy.shutdown()
-        except: pass
 
 def _putq(q, item):
     while not q.empty():
@@ -259,80 +360,164 @@ def _putq(q, item):
 
 # ═══════════════════════ 自动启动管线 ═══════════════════════
 
-_ROS2_SRC = "source /opt/ros/humble/setup.bash"
-_VENV_SRC = "source /home/lxf/orange_dataset/.venv/bin/activate"
-_YOLO_SCRIPT = "/home/lxf/orange_dataset/realsense_yolo_node.py"
-# 蓝方块检测节点 (Task 1.1-1.4): HSV 颜色分割 + minAreaRect + RANSAC 深度
-_BLUE_BLOCK_SCRIPT = "/home/lxf/orange_dataset/blue_block_detector.py"
-# 蓝方块节点 Python 环境: 直接用 venv python (与 shebang 一致, 避免 activate 开销)
-_BLUE_BLOCK_VENV_PY = "/home/lxf/orange_dataset/.venv/bin/python3"
-# 相机启动: 显式指定 640x480@30 与另一台电脑 (pyrealsense2 直接配置) 保持一致
-# align_depth.enable:=true: 启用深度图与 RGB 对齐 (D455 双目深度 + PCA 短轴对齐必需)
-# 深度后处理滤波链 (Phase 0 优化): rs_launch.py 仅支持 *.enable 参数
-#   子参数 (filter_magnitude/filter_smooth_alpha/fill_mode 等) 未在 launch 声明, 用节点默认值
-#   如需调子参数, 启动后用 ros2 param set /camera/camera <param> <value> 动态调整
-_CAMERA_CMD = (f"{_ROS2_SRC} && ros2 launch realsense2_camera rs_launch.py "
-               f"rgb_camera.color_profile:=640,480,30 "
-               f"depth_module.profile:=640,480,30 "
-               f"align_depth.enable:=true "
-               f"spatial_filter.enable:=true "
-               f"temporal_filter.enable:=true "
-               f"hole_filling_filter.enable:=true")
-_YOLO_CMD   = f"{_ROS2_SRC} && {_VENV_SRC} && python3 {_YOLO_SCRIPT} --ros-args -p show_gui_window:=false"
-# 蓝方块检测节点启动命令 (venv python 直接调用, 不通过 activate)
-_BLUE_BLOCK_CMD = f"{_ROS2_SRC} && {_BLUE_BLOCK_VENV_PY} {_BLUE_BLOCK_SCRIPT}"
+# 统一入口: scripts/run_component.sh（任务3 共享命令构造/锁/就绪规则）
+# GUI 仅管理 camera、camera_tf、detector；机械臂/动作/GraspNet 仍按明确终端入口启动。
+_WS = str(workspace_root())
+_RUN_COMPONENT = f"{_WS}/scripts/run_component.sh"
 
 
-
-def _topic_ok(topic, timeout=3.0):
+def _api(args, timeout=180):
+    """在 ROS worker 子进程中调用统一入口（此进程无 Tcl, fork 安全）。"""
     try:
-        r = subprocess.run(
-            f"bash -c '{_ROS2_SRC} && ros2 topic info {topic}'",
-            shell=True, capture_output=True, text=True, timeout=timeout)
-        return "Publisher count: 0" not in r.stdout and "Type:" in r.stdout
-    except: return False
-
-def _launch(label, cmd):
-    _log(f"LAUNCH {label}")
-    return subprocess.Popen(f"bash -c '{cmd}'", shell=True,
-                            stdout=open(_LOG,"a"), stderr=open(_LOG,"a"),
-                            preexec_fn=os.setsid)
-
-def _kill_by_pattern(pattern):
-    """通过 pkill -f 杀死匹配 pattern 的进程 (在 ROS worker 子进程中调用, fork 安全).
-    用于模式切换时停止旧视觉节点 (realsense_yolo_node.py / blue_block_detector.py).
-    Returns: True 如果命令执行成功 (即使没匹配到进程也算成功)."""
-    try:
-        subprocess.run(['pkill', '-f', pattern], capture_output=True, timeout=5)
-        _log(f"KILL pattern='{pattern}' done")
-        return True
+        r = subprocess.run(["bash", _RUN_COMPONENT] + [str(a) for a in args],
+                           capture_output=True, text=True, timeout=timeout)
+        return r.returncode, r.stdout, r.stderr
+    except subprocess.TimeoutExpired:
+        return 124, "", "timeout"
     except Exception as e:
-        _log(f"KILL pattern='{pattern}' 失败: {e}")
+        return 1, "", str(e)
+
+
+def _api_json(args, timeout=180):
+    rc_, out, err = _api(args, timeout=timeout)
+    try:
+        return json.loads(out)
+    except Exception:
+        return {"result": "error", "returncode": rc_,
+                "detail": (err or out or "")[:300]}
+
+
+def _ensure_timeout(component, mode="fruit"):
+    if component == "camera":
+        return 75
+    if component == "camera_tf":
+        return 45
+    if component == "detector":
+        return 150 if mode == "fruit" else 90
+    return 60
+
+
+def ensure_component(component, *, camera="d455", mode="fruit", session_id,
+                     wait_ready=True, allow_cross_stop=False, set_status=None,
+                     cancel_event=None):
+    """后台确保组件就绪：复用已登记/外部已就绪节点，否则启动并等待就绪。
+
+    模式冲突且旧检测节点为本 workspace 登记时，显式停止旧节点再重启
+    （--allow-cross-initiator；旧 T3 监督终端随之结束）。
+    外部未登记旧节点 / 多发布者冲突会明确拒绝，不叠加第二个检测节点。
+    """
+    def _st(msg):
+        if set_status:
+            try:
+                set_status(msg)
+            except Exception:
+                pass
+    _st(f"确保组件 {component}({camera}/{mode}) ...")
+    try:
+        res = _runtime.ensure_background(component, camera=camera, mode=mode,
+                                         initiator="gui", owner_session=session_id,
+                                         wait_ready=wait_ready, cancel_event=cancel_event)
+    except Exception as exc:
+        return {"result": "error", "ready": False, "detail": str(exc)}
+    if (res.get("result") == "mode_conflict" and component == "detector"
+            and allow_cross_stop):
+        _st("检测到其它模式的已登记检测节点，正在显式停止旧节点...")
+        if cancel_event is not None and cancel_event.is_set():
+            return {"result": "cancelled", "ready": False}
+        try:
+            stopped = stop_component("detector", camera=camera, allow_cross=True,
+                                     session_id=session_id)
+        except Exception as exc:
+            return {"result": "stop_failed", "ready": False, "detail": str(exc)}
+        if stopped.get("result") not in ("stopped", "already_exited",
+                                         "stale_record_removed", "not_registered"):
+            return {"result": "stop_failed", "ready": False, "detail": str(stopped)}
+        try:
+            res = _runtime.ensure_background(component, camera=camera, mode=mode,
+                                             initiator="gui", owner_session=session_id,
+                                             wait_ready=wait_ready, cancel_event=cancel_event)
+        except Exception as exc:
+            return {"result": "error", "ready": False, "detail": str(exc)}
+    return res
+
+
+def stop_component(component, *, camera="d455", mode="fruit", allow_cross=False,
+                   session_id=None):
+    return _runtime.stop_component(component, camera=camera, mode=mode,
+                                   initiator="gui", owner_session=session_id,
+                                   allow_cross_initiator=allow_cross)
+
+
+def cleanup_session(session_id):
+    """清理本 GUI 会话创建的组件（复用 manual 组件不获退出清理权）。"""
+    return _runtime._manager().cleanup_session(session_id)
+
+
+
+def _topic_ok(topic, timeout=8.0):
+    """只读话题检查（诊断辅助；启动判定改用统一入口就绪检查）。"""
+    try:
+        script = ("source /opt/ros/humble/setup.bash >/dev/null 2>&1 && "
+                  f"ros2 topic info {topic}")
+        r = subprocess.run(["bash", "-c", script], capture_output=True,
+                           text=True, timeout=timeout)
+        return "Publisher count: 0" not in r.stdout and "Type:" in r.stdout
+    except Exception:
         return False
 
-def auto_start_pipeline(set_status):
+
+def _online_detector_mode():
+    """worker 内只读查询当前在线的检测节点（切换失败时显示实际模式）。"""
+    try:
+        names = _runtime._detector_nodes_online()
+        if "/blue_block_detector" in names:
+            return "blue_block"
+        if "/object_detector" in names:
+            return "fruit"
+        return "offline"
+    except Exception:
+        return "unknown"
+
+
+def auto_start_pipeline(set_status, session_id, cancel_event=None,camera="d455"):
+    """自动启动管线（在 rclpy.init/Node 创建后由守护线程调用）。
+
+    仅确保 相机 + camera_tf + 检测 就绪；机械臂/动作/GraspNet 不在此启动。
+    共用任务3 的命令构造、锁与就绪规则；等待就绪期间 ROS spinner 保持运转。
+    """
     _log("AUTO_START begin")
-    if _topic_ok('/detection_info'):
-        _log("YOLO already online")
-        set_status("YOLO 已在线"); return
-    if not _topic_ok('/camera/camera/color/image_raw'):
-        _log("Camera offline, launching")
-        set_status("正在启动相机...")
-        _launch("CAMERA", _CAMERA_CMD)
-        for i in range(15):
-            time.sleep(2); set_status(f"等待相机上线... ({(i+1)*2}s)")
-            if _topic_ok('/camera/camera/color/image_raw'):
-                _log("Camera online"); break
-        else:
-            _log("Camera timeout"); set_status("相机启动失败"); return
-    _log("Launching YOLO")
-    set_status("正在启动 YOLO 检测...")
-    _launch("YOLO", _YOLO_CMD)
-    for i in range(20):
-        time.sleep(3); set_status(f"等待 YOLO 加载... ({(i+1)*3}s)")
-        if _topic_ok('/detection_info'):
-            _log("YOLO online"); set_status("YOLO 已上线"); return
-    _log("YOLO timeout"); set_status("YOLO 启动超时")
+    cam = ensure_component("camera", camera=camera, session_id=session_id,
+                           set_status=set_status, cancel_event=cancel_event)
+    _log(f"camera: {cam.get('result')} ready={cam.get('ready')} {cam.get('ready_detail','')}")
+    if cancel_event is not None and cancel_event.is_set():
+        return
+    if not cam.get("ready"):
+        set_status(f"相机启动失败: {cam.get('detail','')[:60]}")
+        return
+    if cam.get("ready") is False:
+        set_status(f"相机未就绪: {cam.get('ready_detail','')[:60]}")
+        return
+
+    tf = ensure_component("camera_tf", camera=camera, session_id=session_id, set_status=set_status,
+                          cancel_event=cancel_event)
+    _log(f"camera_tf: {tf.get('result')} ready={tf.get('ready')} {tf.get('ready_detail','')}")
+    if not tf.get("ready"):
+        set_status(f"相机 TF 未就绪: {tf.get('ready_detail','')[:60]}")
+        return
+    mode = _online_detector_mode()
+    if mode not in ("fruit", "blue_block"):
+        mode = "fruit"
+    det = ensure_component("detector", camera=camera, mode=mode, session_id=session_id,
+                           set_status=set_status, allow_cross_stop=False,
+                           cancel_event=cancel_event)
+    _log(f"detector: {det.get('result')} ready={det.get('ready')} {det.get('ready_detail','')}")
+    if det.get("ready"):
+        set_status("YOLO 已上线")
+        set_status({"type": "pipeline_ready", "mode": mode, "ok": True})
+    elif det.get("result") in ("external_conflict", "mode_conflict"):
+        set_status(f"检测节点冲突: {det.get('detail','')[:70]}")
+    else:
+        set_status(f"检测未就绪: {det.get('ready_detail', det.get('detail',''))[:60]}")
 
 
 # ═══════════════════════ main ═══════════════════════
@@ -340,10 +525,38 @@ def auto_start_pipeline(set_status):
 # 确保 spawn 子进程不会加载它们。
 
 def main():
+    import argparse
+    parser=argparse.ArgumentParser(description='Piper sorting GUI')
+    parser.add_argument('--camera',choices=('d455','dabai'),default='d455')
+    options=parser.parse_args()
     import tkinter as tk
     from tkinter import ttk, messagebox
+    import fcntl
+    import uuid
 
     _log("GUI MAIN START")
+
+    # ── GUI 单实例锁（在 spawn worker 前取得）──
+    # 第二个 GUI 明确提示并退出，避免第二 worker 抢占相机/串口并发布错误状态。
+    _runtime_dir = os.path.join(_WS, ".runtime")
+    os.makedirs(_runtime_dir, exist_ok=True)
+    _lock_fd = open(os.path.join(_runtime_dir, "gui.lock"), "w")
+    try:
+        fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        _log("GUI 单实例锁被占用, 退出")
+        try:
+            messagebox.showerror(
+                "已在运行",
+                "检测到另一个 GUI 实例正在运行。\n\n"
+                "为避免两个 worker 抢占相机/串口并发布错误状态，\n"
+                "请先关闭已有窗口再启动。")
+        except Exception:
+            pass
+        return
+    _lock_fd.write(f"{os.getpid()}\n"); _lock_fd.flush()
+    session_id = f"gui:{os.getpid()}:{uuid.uuid4().hex[:8]}"
+    _log(f"GUI session_id={session_id}")
 
     cmd_q = multiprocessing.Queue(); st_q = multiprocessing.Queue()
     pose_q = multiprocessing.Queue(); img_q = multiprocessing.Queue(maxsize=1)
@@ -351,9 +564,14 @@ def main():
     conv_q = multiprocessing.Queue()  # 传送带命令结果队列 (ROS worker → GUI, 仅 cmd_result)
     conv_status_q = multiprocessing.Queue()  # 传送带状态队列 (ROS worker → GUI, 仅 status)
     mp_status_q = multiprocessing.Queue()  # 相机/YOLO 启动状态消息队列 (ROS worker → GUI)
+    shutdown_q = multiprocessing.Queue()  # GUI 关闭 ACK 队列 (ROS worker → GUI)
 
-    ros_proc = multiprocessing.Process(target=ros_process_worker,
-                                       args=(cmd_q,st_q,pose_q,img_q,det_q,conv_q,conv_status_q,mp_status_q), name="ros")
+    ros_proc = multiprocessing.Process(
+        target=ros_process_worker,
+        args=(cmd_q, st_q, pose_q, img_q, det_q, conv_q, conv_status_q,
+              mp_status_q, shutdown_q, session_id),
+        kwargs={"parent_pid": os.getpid(),"initial_camera":options.camera},
+        name="ros")
     ros_proc.start()
     _log("ROS proc started")
 
@@ -371,6 +589,7 @@ def main():
             self.poses = {}; self.load_poses()
             self.current_status='idle'; self.task_queue=[]
             self.last_dispatch_time=0; self.queue_running=False
+            self._dispatch_pending = False
             self.latest_detection=None; self._last_frame_time=0.0
             self._canvas_img_id=None; self._canvas_text_id=None
             self._photos=[]; self._canvas_w=400; self._canvas_h=300
@@ -389,8 +608,18 @@ def main():
             self._exposure_auto=True        # True=自动曝光, False=手动
             self._exposure_value=100        # 手动曝光值 (微秒, 范围 1-10000)
             # ── 检测模式: 'fruit' (水果 YOLO) 或 'blue_block' (蓝方块 HSV+RANSAC) ──
-            # 模式切换通过 ROS worker 子进程 kill/launch 对应视觉节点 (互斥运行, 避免 D455 USB 带宽竞争)
+            # detection_mode = 已确认(active)模式, 仅用于消息解析与 UI 显示;
+            # requested_mode = 用户请求模式, 由统一入口完成切换并就绪后才提交 detection_mode。
+            # 模式切换委托 ROS worker 子进程调用统一入口 (互斥运行, 避免 D455 USB 带宽竞争)
+            self.active_camera=options.camera
+            self.requested_camera=None
             self.detection_mode='fruit'
+            self.requested_mode=None
+            self._mode_switch_ok=False
+            self._mode_failed_detail=""
+            self._mode_online=None
+            self._detector_ready=False
+            self._mode_request_id=None
             self._mode_switching=False      # True=正在切换中 (禁用按钮防重复点击)
             self._mode_switch_deadline=0    # 切换超时时间戳 (用于检测切换是否卡住)
             # ── 自动分拣状态机 ──
@@ -432,18 +661,18 @@ def main():
             self.after(1000, self._conveyor_status_poll)
 
         def load_poses(self):
-            f='/home/lxf/agx_arm_ws/saved_poses.json'
+            f=str(_runtime.rc.resolve_resource('saved_poses'))
             if os.path.exists(f):
                 try:
                     with open(f) as fh:
                         raw=json.load(fh)
-                        self.poses={n:{'x':float(p['x']),'y':float(p['y']),'z':float(p['z'])}
+                        self.poses={n:{'x':float(p['x']),'y':float(p['y']),'z':float(p['z']), '_reference_frame':p.get('_reference_frame','legacy_link6')}
                                     for n,p in raw.items() if isinstance(p,dict) and all(k in p for k in('x','y','z'))}
                 except: self.poses={}
             else: self.poses={}
 
         def save_poses(self):
-            with open('/home/lxf/agx_arm_ws/saved_poses.json','w') as f:
+            with open(_runtime.rc.resolve_resource('saved_poses'),'w') as f:
                 json.dump(self.poses,f,indent=4)
             self.update_comboboxes()
 
@@ -455,11 +684,14 @@ def main():
 
         def _ui_camera(self):
             f=tk.LabelFrame(self.left_frame,text=" 相机画面",padx=5,pady=5); f.pack(fill=tk.X,pady=(0,5))
+            self.camera_var=tk.StringVar(value=self.active_camera)
+            selector=ttk.Combobox(f,textvariable=self.camera_var,values=['d455','dabai'],state='readonly',width=16)
+            selector.pack(anchor='w');selector.bind('<<ComboboxSelected>>',self._switch_camera)
             self.camera_canvas=tk.Canvas(f,width=self._canvas_w,height=self._canvas_h,bg='#1a1a1a'); self.camera_canvas.pack()
             self._canvas_img_id=self.camera_canvas.create_image(self._canvas_w//2,self._canvas_h//2,anchor=tk.CENTER)
             self._canvas_text_id=self.camera_canvas.create_text(
                 self._canvas_w//2,self._canvas_h//2,text="等待画面...",fill="#888",font=("Arial",14),anchor=tk.CENTER)
-            self.camera_status_var=tk.StringVar(value="正在检测设备...")
+            self.camera_status_var=tk.StringVar(value="正在检测设备: "+self.active_camera)
             tk.Label(f,textvariable=self.camera_status_var,font=("Arial",9),fg="gray").pack(pady=(2,0))
 
             # ── 曝光控制 (通过 /camera/exposure_ctrl 话题发给 realsense_yolo_node.py) ──
@@ -650,6 +882,8 @@ def main():
                       height=2,width=40).pack(pady=5)
             tk.Button(fa,text="🔄 复位 (急停后回待机位)",command=self._on_reset,
                       font=("Arial",12,"bold"),bg="#4CAF50",fg="white",width=40).pack(pady=5)
+            tk.Button(fa,text="到当前相机观察位",command=self.send_camera_observe,
+                      font=("Arial",12,"bold"),bg="#1976D2",fg="white",width=40).pack(pady=5)
             tk.Button(fa,text="返回待机位 (中断当前动作)",command=self.send_observe,
                       font=("Arial",12,"bold"),bg="#FF9800",fg="white",width=40).pack(pady=5)
             tk.Button(fa,text="一键回到待机位并关闭夹爪",command=self.send_reset,font=("Arial",12,"bold"),bg="orange",width=40).pack(pady=5)
@@ -718,6 +952,18 @@ def main():
 
         # ── 检测信息 ──
         def _update_detection_loop(self):
+            if getattr(self, "_closing", False):
+                return
+            if self._mode_switching:
+                self.latest_detection = None
+                while not self.detection_queue.empty():
+                    try: self.detection_queue.get_nowait()
+                    except queue.Empty: break
+                self.pick_btn.config(state=tk.DISABLED)
+                self.pick_two_btn.config(state=tk.DISABLED)
+                self.pick_graspnet_btn.config(state=tk.DISABLED)
+                self.after(200, self._update_detection_loop)
+                return
             try:
                 raw=None
                 while not self.detection_queue.empty():
@@ -807,6 +1053,7 @@ def main():
             # 提升选中物体字段到顶层 (覆盖主物体)
             self.latest_detection['object_name'] = obj.get('object_name','--')
             self.latest_detection['confidence'] = obj.get('confidence',0)
+            self.latest_detection['track_id'] = obj.get('track_id')
             self.latest_detection['bbox_pixel'] = obj.get('bbox_pixel',{})
             self.latest_detection['camera_position_m'] = obj.get('camera_position_m',{})
             self.latest_detection['end_effector_position_m'] = obj.get('end_effector_position_m',{})
@@ -814,6 +1061,7 @@ def main():
             self.latest_detection['size_m'] = obj.get('size_m',{})
             # 同步 D455 估计直径 (供 _pick_from_detection / two-stage 优先使用)
             self.latest_detection['estimated_diameter_m'] = obj.get('estimated_diameter_m')
+            self.latest_detection['grasp_geometry'] = obj.get('grasp_geometry')
             self.latest_detection['volume_m3'] = obj.get('volume_m3',0)
             # 同步 header_stamp (顶层主物体的 stamp 与 objects 数组中选中物体的 stamp 一致)
             if 'header_stamp' in obj:
@@ -842,9 +1090,84 @@ def main():
                     self._apply_selected_object(sel[0])
             except: pass
 
+        def _tag_visual_command(self,cmd):
+            if not cmd.get('pick') or '_reference_frame' in cmd['pick'] or cmd.get('vision_target'):
+                return cmd
+            data=self.latest_detection or {}
+            target_id=cmd.get('target_track_id',data.get('track_id'))
+            current=None
+            if 'objects' in data:
+                current=next((o for o in data['objects'] if o.get('track_id')==target_id),None)
+                position=(current or {}).get('base_position_m')
+            else:
+                current=next(iter(data.get('detections',[])),None)
+                position=(current or {}).get('base_coords')
+            cmd=dict(cmd,vision_target=True,detection_stamp=data.get('header_stamp') if position else None,
+                     target_track_id=target_id)
+            if position:
+                cmd['pick']=dict(cmd['pick'],**{k:float(position[k]) for k in ('x','y','z')})
+                geometry = (current or {}).get('grasp_geometry')
+                if geometry:
+                    cmd['grasp_geometry'] = dict(geometry)
+                    if geometry.get('elongation_ratio', 0.0) >= 1.5:
+                        cmd['object_diameter_m'] = float(geometry['width_m'])
+
+            return cmd
+
+        def _send_motion_command(self, cmd):
+            cmd=self._tag_visual_command(cmd) if cmd.get('pick') else cmd
+            if cmd.get('vision_target'):
+                try:age=time.time()-float(cmd.get('detection_stamp'))
+                except (ValueError,TypeError):age=float('inf')
+                if not -.05<=age<=1.:
+                    messagebox.showwarning('检测已过期','请等待当前相机的新中心坐标，再重新选物体。');return False
+            if cmd.get('pick',{}).get('_reference_frame')=='legacy_link6':
+                messagebox.showwarning('旧记录点','旧法兰记录缺少朝向，请按新TCP重新读取并保存该点。');return
+            cmd=dict(cmd,camera_id=getattr(self,"active_camera","d455"))
+            # ROS busy acknowledgement arrives asynchronously; protect that gap.
+            self._dispatch_pending = True
+            self.last_dispatch_time = time.time()
+            try:
+                self.cmd_queue.put(cmd)
+            except Exception:
+                self._dispatch_pending = False
+                raise
+
+        def _visual_action_allowed(self, automatic=False):
+            if getattr(self, "_closing", False):
+                return False
+            if self._mode_switching or not self._detector_ready:
+                self._auto_sort_log("检测尚未就绪或正在切换，暂不派发抓取")
+                return False
+            if getattr(self,'active_camera','d455')=='dabai' and automatic:
+                self._auto_sort_log('Dabai当前请使用单次静态抓取')
+                return False
+            if automatic and self.detection_mode != "fruit":
+                self._auto_sort_log("自动分拣/动态抓取当前仅支持水果模式")
+                return False
+            data=getattr(self,'latest_detection',None) or {}
+            try:age=time.time()-float(data.get('header_stamp'))
+            except (ValueError,TypeError):age=float('inf')
+            if data.get('camera',self.active_camera)!=self.active_camera or not -.05<=age<=1.:
+                self._auto_sort_log('当前相机检测已过期，等待新图像和有效TF');return False
+            return True
+
+        def _on_pipeline_result(self, mode, ok):
+            if getattr(self, "_closing", False) or self._mode_switching:
+                return
+            self._detector_ready = bool(ok)
+            if ok:
+                self.detection_mode = mode
+                self.requested_mode = mode
+                self._mode_online = mode
+                self._mode_switch_ok = True
+                self._finish_mode_switch()
+
         # ── 单次检测直接夹取 ──
         def _pick_from_detection(self):
-            d=self.latest_detection
+            if not self._visual_action_allowed():
+                return
+            d=dict(self.latest_detection or {})
             if not d: return messagebox.showwarning("无数据","尚未收到检测信息。")
             if not d.get('detected'): return messagebox.showwarning("未检测到","当前未发现物体。")
             bp=d.get('base_position_m',{})
@@ -863,17 +1186,21 @@ def main():
                  f"Place: 放置目标点 (关节空间预设点位)\n\n"
                  f"{dia_str}确定发送？")
             if not messagebox.askyesno("确认",txt): return
-            cmd={"cmd":"sort","pick":pp,"pick_name":f"{d.get('object_name','物体')} (detected)","place_name":"放置点"}
+            if not self._visual_action_allowed():
+                return
+            cmd={"cmd":"sort","pick":pp,"target_track_id":d.get("track_id"),"pick_name":f"{d.get('object_name','物体')} (detected)","place_name":"放置点"}
             if dia: cmd["object_diameter_m"]=float(dia)
             if self.current_status=='busy':
                 if messagebox.askyesno("忙碌","加入排队队列？"):
-                    self.task_queue.append(cmd); self.refresh_queue_listbox()
+                    self.task_queue.append(self._tag_visual_command(cmd)); self.refresh_queue_listbox()
                     messagebox.showinfo("已加入","任务已加入排队队列。")
-            else: self.last_dispatch_time=time.time(); self.cmd_queue.put(cmd); messagebox.showinfo("已发送","夹取指令已发送！\n检测物体 -> 【放置目标点】")
+            else: self.last_dispatch_time=time.time(); self._send_motion_command(cmd); messagebox.showinfo("已发送","夹取指令已发送！\n检测物体 -> 【放置目标点】")
 
         # ── 两阶段精定位夹取 (D455 深度 + PCA 短轴对齐) ──
         def _pick_from_detection_two_stage(self):
-            d=self.latest_detection
+            if not self._visual_action_allowed():
+                return
+            d=dict(self.latest_detection or {})
             if not d: return messagebox.showwarning("无数据","尚未收到检测信息。")
             if not d.get('detected'): return messagebox.showwarning("未检测到","当前未发现物体。")
             bp=d.get('base_position_m',{})
@@ -892,19 +1219,23 @@ def main():
                  f"Place: 放置目标点 (关节空间预设点位)\n"
                  f"{dia_str}\n确定发送？")
             if not messagebox.askyesno("确认两阶段精定位夹取",txt): return
-            cmd={"cmd":"sort_verify","pick":pp,"pick_name":f"{d.get('object_name','物体')} (two-stage)","place_name":"放置点"}
+            if not self._visual_action_allowed():
+                return
+            cmd={"cmd":"sort_verify","pick":pp,"target_track_id":d.get("track_id"),"pick_name":f"{d.get('object_name','物体')} (two-stage)","place_name":"放置点"}
             if dia: cmd["object_diameter_m"]=float(dia)
             sent_msg="两阶段精定位指令已发送！\n检测物体 -> 【放置目标点】"
             queue_msg="两阶段精定位任务已加入排队队列。"
             if self.current_status=='busy':
                 if messagebox.askyesno("忙碌","加入排队队列？"):
-                    self.task_queue.append(cmd); self.refresh_queue_listbox()
+                    self.task_queue.append(self._tag_visual_command(cmd)); self.refresh_queue_listbox()
                     messagebox.showinfo("已加入",queue_msg)
-            else: self.last_dispatch_time=time.time(); self.cmd_queue.put(cmd); messagebox.showinfo("已发送",sent_msg)
+            else: self.last_dispatch_time=time.time(); self._send_motion_command(cmd); messagebox.showinfo("已发送",sent_msg)
 
         # ── GraspNet 6DoF 主导抓取 (待机位深度图 → GraspNet 位姿) ──
         def _pick_from_detection_graspnet(self):
-            d=self.latest_detection
+            if not self._visual_action_allowed():
+                return
+            d=dict(self.latest_detection or {})
             if not d: return messagebox.showwarning("无数据","尚未收到检测信息。")
             if not d.get('detected'): return messagebox.showwarning("未检测到","当前未发现物体。")
             bp=d.get('base_position_m',{})
@@ -916,41 +1247,65 @@ def main():
             if dia: dia=round(float(dia),3)
             dia_str=f"物体直径: {dia} m\n" if dia else ""
             txt=(f" GraspNet 6DoF 抓取确认\n\n待机位检测坐标 (邻近提示):\n  ({pp['x']:.3f}, {pp['y']:.3f}, {pp['z']:.3f})\n\n"
-                 f"-> 机械臂回到待机位\n-> GraspNet 对 D455 深度图推理 (6DoF 位姿)\n"
+                 f"-> 机械臂回到待机位\n-> GraspNet 对当前相机深度图推理 (6DoF 位姿)\n"
                  f"-> 短边对齐 + 中心抓取 + approach 朝下安全检查\n-> 直接下降抓取\n\n"
                  f"Place: 放置目标点 (关节空间预设点位)\n"
                  f"{dia_str}\n⚠️ 需已启动 graspnet_service_node.py\n\n确定发送？")
             if not messagebox.askyesno("确认 GraspNet 抓取",txt): return
-            cmd={"cmd":"sort_graspnet","pick":pp,
+            if not self._visual_action_allowed():
+                return
+            cmd={"cmd":"sort_graspnet","pick":pp,"target_track_id":d.get("track_id"),
                  "pick_name":f"{d.get('object_name','物体')} (graspnet)","place_name":"放置点"}
             if dia: cmd["object_diameter_m"]=float(dia)
             sent_msg="GraspNet 抓取指令已发送！\n检测物体 -> 【放置目标点】"
             queue_msg="GraspNet 抓取任务已加入排队队列。"
             if self.current_status=='busy':
                 if messagebox.askyesno("忙碌","加入排队队列？"):
-                    self.task_queue.append(cmd); self.refresh_queue_listbox()
+                    self.task_queue.append(self._tag_visual_command(cmd)); self.refresh_queue_listbox()
                     messagebox.showinfo("已加入",queue_msg)
-            else: self.last_dispatch_time=time.time(); self.cmd_queue.put(cmd); messagebox.showinfo("已发送",sent_msg)
+            else: self.last_dispatch_time=time.time(); self._send_motion_command(cmd); messagebox.showinfo("已发送",sent_msg)
 
         # ═══════════════════════ 蓝方块模式 (Task 2.2) ═══════════════════════
+
+        def _switch_camera(self,event=None):
+            target=self.camera_var.get()
+            if target==self.active_camera and self._detector_ready:return
+            # 相机切换不依赖传送带连接、运行状态或串口反馈。
+            if self._visual_switch_blocked():
+                self.camera_var.set(self.active_camera)
+                return
+            self._mode_switching=True;self._detector_ready=False;self._mode_switch_ok=False
+            self.requested_mode=self.detection_mode;self.requested_camera=target
+            self._mode_request_id=uuid.uuid4().hex;self._mode_switch_deadline=time.time()+180.
+            self.latest_detection=None;self._det_objects=[];self.task_queue=[];self.refresh_queue_listbox()
+            self.det_listbox.delete(0,tk.END)
+            for button in (self.pick_btn,self.pick_two_btn,self.pick_graspnet_btn,self.pick_blue_block_btn):button.config(state=tk.DISABLED)
+            self.camera_status_var.set('正在切换到 '+target)
+            self.cmd_queue.put(dict(cmd='switch_mode',mode=self.detection_mode,camera_id=target,request_id=self._mode_request_id))
+            self.after(500,self._poll_mode_switch_done)
 
         def _switch_to_blue_block_mode(self):
             """切换到蓝方块分拣模式: 停止水果 YOLO 节点, 启动 blue_block_detector.py。
             通过 ROS worker 子进程执行 kill/launch (主进程禁止 fork)。
             """
-            if self.detection_mode == 'blue_block' or self._mode_switching:
+            if (self.detection_mode == 'blue_block' and self._detector_ready) or self._mode_switching:
                 return
-            if self.auto_sort_running:
-                return messagebox.showwarning("自动分拣运行中", "请先停止自动分拣再切换模式。")
+            if self._visual_switch_blocked():
+                return
             if not messagebox.askyesno("确认切换模式",
                 "切换到蓝方块分拣模式？\n\n"
                 "将停止水果 YOLO 节点 (realsense_yolo_node.py),\n"
                 "启动蓝方块检测节点 (blue_block_detector.py)。\n"
                 "切换约需 5-30s, 期间检测信息会暂时清空。"):
                 return
+            if self._visual_switch_blocked():
+                return  # Tk confirmation dialogs run callbacks; recheck occupancy.
             self._mode_switching = True
-            self._mode_switch_deadline = time.time() + 35.0  # 超时上限 35s
-            self.detection_mode = 'blue_block'
+            self._mode_switch_ok = False
+            self.requested_mode = 'blue_block'
+            self._detector_ready = False
+            self._mode_request_id = uuid.uuid4().hex
+            self._mode_switch_deadline = time.time() + 90.0  # 含停止旧节点 + 启动累计
             # 禁用两个模式按钮防重复点击
             self.fruit_mode_btn.config(state=tk.DISABLED, relief=tk.RAISED)
             self.blue_block_mode_btn.config(state=tk.DISABLED, relief=tk.RAISED)
@@ -969,26 +1324,31 @@ def main():
             for v in (self.det_obj, self.det_conf, self.det_meth, self.det_x, self.det_y, self.det_z, self.det_dia, self.det_dist):
                 v.set(v.get().split(":")[0] + ": --")
             # 发送切换命令到 ROS worker 子进程 (在其中执行 kill/launch, fork 安全)
-            self.cmd_queue.put({"cmd": "switch_mode", "mode": "blue_block"})
+            self.cmd_queue.put({"cmd": "switch_mode", "mode": "blue_block", "request_id": self._mode_request_id})
             self.after(500, self._poll_mode_switch_done)
 
         def _switch_to_fruit_mode(self):
             """切换回水果分拣模式: 停止 blue_block_detector.py, 启动 realsense_yolo_node.py。
             通过 ROS worker 子进程执行 kill/launch (主进程禁止 fork)。
             """
-            if self.detection_mode == 'fruit' or self._mode_switching:
+            if (self.detection_mode == 'fruit' and self._detector_ready) or self._mode_switching:
                 return
-            if self.auto_sort_running:
-                return messagebox.showwarning("自动分拣运行中", "请先停止自动分拣再切换模式。")
+            if self._visual_switch_blocked():
+                return
             if not messagebox.askyesno("确认切换模式",
                 "切换回水果分拣模式？\n\n"
                 "将停止蓝方块检测节点 (blue_block_detector.py),\n"
                 "启动水果 YOLO 节点 (realsense_yolo_node.py)。\n"
                 "切换约需 5-30s, 期间检测信息会暂时清空。"):
                 return
+            if self._visual_switch_blocked():
+                return  # Tk confirmation dialogs run callbacks; recheck occupancy.
             self._mode_switching = True
-            self._mode_switch_deadline = time.time() + 65.0  # YOLO 加载较慢, 超时 65s
-            self.detection_mode = 'fruit'
+            self._mode_switch_ok = False
+            self.requested_mode = 'fruit'
+            self._detector_ready = False
+            self._mode_request_id = uuid.uuid4().hex
+            self._mode_switch_deadline = time.time() + 150.0  # YOLO 加载较慢, 含停止累计
             self.fruit_mode_btn.config(state=tk.DISABLED, relief=tk.RAISED)
             self.blue_block_mode_btn.config(state=tk.DISABLED, relief=tk.RAISED)
             self.mode_status_var.set("当前模式: 切换中 (停止蓝方块 → 启动 YOLO)...")
@@ -1005,30 +1365,86 @@ def main():
             for v in (self.det_obj, self.det_conf, self.det_meth, self.det_x, self.det_y, self.det_z, self.det_dia, self.det_dist):
                 v.set(v.get().split(":")[0] + ": --")
             # 发送切换命令到 ROS worker 子进程
-            self.cmd_queue.put({"cmd": "switch_mode", "mode": "fruit"})
+            self.cmd_queue.put({"cmd": "switch_mode", "mode": "fruit", "request_id": self._mode_request_id})
             self.after(500, self._poll_mode_switch_done)
 
-        def _poll_mode_switch_done(self):
-            """轮询模式切换是否完成 (通过检测 /detection_info 是否有新数据)。
-            切换完成 = 收到新模式的 /detection_info 消息; 超时 = 强制恢复按钮。
+        def _visual_switch_blocked(self):
+            """视觉切换前置占用检查：单次抓取/自动分拣/动态抓取/控制 busy 时拒绝。"""
+            if (getattr(self, "_closing", False) or self._mode_switching
+                    or getattr(self, "queue_running", False)
+                    or self.auto_sort_running or self.dynamic_mode or self._dynamic_busy):
+                messagebox.showwarning("任务运行中",
+                                       "请先停止自动分拣/动态抓取再切换模式。")
+                return True
+            if (self.current_status == 'busy'
+                    or getattr(self, '_dispatch_pending', False)):
+                messagebox.showwarning("控制忙碌",
+                                       "机械臂正在执行动作，请等待完成再切换模式。")
+                return True
+            return False
+
+        def _on_mode_result(self, mode, ok, detail="", online=None, request_id=None, camera=None):
+            """worker 上报的模式切换结果（主线程 after 轮询后调用）。
+
+            成功才提交 detection_mode(active)；失败保持旧模式，online 用于显示 offline。
             """
-            if not self._mode_switching:
+            if (getattr(self, "_closing", False) or not self._mode_switching or mode != self.requested_mode
+                    or request_id != self._mode_request_id):
                 return
-            # 检测是否有新数据到达 (latest_detection 被清空后重新填充 = 新节点上线)
-            if self.latest_detection is not None:
-                self._finish_mode_switch()
+            self._mode_switch_ok = bool(ok)
+            self._mode_failed_detail = detail or ""
+            self._mode_online = online
+            self._detector_ready = bool(ok)
+            if ok:
+                self.detection_mode = mode
+                if camera:self.active_camera=camera
+                self.camera_status_var.set('当前抓取相机: '+self.active_camera)
+            self.camera_var.set(self.active_camera)
+            self.requested_camera=None
+            self._finish_mode_switch()
+
+        def _poll_mode_switch_done(self):
+            """轮询模式切换是否完成（等待 worker 的 __MODE_OK__/__MODE_FAIL__ 上报）。"""
+            if getattr(self, "_closing", False) or not self._mode_switching:
                 return
-            # 超时检查
             if time.time() > self._mode_switch_deadline:
-                _log(f"模式切换超时 (mode={self.detection_mode}), 强制恢复按钮")
+                _log(f"模式切换超时 (requested={self.requested_mode})")
+                self._mode_switch_ok = False
+                self._mode_failed_detail = "切换超时"
                 self._finish_mode_switch()
                 return
             self.after(500, self._poll_mode_switch_done)
 
         def _finish_mode_switch(self):
-            """模式切换完成 (或超时), 恢复按钮高亮状态。"""
+            """模式切换结束：成功提交 active mode；失败保持旧模式或标记 offline。"""
             self._mode_switching = False
+            self.camera_var.set(self.active_camera)
+            self.requested_camera=None
             self._mode_switch_deadline = 0
+            req = self.requested_mode
+            self.requested_mode = None
+            if not self._mode_switch_ok:
+                # 失败：不提前提交新模式；保持已确认旧模式，必要时显示 offline
+                online = self._mode_online
+                if online in (None, "offline", "unknown"):
+                    self.mode_status_var.set("当前模式: offline (检测节点不在线)")
+                elif online != self.detection_mode:
+                    self.mode_status_var.set(
+                        f"当前模式: {self.detection_mode} (在线: {online}, 请检查)")
+                else:
+                    label = "蓝方块分拣" if self.detection_mode == 'blue_block' else "水果分拣"
+                    self.mode_status_var.set(f"当前模式: {label}")
+                self.fruit_mode_btn.config(
+                    state=tk.NORMAL,
+                    relief=tk.SUNKEN if self.detection_mode == 'fruit' else tk.RAISED)
+                self.blue_block_mode_btn.config(
+                    state=tk.NORMAL,
+                    relief=tk.SUNKEN if self.detection_mode == 'blue_block' else tk.RAISED)
+                messagebox.showwarning(
+                    "模式切换未完成",
+                    f"切换到 {req} 未成功: {self._mode_failed_detail or '未知原因'}\n\n"
+                    f"已保持 {self.detection_mode} 模式。")
+                return
             if self.detection_mode == 'blue_block':
                 # 蓝方块模式: 蓝方块按钮高亮, 水果按钮灰显
                 self.fruit_mode_btn.config(state=tk.NORMAL, relief=tk.RAISED)
@@ -1054,6 +1470,8 @@ def main():
 
         def _pick_blue_block(self):
             """蓝方块抓取按钮回调: 从 latest_detection 提取蓝方块字段, 发送 sort_blue_block 命令。"""
+            if not self._visual_action_allowed():
+                return
             d = self.latest_detection
             if not d:
                 return messagebox.showwarning("无数据", "尚未收到蓝方块检测信息。")
@@ -1087,6 +1505,8 @@ def main():
                    f"Place: 放置目标点 (关节空间预设点位)\n\n确定发送？")
             if not messagebox.askyesno("确认蓝方块抓取", txt):
                 return
+            if not self._visual_action_allowed():
+                return
             cmd = {
                 "cmd": "sort_blue_block",
                 "pick": pp,
@@ -1102,17 +1522,19 @@ def main():
             queue_msg = "蓝方块抓取任务已加入排队队列。"
             if self.current_status == 'busy':
                 if messagebox.askyesno("忙碌", "加入排队队列？"):
-                    self.task_queue.append(cmd); self.refresh_queue_listbox()
+                    self.task_queue.append(self._tag_visual_command(cmd)); self.refresh_queue_listbox()
                     messagebox.showinfo("已加入", queue_msg)
             else:
                 self.last_dispatch_time = time.time()
-                self.cmd_queue.put(cmd)
+                self._send_motion_command(cmd)
                 messagebox.showinfo("已发送", sent_msg)
 
         def _dispatch_blue_block_sort_cmd(self, det, retry=False):
             """构造蓝方块分拣命令并发送 (供自动分拣/外部调用使用)。
             det: /detection_info 中 detections[0] 的 dict。
             """
+            if not self._visual_action_allowed():
+                return
             bc = det.get('base_coords', {})
             if not bc or not all(k in bc for k in ('x', 'y', 'z')):
                 self._auto_sort_log("蓝方块 base_coords 缺失, 跳过")
@@ -1132,7 +1554,7 @@ def main():
                 "place_name": "放置点",
             }
             self.last_dispatch_time = time.time()
-            self.cmd_queue.put(cmd)
+            self._send_motion_command(cmd)
             self._auto_sort_log(f"蓝方块分拣: →放置目标点 {'[重试]' if retry else ''}")
 
         def _update_blue_block_detection_panel(self, det):
@@ -1209,7 +1631,7 @@ def main():
             n=self.name_entry.get().strip()
             if not n: return messagebox.showerror("错误","请输入坐标名称！")
             if not hasattr(self,'current_fetched_pose'): return messagebox.showerror("错误","请先读取机械臂位置！")
-            self.poses[n]={'x':float(self.current_fetched_pose['x']),'y':float(self.current_fetched_pose['y']),'z':float(self.current_fetched_pose['z'])}
+            self.poses[n]={'x':float(self.current_fetched_pose['x']),'y':float(self.current_fetched_pose['y']),'z':float(self.current_fetched_pose['z']), '_reference_frame':'tcp_link'}
             self.save_poses(); messagebox.showinfo("成功",f"坐标 '{n}' 已保存！")
 
         def delete_pose(self):
@@ -1225,6 +1647,13 @@ def main():
         def _on_reset(self):
             """复位按钮回调: 急停后清除锁定, 回待机位."""
             self.cmd_queue.put({"cmd": "emergency_stop", "req": "reset"})
+
+        def send_camera_observe(self):
+            if self._visual_switch_blocked():
+                return
+            prompt = '请确认现场空间允许移动。机械臂将规划移动到当前相机的观察位。'
+            if messagebox.askyesno('移动到观察位', prompt):
+                self._send_motion_command(dict(cmd='observe'))
 
         def send_observe(self):
             # 使用急停机制的返回待机位: 无条件中断并回待机位
@@ -1268,6 +1697,7 @@ def main():
 
         def _on_grasp_result(self, d):
             """处理 action 节点发来的抓取结果 JSON."""
+            self._dispatch_pending = False
             success = d.get("success", False)
             width = d.get("width", 0)
             force = d.get("force", 0)
@@ -1283,7 +1713,7 @@ def main():
         def send_reset(self):
             if self.current_status=='busy': return messagebox.showwarning("忙碌","机械臂正在执行动作。")
             if messagebox.askyesno("确认","机械臂将回到待机位并关闭夹爪。确定？"):
-                self.cmd_queue.put({"cmd":"reset"}); self.clear_queue(); messagebox.showinfo("已发送","复位指令发送成功！")
+                self._send_motion_command({"cmd":"reset"}); self.clear_queue(); messagebox.showinfo("已发送","复位指令发送成功！")
 
         def add_to_queue(self):
             pn=self.pick_combo.get()
@@ -1302,6 +1732,8 @@ def main():
 
         def toggle_queue_execution(self):
             if not self.queue_running:
+                if not self._visual_action_allowed():
+                    return
                 if not self.task_queue: return messagebox.showwarning("提示","排队队列为空！")
                 self.queue_running=True; self.qrun.config(text="  暂停排队执行",bg="yellow")
                 self.last_dispatch_time=time.time()-2.0
@@ -1316,7 +1748,7 @@ def main():
             pn=self.pick_combo.get()
             if not pn: return messagebox.showerror("错误","请选择夹取点！")
             self.last_dispatch_time=time.time()
-            self.cmd_queue.put({"cmd":"sort","pick":self.poses[pn],"pick_name":pn,"place_name":"放置点"})
+            self._send_motion_command({"cmd":"sort","pick":self.poses[pn],"pick_name":pn,"place_name":"放置点"})
             messagebox.showinfo("已发送",f"分拣指令已发送！\n【{pn}】->【放置目标点】")
 
         def send_quit(self):
@@ -1443,6 +1875,8 @@ def main():
                 self.after(300, self._conveyor_status_poll)
 
         def _update_status_loop(self):
+            if getattr(self, "_closing", False):
+                return
             while not self.status_queue.empty():
                 try: s=self.status_queue.get_nowait()
                 except: break
@@ -1455,15 +1889,19 @@ def main():
                     except: pass
                     continue
                 self.current_status = s
+                if s in ('busy', 'error'):
+                    self._dispatch_pending = False
             s=self.current_status
             if s=='idle':
                 self.status_var.set("当前服务器状态: 空闲 (Idle)"); self.status_label.configure(fg="green")
                 self.error_notified=False
                 # ⚠️ 自动分拣/动态抓取运行时禁止弹出排队任务: 状态机自己通过 _dispatch_sort_cmd 直接
                 # 下发 sort_verify, 排队队列的 cmd_queue.put 会与服务端正在处理的指令冲突。
-                if not (self.auto_sort_running or self.dynamic_mode) and getattr(self,'queue_running',False):
+                if (not (self.auto_sort_running or self.dynamic_mode or self._mode_switching)
+                        and self._detector_ready and not getattr(self, '_dispatch_pending', False)
+                        and getattr(self,'queue_running',False)):
                     if self.task_queue and (time.time()-self.last_dispatch_time>1.5):
-                        self.cmd_queue.put(self.task_queue.pop(0)); self.refresh_queue_listbox()
+                        self._send_motion_command(self.task_queue.pop(0)); self.refresh_queue_listbox()
                         self.last_dispatch_time=time.time()
                     elif not self.task_queue and (time.time()-self.last_dispatch_time>1.5):
                         self.queue_running=False; self.qrun.config(text=" 开始执行排队任务",bg="lightgreen")
@@ -1518,6 +1956,8 @@ def main():
 
         def _dynamic_start(self):
             """启动动态抓取: 开启传送带并进入 RUNNING 状态."""
+            if not self._visual_action_allowed(automatic=True):
+                return
             if self._dynamic_state != 'OFF':
                 return
             if self.auto_sort_running:
@@ -1582,6 +2022,8 @@ def main():
             主体用 try/except 包裹并始终重排, 任何异常都不会让状态机静默冻结
             (参照 _auto_sort_tick 的续排写法)。
             """
+            if getattr(self, "_closing", False):
+                return
             if not self.dynamic_mode:
                 return  # 动态模式已退出 (STOPPING 完成): 唯一允许不再续排的路径
             try:
@@ -1677,6 +2119,8 @@ def main():
             static_mode=False: 下发 sort_dynamic (动态抓取, 传送带持续运行, 移动拦截).
             自动分拣沿用 retry 逻辑 (sort 单次检测, eye-to-hand 下无需两阶段精定位)。
             """
+            if not self._visual_action_allowed():
+                return
             bp = obj.get('base_position_m')
             if not bp or not all(k in bp for k in ('x','y','z')):
                 self._auto_sort_log("⚠️ 物体缺少 base_position_m, 跳过")
@@ -1693,7 +2137,8 @@ def main():
             name = obj.get('object_name', '物体')
             # 优先用 D455 估计直径, fallback 预设尺寸
             dia = obj.get('estimated_diameter_m') or obj.get('size_m', {}).get('diameter')
-            cmd = {"cmd": "sort" if static_mode else "sort_dynamic",
+            cmd = {"cmd": "sort_graspnet" if static_mode else "sort_dynamic",
+                   "target_track_id": obj.get("track_id"),
                    "pick": pick,
                    "pick_name": f"{name} (auto-sort{'-retry' if retry else ''})",
                    "place_name": "放置点"}
@@ -1707,7 +2152,7 @@ def main():
             if self.dynamic_mode:
                 self._dynamic_busy = True
             self.last_dispatch_time = time.time()
-            self.cmd_queue.put(cmd)
+            self._send_motion_command(cmd)
             self._auto_sort_log(f"分拣[{method_tag}]: {name}→放置目标点 {'[重试]' if retry else ''}")
 
         def _set_manual_buttons_state(self, state):
@@ -1760,6 +2205,8 @@ def main():
 
         def start_auto_sort(self):
             """启动自动分拣。"""
+            if not self._visual_action_allowed(automatic=True):
+                return
             if self.auto_sort_running: return
             if self.dynamic_mode:
                 # 自动分拣与动态抓取互斥
@@ -1819,6 +2266,8 @@ def main():
 
         def _auto_sort_tick(self):
             """状态机主循环, 每 300ms 调用一次。"""
+            if getattr(self, "_closing", False):
+                return
             if not self.auto_sort_running: return
             try:
                 st = self.auto_sort_state
@@ -1947,18 +2396,83 @@ def main():
 
     # =========== 启动 GUI ===========
     app = SortingApp()
-    app.protocol("WM_DELETE_WINDOW", lambda: app.destroy())
+    app._closing = False
 
-    # 相机/YOLO 启动状态轮询：auto_start_pipeline 现在在 ROS worker 子进程中运行，
-    # 状态消息通过 mp_status_q (multiprocessing.Queue) 跨进程传回主线程。
+    def _finalize_close(acked):
+        """join worker；仅在正常路径失败后才兜底 terminate。"""
+        try:
+            ros_proc.join(timeout=60)
+        except Exception:
+            pass
+        if ros_proc.is_alive():
+            _log(f"worker 未按 ACK 退出 (acked={acked}), 兜底 terminate")
+            try:
+                ros_proc.terminate(); ros_proc.join(timeout=3)
+            except Exception:
+                pass
+        try:
+            app.destroy()
+        except Exception:
+            pass
+
+    def request_shutdown():
+        """正常退出：队列请求 worker 清理（本 session 组件 + 串口）→ 等 ACK → join。"""
+        if getattr(app, "_closing", False):
+            return
+        app._closing = True
+        _log("WM_DELETE_WINDOW: 请求 worker 清理")
+        try:
+            cmd_q.put({"cmd": "shutdown"})
+        except Exception:
+            pass
+
+        app.auto_sort_running = False
+        app.dynamic_mode = False
+        app.queue_running = False
+        app.withdraw()
+        deadline = time.monotonic() + 60.
+        def _wait_ack():
+            try:
+                msg = shutdown_q.get_nowait()
+            except queue.Empty:
+                msg = None
+            if msg == "__SHUTDOWN_ACK__":
+                _finalize_close(True)
+            elif time.monotonic() >= deadline or not ros_proc.is_alive():
+                _finalize_close(False)
+            else:
+                app.after(100, _wait_ack)
+        app.after(100, _wait_ack)
+
+    app.protocol("WM_DELETE_WINDOW", request_shutdown)
+
+    # 相机/TF/检测 启动状态轮询：auto_start_pipeline 在 ROS worker 子进程中运行，
+    # 状态消息通过 mp_status_q 跨进程传回主线程；模式结果以 __MODE_OK__/__MODE_FAIL__ 上报。
     # 主线程用 after() 轮询取消息再更新 Tkinter，避免跨线程/跨进程访问 Tk。
     # ⚠️ 主进程中不再有任何 fork() (subprocess.run/Popen) 调用，Tcl 引用计数不会被破坏。
     def poll_status_msg():
         while True:
             try: msg=mp_status_q.get_nowait()
             except queue.Empty: break
-            try: app.camera_status_var.set(msg)
-            except: pass
+            try:
+                if isinstance(msg, dict) and msg.get("type") == "mode_result":
+                    app._on_mode_result(msg["mode"], msg["ok"], msg.get("detail", ""),
+                                        msg.get("online"), msg.get("request_id"),msg.get("camera"))
+                elif isinstance(msg, dict) and msg.get("type") == "pipeline_ready":
+                    app._on_pipeline_result(msg["mode"], msg["ok"])
+                elif isinstance(msg, str) and msg.startswith("__MODE_OK__"):
+                    app._on_mode_result(msg[len("__MODE_OK__"):], True, "")
+                elif isinstance(msg, str) and msg.startswith("__MODE_FAIL__"):
+                    body = msg[len("__MODE_FAIL__"):]
+                    parts = body.split("|", 2)
+                    m = parts[0]
+                    online = parts[1] if len(parts) > 1 else None
+                    detail = parts[2] if len(parts) > 2 else ""
+                    app._on_mode_result(m, False, detail, online)
+                else:
+                    app.camera_status_var.set(msg)
+            except Exception:
+                pass
         app.after(200, poll_status_msg)
     app.after(200, poll_status_msg)
     _log("GUI mainloop start")
@@ -1966,7 +2480,17 @@ def main():
     try: app.mainloop()
     finally:
         _log("GUI exit")
-        ros_proc.terminate(); ros_proc.join(timeout=3)
+        # 兜底：窗口被其它路径销毁而未走 request_shutdown
+        try:
+            cmd_q.put({"cmd": "shutdown"})
+        except Exception:
+            pass
+        ros_proc.join(timeout=60)
+        if ros_proc.is_alive():
+            _log("finally: 兜底 terminate")
+            ros_proc.terminate(); ros_proc.join(timeout=3)
+        try: _lock_fd.close()
+        except Exception: pass
 
 
 if __name__ == "__main__":

@@ -1,0 +1,78 @@
+{
+  "kind": "tcp_pivot_candidate",
+  "schema_version": 1,
+  "quality_status": "failed",
+  "quality_checks": [
+    {
+      "check": "samples",
+      "ok": true
+    },
+    {
+      "check": "rank_6",
+      "ok": true
+    },
+    {
+      "check": "condition",
+      "ok": true
+    },
+    {
+      "check": "rms_mm",
+      "ok": false
+    },
+    {
+      "check": "max_residual_mm",
+      "ok": false
+    }
+  ],
+  "sample_count": 10,
+  "rank": 6,
+  "condition_number": 4.199976779490851,
+  "rms_mm": 5.358227754611016,
+  "max_residual_mm": 8.718494213648277,
+  "residuals_mm": [
+    1.4862270257176977,
+    5.145295585660687,
+    8.718494213648277,
+    3.6009400603786106,
+    6.034775459877617,
+    3.6523538708920302,
+    5.462317478377959,
+    2.5114273540044247,
+    8.132449742267235,
+    4.171939182956582
+  ],
+  "thresholds": {
+    "min_samples": 6,
+    "max_rms_mm": 2.0,
+    "max_residual_mm": 5.0,
+    "max_condition": 100.0
+  },
+  "tcp_offset": null,
+  "pivot_base_m": [
+    0.3377460334805842,
+    -0.12245456803787334,
+    0.11204363832121597
+  ],
+  "orientation_calibrated": false,
+  "preserved_rpy_rad": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "units": "m",
+  "angle_units": "rad",
+  "parent": "link6",
+  "child": "tcp_link",
+  "applied": false,
+  "current_tcp_offset": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "session_file": "/home/lxf/agx_arm_ws/data/calibration/tcp/2026-10-16_22-42-05_c3296802/solve_input_680d217bd0414c34855999abb4020719.json",
+  "working_session_file": "/home/lxf/agx_arm_ws/data/calibration/tcp/2026-10-16_22-42-05_c3296802/frames.json",
+  "input_sha256": "a9f7ad04d70a2742567cf3a383bc9c6b7fd2e37c9fb00ae14bb00b6be609b3a2"
+}

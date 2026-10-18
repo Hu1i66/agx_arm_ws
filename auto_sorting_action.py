@@ -10,11 +10,15 @@ import math
 import sys
 import os
 import numpy as np
+import uuid
+import runtime_config as runtime_config
+from runtime_geometry import assert_visual_target_fresh, tcp_transform, tcp_to_flange, transform, assert_robot_tcp, short_axis_tool_rotation
+from scipy.spatial.transform import Rotation
 from std_msgs.msg import String
 from rcl_interfaces.srv import GetParameters
 from rclpy.logging import LoggingSeverity, set_logger_level
 
-from moveit_msgs.srv import GetCartesianPath, GetMotionPlan, GetPlanningScene, GetPositionIK
+from moveit_msgs.srv import GetCartesianPath, GetMotionPlan, GetPlanningScene, GetPositionIK, GetStateValidity
 from moveit_msgs.action import ExecuteTrajectory, MoveGroup
 from moveit_msgs.msg import Constraints, JointConstraint, PositionConstraint, OrientationConstraint, BoundingVolume, MotionPlanRequest, WorkspaceParameters, PlanningScene as PlanningSceneMsg, PlanningSceneComponents, AllowedCollisionEntry
 from shape_msgs.msg import SolidPrimitive
@@ -92,6 +96,7 @@ class PinocchioIKSolver:
 
         self.urdf_path = urdf_path
         self.ee_name = end_effector_name
+        self.tcp_transform = tcp_transform()
 
         self.model = _pin.buildModelFromUrdf(urdf_path)
         self.data = self.model.createData()
@@ -137,8 +142,11 @@ class PinocchioIKSolver:
             # Target z-axis direction (extracted from target_quat rotation)
             tq = np.array(target_quat, dtype=float)
             tq = tq / max(np.linalg.norm(tq), 1e-9)
-            target_se3 = _pin.XYZQUATToSE3(np.concatenate([target_pos_arr, tq]))
-            target_z = target_se3.rotation[:, 2].copy()  # Desired EE z-axis in world frame
+            target_tcp = transform(target_pos_arr,tq)
+            flange = tcp_to_flange(target_tcp,self.tcp_transform)
+            target_pos_arr = flange[:3,3]
+            target_se3 = _pin.SE3(flange[:3,:3],flange[:3,3])
+            target_z = target_tcp[:3, 2].copy()  # Desired EE z-axis in world frame
 
             lo6 = self._lo[:6]
             hi6 = self._hi[:6]
@@ -152,14 +160,17 @@ class PinocchioIKSolver:
                 """
                 _pin.forwardKinematics(self.model, self.data, q_in)
                 _pin.updateFramePlacements(self.model, self.data)
-                pe = float(np.linalg.norm(
-                    self.data.oMf[self.ee_frame_id].translation - target_pos_arr))
-                R_act = self.data.oMf[self.ee_frame_id].rotation
+                actual_flange = self.data.oMf[self.ee_frame_id]
+                actual_tcp = np.eye(4)
+                actual_tcp[:3,:3] = actual_flange.rotation @ self.tcp_transform[:3,:3]
+                actual_tcp[:3,3] = actual_flange.translation + actual_flange.rotation @ self.tcp_transform[:3,3]
+                pe = float(np.linalg.norm(actual_tcp[:3,3] - target_tcp[:3,3]))
+                R_act = actual_tcp[:3,:3]
                 actual_z = R_act[:, 2]
                 cos_angle = float(np.clip(np.dot(actual_z, target_z), -1.0, 1.0))
                 ze = float(np.arccos(cos_angle))  # 0=aligned, pi=opposite
                 actual_x = R_act[:, 0]
-                target_x = target_se3.rotation[:, 0]
+                target_x = target_tcp[:3, 0]
                 cos_yaw = float(np.clip(abs(np.dot(actual_x, target_x)), -1.0, 1.0))
                 yaw_err = float(np.arccos(cos_yaw))
                 total = pe + 0.06 * ze + 0.05 * yaw_err
@@ -295,6 +306,7 @@ class MoveItActionClient(Node):
         # 100% 可达 (offline_verify_jointspace_multiwaypoint.py). 故下降改为: 逐航点 IK 解关节角
         # → 打包成整条 JointTrajectory → 一次下发 arm_controller, 既消除笛卡尔奇异性又消分段死区.
         self._arm_jt_client = ActionClient(self, FollowJointTrajectory, '/arm_controller/follow_joint_trajectory')
+        self._valid_state_client = self.create_client(GetStateValidity,'/check_state_validity')
         self._joint_states_pub = self.create_publisher(JointState, '/control/joint_states', 10)
         # PlanningScene diff 话题发布器：用于临时禁用/恢复 control_box 等碰撞体的碰撞检测
         # 通过 AllowedCollisionMatrix (ACM) diff 实现，不影响场景中物体的实际存在
@@ -508,7 +520,9 @@ class MoveItActionClient(Node):
     def _detection_cb(self, msg):
         """缓存 YOLO 检测结果，唤醒等待线程。"""
         try:
-            self._latest_detection = json.loads(msg.data)
+            data = json.loads(msg.data)
+            if data.get('camera','d455') != getattr(self,'_active_camera','d455'):return
+            self._latest_detection = data
             self._detection_event.set()
         except Exception:
             pass
@@ -537,8 +551,8 @@ class MoveItActionClient(Node):
                 if det and det.get('detected'):
                     objects = det.get('objects', []) or []
                     for obj in objects:
-                        name = (obj.get('name', '') or '').lower().strip()
-                        if target_key in name or name in target_key:
+                        name = (obj.get('object_name') or obj.get('name') or '').lower().strip()
+                        if name and (target_key in name or name in target_key):
                             bp = obj.get('base_position_m')
                             if bp and all(k in bp for k in ('x', 'y', 'z')):
                                 self._detection_event.clear()
@@ -547,7 +561,7 @@ class MoveItActionClient(Node):
                                     f"x={bp['x']:.3f} y={bp['y']:.3f} z={bp['z']:.3f}")
                                 return {'x': float(bp['x']),
                                         'y': float(bp['y']),
-                                        'z': float(bp['z'])}
+                                        'z': float(bp['z']), 'grasp_geometry': obj.get('grasp_geometry')}
                     # 检测到了但没匹配到目标物体, 清事件继续等
                     self._detection_event.clear()
             time.sleep(0.1)
@@ -602,7 +616,7 @@ class MoveItActionClient(Node):
                 self.enable_ik = False
                 return
 
-            urdf_path = '/home/lxf/agx_arm_ws/src/agx_arm_ros/src/agx_arm_moveit/config/test2.urdf'
+            urdf_path = str(runtime_config.resolve_resource('ik_urdf'))
             if not os.path.exists(urdf_path):
                 self.get_logger().warn(f"URDF not found: {urdf_path}, IK disabled")
                 self.enable_ik = False
@@ -624,7 +638,7 @@ class MoveItActionClient(Node):
                 pass
 
     def _set_conveyor_collision_allowed(self, allowed=True, obj_ids=None):
-        """临时允许/恢复指定碰撞体与机械臂所有连杆的碰撞检测。
+        """恢复指定碰撞体检测；标定抓取不允许绕过碰撞场景。
 
         通过 /planning_scene 话题发布 AllowedCollisionMatrix (ACM) diff 实现。
         放置目标点规划失败时调用此方法临时绕过传送带碰撞体，
@@ -644,6 +658,9 @@ class MoveItActionClient(Node):
             allowed: True=禁用碰撞检测(允许碰撞), False=恢复碰撞检测
             obj_ids: 要操作的碰撞体名称列表，默认包含所有传送带碰撞体
         """
+        if allowed:
+            self.get_logger().warning('标定抓取保留传送带碰撞检测，不绕过失败规划')
+            return
         if obj_ids is None:
             # 传送带所有碰撞体：conveyor.scene 中的 Object + conveyor_cell.urdf.xacro 中的 Robot link
             obj_ids = [
@@ -718,9 +735,20 @@ class MoveItActionClient(Node):
             self.get_logger().error(f"❌ 设置 ACM 失败: {e}")
 
     def cmd_callback(self, msg):
-        # 简单将 JSON 命令推入队列给主线程处理
+        try:
+            command=json.loads(msg.data);camera=command.get('camera_id','d455')
+            assert_visual_target_fresh(command)
+            if camera not in ('d455','dabai'):raise ValueError('未知抓取相机')
+            if camera=='dabai' and command.get('cmd')=='sort_dynamic':raise ValueError('Dabai首轮仅支持静态抓取')
+        except (ValueError,TypeError) as exc:
+            self.get_logger().error(str(exc));return
         self.cmd_queue.put(msg.data)
         
+    def _check_calibrated_tool(self):
+        if time.monotonic()-getattr(self,'_tool_check_at',-100.)>2.:
+            assert_robot_tcp(self)
+            self._tool_check_at=time.monotonic()
+
     def wait_for_server(self, timeout_sec=None):
         self.get_logger().info('等待 MoveGroup Action 服务器...')
         ok = self._action_client.wait_for_server(timeout_sec=timeout_sec)
@@ -739,6 +767,7 @@ class MoveItActionClient(Node):
         planning_attempts=3,
         allowed_planning_time=3.0,
     ):
+        self._check_calibrated_tool()
         goal_msg = MoveGroup.Goal()
         goal_msg.request.workspace_parameters.header.stamp = self.get_clock().now().to_msg()
         goal_msg.request.workspace_parameters.header.frame_id = 'base_link'
@@ -847,23 +876,23 @@ class MoveItActionClient(Node):
             return False, "二次检测缺少 base_position_m"
         ver_x, ver_y, ver_z = float(bp['x']), float(bp['y']), float(bp['z'])
         # 质心 z (D455 深度点云估算, 不依赖预设尺寸); fallback 表面 z
-        ver_centroid_z = detection.get('centroid_base_z')
+        ver_centroid_z = ver_z  # 使用点云估计的三维中心，不加类别尺寸/经验高度
         if ver_centroid_z is None:
             ver_centroid_z = ver_z
         else:
             ver_centroid_z = float(ver_centroid_z)
 
         print(f"✅ [两阶段] 二次检测成功! 坐标=({ver_x:.4f},{ver_y:.4f},{ver_z:.4f}) 质心z={ver_centroid_z:.4f}")
-        return True, {'x': ver_x, 'y': ver_y, 'z': ver_z, 'centroid_z': ver_centroid_z}
+        return True, {'x': ver_x, 'y': ver_y, 'z': ver_z, 'centroid_z': ver_centroid_z,
+                      'grasp_geometry': detection.get('grasp_geometry')}
 
     # ── GraspNet 服务通信 ──
     def _graspnet_result_cb(self, msg):
-        """缓存 GraspNet 服务结果, 唤醒等待线程。"""
-        try:
-            self._latest_graspnet_result = json.loads(msg.data)
-        except Exception as e:
-            self._latest_graspnet_result = {"success": False, "error": f"bad_json: {e}"}
-        self._graspnet_event.set()
+        try:result=json.loads(msg.data)
+        except (ValueError,TypeError):return
+        pending=getattr(self,'_pending_grasp_request',None)
+        if not pending or result.get('request_id')!=pending['request_id'] or result.get('camera_id')!=pending['camera_id']:return
+        self._latest_graspnet_result=result;self._graspnet_event.set()
 
     def call_graspnet_service(self, pick_pose, timeout_s=15.0):
         """请求 GraspNet 服务获取 6DoF 抓取位姿 (base 系)。
@@ -878,11 +907,16 @@ class MoveItActionClient(Node):
             timeout_s: 等待结果超时 (推理约 2-3s)
         """
         req = {
+            "request_id": uuid.uuid4().hex,
+            "camera_id": getattr(self,"_active_camera","d455"),
             "cmd": "get_grasp",
+            "pick_semantics": "estimated_centroid",
             "pick_x": float(pick_pose['x']),
             "pick_y": float(pick_pose['y']),
             "pick_z": float(pick_pose['z']),
         }
+        req['target_track_id'] = getattr(self,'_visual_target_meta',{}).get('target_track_id')
+        self._pending_grasp_request = req
         self._graspnet_event.clear()
         self._latest_graspnet_result = None
         msg = String()
@@ -895,11 +929,15 @@ class MoveItActionClient(Node):
         while waited < timeout_s:
             if rclpy.ok():
                 rclpy.spin_once(self, timeout_sec=0.0)
+            if self._emergency_flag:
+                self._pending_grasp_request = None
+                return {"success":False,"error":"interrupted"}
             if self._graspnet_event.is_set():
                 break
             time.sleep(dt)
             waited += dt
 
+        self._pending_grasp_request = None
         if self._latest_graspnet_result is None:
             return {"success": False, "error": f"timeout_{timeout_s}s"}
         return self._latest_graspnet_result
@@ -918,6 +956,31 @@ class MoveItActionClient(Node):
             c.joint_constraints.append(jc)
         return self.send_goal('arm', c, continuous=continuous)
 
+    def _joint_waypoints_valid(self, joint_waypoints, start_joints=None, report_failure=True):
+        """复用原有插值碰撞检查；仅计算，不发送运动。"""
+        joint_names = ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6']
+        if not self._valid_state_client.wait_for_service(timeout_sec=2.):return False
+        current=self.current_joints or {}
+        if not all(n in current for n in joint_names):return False
+        previous=np.array(start_joints if start_joints is not None else [current[n] for n in joint_names])
+        for waypoint in joint_waypoints:
+            q=np.asarray(waypoint,dtype=float)
+            if q.shape!=(6,) or not np.isfinite(q).all():return False
+            steps=max(1,int(np.ceil(np.max(np.abs(q-previous))/.03)))
+            for alpha in np.linspace(0.,1.,steps+1):
+                if self._emergency_flag:return False
+                request=GetStateValidity.Request();request.group_name='arm';request.robot_state.is_diff=True
+                mapping=dict(current);mapping.update(zip(joint_names,((1-alpha)*previous+alpha*q).tolist()))
+                request.robot_state.joint_state.name=list(mapping);request.robot_state.joint_state.position=list(mapping.values())
+                future=self._valid_state_client.call_async(request)
+                rclpy.spin_until_future_complete(self,future,timeout_sec=2.)
+                if not future.done() or future.exception() or not future.result().valid:
+                    if report_failure:
+                        self.get_logger().error('直接关节轨迹碰撞/限位检查失败，未派发')
+                    return False
+            previous=q
+        return True
+
     def execute_multiwaypoint_joint_trajectory(self, joint_waypoints, desc, per_point_dur=0.30):
         """方案 X: 多航点关节轨迹一次下发 (不经过 MoveIt 单目标规划).
 
@@ -934,6 +997,7 @@ class MoveItActionClient(Node):
         Returns:
             bool: 是否成功
         """
+        self._check_calibrated_tool()
         if not joint_waypoints:
             return False
         if not self._arm_jt_client.wait_for_server(timeout_sec=1.5):
@@ -941,6 +1005,7 @@ class MoveItActionClient(Node):
             return False
 
         joint_names = ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6']
+        if not self._joint_waypoints_valid(joint_waypoints):return False
         goal_msg = FollowJointTrajectory.Goal()
         goal_msg.trajectory.joint_names = joint_names
         # 逐点构造 JointTrajectoryPoint, 时间戳递增.
@@ -1137,7 +1202,7 @@ class MoveItActionClient(Node):
         
         pc = PositionConstraint()
         pc.header.frame_id = 'base_link'
-        pc.link_name = 'link6'
+        pc.link_name = 'tcp_link'
         
         s = SolidPrimitive()
         s.type = SolidPrimitive.SPHERE
@@ -1159,7 +1224,7 @@ class MoveItActionClient(Node):
         if orientation is not None:
             oc = OrientationConstraint()
             oc.header.frame_id = 'base_link'
-            oc.link_name = 'link6'
+            oc.link_name = 'tcp_link'
             oc.orientation = orientation
             oc.absolute_x_axis_tolerance = float(ori_tolerances[0])
             oc.absolute_y_axis_tolerance = float(ori_tolerances[1])
@@ -1181,6 +1246,7 @@ class MoveItActionClient(Node):
         return p
         
     def execute_cartesian_path(self, waypoints, desc, fraction_threshold=0.85, jump_threshold=1.6):
+        self._check_calibrated_tool()
         self.get_logger().info(f"🚀 正在快速计算(笛卡尔直线连线) -> {desc}")
         if not self._cartesian_client.wait_for_service(timeout_sec=1.5):
             self.get_logger().error("⚠️ GetCartesianPath 服务不可用")
@@ -1190,6 +1256,7 @@ class MoveItActionClient(Node):
         req.header.frame_id = 'base_link'
         req.header.stamp = self.get_clock().now().to_msg()
         req.group_name = 'arm'
+        req.link_name = 'tcp_link'
         # 刷新关节状态 (同 send_goal): 防止 current_joints 过时导致起始状态不匹配
         rclpy.spin_once(self, timeout_sec=0.20)
         # 强制将规划起点绑定到我们追踪的 MOCK/底层的最新状态，杜绝真实机械臂状态漂移导致的 -4 错误
@@ -1201,12 +1268,14 @@ class MoveItActionClient(Node):
                 if k in self.current_joints:
                     names.append(k)
                     positions.append(self.current_joints[k])
+            req.start_state.is_diff = True
             req.start_state.joint_state.name = names
             req.start_state.joint_state.position = positions
         req.waypoints = waypoints
         req.max_step = 0.010      # 10mm 一步 (之前5mm, 改为10mm减少路径点数量, 见2026-08-17分析)
         req.jump_threshold = jump_threshold  # j6 突变检测阈值 (默认 1.6, 下降时可降到 0.8)
-        req.avoid_collisions = False # 端点在物品附近时关闭防碰撞，防止被误挡
+        req.avoid_collisions = True
+        fraction_threshold = 1.0
         
         future = self._cartesian_client.call_async(req)
         rclpy.spin_until_future_complete(self, future)
@@ -1325,6 +1394,7 @@ class MoveItActionClient(Node):
         for seed_name, seed_pos in seed_candidates:
             req = GetPositionIK.Request()
             req.ik_request.group_name = 'arm'
+            req.ik_request.ik_link_name = 'tcp_link'
             req.ik_request.pose_stamped.header.frame_id = 'base_link'
             req.ik_request.pose_stamped.pose.position.x = float(pose_dict['x'])
             req.ik_request.pose_stamped.pose.position.y = float(pose_dict['y'])
@@ -1332,7 +1402,8 @@ class MoveItActionClient(Node):
             req.ik_request.pose_stamped.pose.orientation = q
             req.ik_request.timeout.sec = int(timeout_s)
             req.ik_request.timeout.nanosec = int((timeout_s - int(timeout_s)) * 1e9)
-            req.ik_request.avoid_collisions = False
+            req.ik_request.avoid_collisions = True
+            req.ik_request.robot_state.is_diff = True
             req.ik_request.robot_state.joint_state.name = [f'joint{i}' for i in range(1, 7)]
             req.ik_request.robot_state.joint_state.position = list(seed_pos)
             
@@ -1491,8 +1562,142 @@ class MoveItActionClient(Node):
 
         return True, best_q
 
+    def _fixed_tcp_fk(self, joints):
+        solver = self.ik_solver
+        q = _pin.neutral(solver.model)
+        for index, value in zip(solver.joint_q_indices, joints):
+            q[index] = float(value)
+        _pin.forwardKinematics(solver.model, solver.data, q)
+        _pin.updateFramePlacements(solver.model, solver.data)
+        flange = solver.data.oMf[solver.ee_frame_id]
+        pose = np.eye(4)
+        pose[:3, :3] = flange.rotation
+        pose[:3, 3] = flange.translation
+        return pose @ solver.tcp_transform
+
+    def _fixed_tcp_ik(self, pose, orientation, seed=None):
+        """复用Pinocchio模型及SciPy求完整TCP位姿，不用随机误差折中倾斜夹爪。"""
+        from scipy.optimize import least_squares
+        from scipy.spatial.transform import Rotation
+        solver = self.ik_solver
+        target = transform([pose[k] for k in ('x', 'y', 'z')], orientation)
+        indices = solver.joint_q_indices
+        lower = solver.model.lowerPositionLimit[indices]
+        upper = solver.model.upperPositionLimit[indices]
+
+        def residual(joints):
+            actual = self._fixed_tcp_fk(joints)
+            rotation = Rotation.from_matrix(target[:3, :3] @ actual[:3, :3].T).as_rotvec()
+            return np.r_[actual[:3, 3] - target[:3, 3], 0.1 * rotation]
+
+        seeds = ([seed] if seed is not None else []) + [[0., 1.8, -1.3, 0., 1.1, 0.], [0.] * 6]
+        for initial in seeds:
+            fit = least_squares(residual, np.clip(initial, lower + 1e-9, upper - 1e-9),
+                                bounds=(lower, upper), max_nfev=200)
+            error = residual(fit.x)
+            # 分开判断位置与完整姿态，不能用“位置误差小”代替姿态准确。
+            if np.linalg.norm(error[:3]) <= 0.002 and np.linalg.norm(error[3:]) <= 0.0035:
+                return fit.x.tolist()
+        return None
+
+    def _fixed_tcp_waypoints(self, start, target, orientation, seed):
+        """固定姿态直线路径；用于抓取前预解与实际接近。"""
+        start = np.asarray(start, dtype=float)
+        end = np.array([target[k] for k in ('x', 'y', 'z')], dtype=float)
+        count = max(1, int(np.ceil(np.linalg.norm(end - start) / 0.003)))
+        waypoints = [seed]
+        for alpha in np.linspace(0., 1., count + 1)[1:]:
+            if self._emergency_flag:
+                return None
+            position = dict(zip(('x', 'y', 'z'), (start + alpha * (end - start)).tolist()))
+            seed = self._fixed_tcp_ik(position, orientation, seed)
+            if seed is None:
+                return None
+            if np.max(np.abs(np.asarray(seed) - waypoints[-1])) > 0.15:
+                return None
+            waypoints.append(seed)
+        return waypoints
+
+    def _execute_fixed_tcp_descent(self, target, orientation, desc, extra_depth=0.0, per_point_dur=0.12):
+        if not self.current_joints or self.ik_solver is None:
+            return False
+        seed = [self.current_joints[f'joint{i}'] for i in range(1, 7)]
+        start = self._fixed_tcp_fk(seed)[:3, 3]
+        axis = transform([0., 0., 0.], orientation)[:3, 2]
+        end = np.array([target[k] for k in ('x', 'y', 'z')]) + extra_depth * axis
+        grasp_target = dict(target, **dict(zip(('x', 'y', 'z'), end.tolist())))
+        waypoints = self._fixed_tcp_waypoints(start, grasp_target, orientation, seed)
+        if waypoints is None:
+            self.get_logger().warning(f'{self._active_camera}工具轴接近路径未完整求出，未派发接近轨迹')
+            return False
+        return self.execute_multiwaypoint_joint_trajectory(waypoints, desc, per_point_dur=per_point_dur)
+
+    def _plan_tool_axis_approach(self, target, seed, preferred_orientation, automatic, extra_depth=None):
+        """优先小倾角、少转J6；接近线沿工具+Z，抓后仍走原搬运流程。"""
+        from scipy.spatial.transform import Rotation
+        extra_depth = (0.02 if automatic else 0.0) if extra_depth is None else extra_depth
+        end = np.array([target[k] for k in ('x', 'y', 'z')], dtype=float)
+        radial_yaw = np.degrees(np.arctan2(end[1], end[0]))
+        geometry = getattr(self, '_grasp_geometry', None) or {}
+        short_axis = None
+        try:
+            if automatic and geometry.get('frame') == 'base_link' and float(geometry.get('elongation_ratio', 0)) >= 1.5:
+                axis = np.asarray(geometry['short_axis_base'], dtype=float)
+                if axis.shape == (3,) and np.isfinite(axis).all() and np.linalg.norm(axis[:2]) > 1e-6:
+                    short_axis = axis
+        except (KeyError, TypeError, ValueError):
+            pass
+
+        if automatic:
+            groups = []
+            for tilt in (0., 5., 10., 15., 20., 25., 30.):
+                q = Rotation.from_euler('xyz', [180., tilt, radial_yaw + 180.], degrees=True).as_quat()
+                if short_axis is not None:
+                    z_axis = Rotation.from_quat(q).as_matrix()[:, 2]
+                    q = Rotation.from_matrix(short_axis_tool_rotation(short_axis, z_axis)).as_quat()
+
+                # 对称姿态保持同一工具Z轴，不能把倾斜方向也反过来。
+                groups.append((tilt, [q, [q[1], -q[0], q[3], -q[2]]]))
+        else:
+            q = preferred_orientation
+            groups = [(None, [q, [q[1], -q[0], q[3], -q[2]]])]
+        for tilt, orientations in groups:
+            if self._emergency_flag:
+                return None
+            candidates = []
+            for orientation in orientations:
+                if self._emergency_flag:
+                    return None
+                axis = Rotation.from_quat(orientation).as_matrix()[:, 2]
+                start = end - 0.06 * axis
+                pre_pose = dict(zip(('x', 'y', 'z'), start.tolist()))
+                joints = self._fixed_tcp_ik(pre_pose, orientation, seed)
+                if joints is None:
+                    continue
+                # 预抓取点不变；额外深度只沿工具轴加一次，并在移动前核查。
+                grasp_end = end + extra_depth * axis
+                grasp_target = dict(target, **dict(zip(('x', 'y', 'z'), grasp_end.tolist())))
+                path = self._fixed_tcp_waypoints(start, grasp_target, orientation, joints)
+                if path is None:
+                    continue
+                score = abs(joints[5] - seed[5]) + 0.1 * np.linalg.norm(np.asarray(joints) - seed)
+                candidates.append((score, pre_pose, orientation.tolist() if hasattr(orientation, 'tolist') else list(orientation), joints, path))
+            for _, pre_pose, orientation, joints, path in sorted(candidates, key=lambda item: item[0]):
+                if self._joint_waypoints_valid(path, start_joints=joints, report_failure=False):
+                    self.last_grasp_extra_depth = extra_depth
+                    self.last_grasp_axis_mode = '短轴夹持' if short_axis is not None else '径向夹持'
+                    return pre_pose, orientation, joints, tilt
+        if automatic and extra_depth > 0.0 and not self._emergency_flag:
+            next_depth = max(0.0, round(extra_depth - 0.005, 6))
+            self.get_logger().warning(
+                f'{self._active_camera}额外深入{extra_depth * 100:.1f}cm的路径未通过，'
+                f'改试额外深入{next_depth * 100:.1f}cm')
+            return self._plan_tool_axis_approach(target, seed, preferred_orientation, True, extra_depth=next_depth)
+        return None
+
     def move_arm_pose(self, pose_dict, desc, continuous=False, planning_mode='normal',
-                       preferred_orientation=None):
+                       preferred_orientation=None, fixed_orientation=False, approach_target_z=None,
+                       auto_grasp=False):
         """
         统一运动方法：优先使用 IK + 关节空间，失败回退到 Cartesion 规划
 
@@ -1507,7 +1712,44 @@ class MoveItActionClient(Node):
             continuous: 连贯模式
             planning_mode: 传递给 Cartesian 兜底的规划模式
             preferred_orientation: 优先姿态 ([x,y,z,w] 四元数), 传给 IK 和 Cartesian 兜底
+            fixed_orientation: 固定姿态、沿工具Z轴接近
+            auto_grasp: 双相机普通水果抓取自动选择径向小倾角；GraspNet保留网络姿态
         """
+        if fixed_orientation:
+            from scipy.spatial.transform import Rotation
+            if preferred_orientation is None or self.ik_solver is None:
+                return False
+            q = preferred_orientation
+            original = ([q.x, q.y, q.z, q.w] if isinstance(q, Quaternion) else list(q))
+            seed = ([self.current_joints.get(f'joint{i}', 0.0) for i in range(1, 7)]
+                    if self.current_joints else None)
+            if seed is None:
+                return False
+            if approach_target_z is not None:
+                target = dict(pose_dict, z=float(approach_target_z))
+                plan = self._plan_tool_axis_approach(target, seed, original, auto_grasp)
+                if plan is None:
+                    self.get_logger().warning(f'{self._active_camera}未找到可达且无碰撞的工具轴接近路径，目标={target}')
+                    return False
+                candidate, orientation, joints, tilt = plan
+            else:
+                candidate, orientation, tilt = dict(pose_dict), original, None
+                joints = self._fixed_tcp_ik(candidate, orientation, seed)
+                if joints is None:
+                    return False
+            self.last_planning_strategy = 'pinocchio_fixed_tcp'
+            self.last_planning_profile_name = 'tool_z_approach'
+            if not self.move_arm_joint(joints, f'{desc} (工具轴预抓取点)', continuous=continuous):
+                return False
+            self.last_successful_orientation = orientation
+            self.last_approach_pose = candidate
+            rpy = Rotation.from_quat(orientation).as_euler('xyz', degrees=True)
+            self.get_logger().info(f'{self._active_camera}工具轴接近: 自动={auto_grasp} 倾角={tilt}deg '
+                                   f'RPY={np.round(rpy, 1).tolist()} J6={np.degrees(joints[5]):.1f}deg '
+                                   f'方向={getattr(self, "last_grasp_axis_mode", "固定姿态")} '
+                                   f'预抓取点={candidate}; 预留距离=0.06m 额外深入={self.last_grasp_extra_depth if approach_target_z is not None else 0.0}m')
+            return True
+
         if self.enable_ik and self.ik_solver is not None:
             # ── 路径 1: Pinocchio 内嵌 IK ──
             orientations = self._build_pick_orientations_multi(pose_dict)
@@ -1589,6 +1831,7 @@ class MoveItActionClient(Node):
         allow_position_only_fallback=True,
         planning_mode='normal',
     ):
+        self._check_calibrated_tool()
         self.get_logger().info(f"🚀 正在规划(笛卡尔位置) -> {desc}")
 
         orientations_to_try = []
@@ -1810,8 +2053,7 @@ class MoveItActionClient(Node):
         复用既有 _set_conveyor_collision_allowed: 通过 /get_planning_scene 合并当前 ACM,
         以真实碰撞体名称 (belt_deck/rail_ny/... 共 12 个) 作为矩阵键,
         只修改传送带相关条目并保留夹爪自碰撞对. 调用前需 sleep 0.15s 供 move_group 处理."""
-        self._set_conveyor_collision_allowed(allowed=True)
-        self.get_logger().info("🧩 动态抓取: 已禁用传送带碰撞体碰撞检测")
+        self.get_logger().info("标定模式保留传送带碰撞检查")
 
     def _dynamic_restore_conveyor_collision(self):
         """动态抓取: 恢复传送带碰撞检测 (回 P_HOVER 后调用)."""
@@ -1891,7 +2133,7 @@ class MoveItActionClient(Node):
         """通过 TF lookup 获取末端执行器坐标 (mm)."""
         try:
             t = self.tf_buffer.lookup_transform(
-                'base_link', 'link6', rclpy.time.Time(),
+                'base_link', 'tcp_link', rclpy.time.Time(),
                 timeout=rclpy.duration.Duration(seconds=0.5))
             return [
                 round(t.transform.translation.x * 1000.0, 1),
@@ -2030,87 +2272,14 @@ class MoveItActionClient(Node):
 
     def _compute_blue_block_pick_pose(self, pick, surface_z_m, block_height_m,
                                        block_width_m, min_grasp_z, gripper_pick_z_offset):
-        """📐 计算蓝方块顶面抓取位姿 (Task 2.1)。
-
-        下降深度策略: 夹爪夹物块顶面 (surface_z), 安全下限 MIN_GRASP_Z。
-        POSE_PICK.z = clamping_z + GRIPPER_PICK_Z_OFFSET (link6 原点到夹爪夹持点的 z 距离)。
-
-        注: 原设计用物块中位 (surface_z - height/2), 但对矮物块 (2-3cm) 中位太低,
-        夹爪手指底部会触碰台面。改为顶面抓取, 夹爪从顶面开始夹住物块上部。
-
-        Args:
-            pick: {'x','y','z'} 命令中的 pick 坐标 (base 系)
-            surface_z_m: 物块顶面高度 (base 系, 米)
-            block_height_m: 物块高度 (米)
-            block_width_m: 物块短边宽度 (米, 用于夹爪闭合目标)
-            min_grasp_z: 夹持点 z 安全下限 (米, 复用 MIN_GRASP_Z)
-            gripper_pick_z_offset: link6 原点到夹爪夹持点的 z 距离 (米, 复用 GRIPPER_PICK_Z_OFFSET)
-
-        Returns:
-            dict: {
-                'POSE_PICK': {'x','y','z'},         # link6 目标位姿 (base 系)
-                'POSE_PICK_UP': {'x','y','z'},      # 抬起 12cm
-                'clamping_z': float,                # 夹持点 z (米)
-                'gripper_close_width': float,       # 闭合目标宽度 (米) = 0.0 (完全闭合)
-            }
-        """
-        # 顶面抓取: clamping_z = surface_z (物块顶面高度, 基座坐标系)
-        # 夹爪从顶面开始夹住物块上部, 避免手指底部触碰台面
-        clamping_z = float(surface_z_m)
-        # 安全下限 (复用 MIN_GRASP_Z)
-        if clamping_z < min_grasp_z:
-            self.get_logger().info(
-                f"⚠️ 蓝方块 clamping_z={clamping_z:.3f}m 低于安全下限 "
-                f"{min_grasp_z}m, 钳位至 {min_grasp_z}m (防碰台面)")
-            clamping_z = min_grasp_z
-
-        # ═══════ 动态 Z 偏移: 手指底部始终比台面高 4mm (固定) ═══════
-        # FK 实测: gripper_link1/2 在 link6 下方 0.1358m (固定)
-        # 手指底部 z = link6_z - 0.1358
-        # 台面 z = surface_z - height
-        # 要求: 手指底部 z = 台面 z + 0.004 (安全间隙)
-        # → link6_z = (surface_z - height) + 0.004 + 0.1358 = 台面 z + 0.1398
-        # → GRIPPER_PICK_Z_OFFSET = link6_z - clamping_z = 0.1398 - height
-        FINGER_TO_LINK6 = 0.1358  # FK 实测: gripper_link1/2 原点到 link6 的距离
-        TABLE_SAFETY_M = 0.004    # 手指底部比台面高 4mm (用户反馈: 4cm物块"正好")
-        if block_height_m and block_height_m > 0:
-            dynamic_offset = (FINGER_TO_LINK6 + TABLE_SAFETY_M) - float(block_height_m)
-            gripper_pick_z_offset = max(dynamic_offset, 0.05)  # 下限 50mm, 防止 IK 无解
-            self.get_logger().info(
-                f"📐 动态Z偏移: height={block_height_m*1000:.0f}mm → "
-                f"offset={gripper_pick_z_offset*1000:.1f}mm "
-                f"(手指底部比台面高{TABLE_SAFETY_M*1000:.0f}mm)")
-
-        # POSE_PICK: link6 目标位姿 (夹持点 z + link6 偏置)
-        POSE_PICK = {
-            'x': float(pick['x']),
-            'y': float(pick['y']),
-            'z': clamping_z + gripper_pick_z_offset,
-        }
-        # POSE_PICK_UP: 抬起 12cm (脱离物块)
-        POSE_PICK_UP = POSE_PICK.copy()
-        POSE_PICK_UP['z'] += 0.12
-
-        # 夹爪闭合目标: 完全闭合 (0.0m)
-        # 检测宽度偏大 (HSV 掩膜扩张), 用 block_width-2mm 会导致夹爪未夹紧
-        # 完全闭合时夹爪碰到物块会自然停住 (机械限位), 确保夹紧
-        gripper_close_width = 0.0
-
-        self.get_logger().info(
-            f"📐 蓝方块抓取位姿: surface_z={surface_z_m:.3f}m "
-            f"height={block_height_m:.3f}m → clamping_z={clamping_z:.3f}m "
-            f"link6_z={POSE_PICK['z']:.3f}m offset={gripper_pick_z_offset*1000:.1f}mm "
-            f"pick=({POSE_PICK['x']:.3f},{POSE_PICK['y']:.3f}) "
-            f"finger_z≈{(POSE_PICK['z'] - FINGER_TO_LINK6)*1000:.1f}mm "
-            f"table_z≈{(surface_z_m - block_height_m)*1000:.1f}mm "
-            f"gripper_close={gripper_close_width*1000:.1f}mm")
-
-        return {
-            'POSE_PICK': POSE_PICK,
-            'POSE_PICK_UP': POSE_PICK_UP,
-            'clamping_z': clamping_z,
-            'gripper_close_width': gripper_close_width,
-        }
+        """指尖中点直接对准pick中的三维中心；表面高度只保留作诊断。"""
+        position=np.array([pick[k] for k in ('x','y','z')],dtype=float)
+        if not np.isfinite(position).all() or position[2]<min_grasp_z:
+            raise ValueError('蓝方块TCP中心无效或低于安全下限')
+        pose=dict(zip(('x','y','z'),position.tolist()))
+        lifted=dict(pose,z=pose['z']+.12)
+        self.get_logger().info(f"蓝方块TCP中心: {position.tolist()}；不添加工具长度/顶面偏置")
+        return dict(POSE_PICK=pose,POSE_PICK_UP=lifted,clamping_z=pose['z'],gripper_close_width=0.0)
 
     def _plan_blue_block_orientation(self, pose_pick, block_rotation_deg):
         """📐 分层姿态约束预规划 (Task 2.1)。
@@ -2317,12 +2486,12 @@ class MoveItActionClient(Node):
         # 蓝方块专用安全下限: 水果的 0.045m 对 1-5cm 物块过高
         # 桌面(传送带台面)在 z≈-0.015m, 蓝方块中位 z≈0.003m (3cm 物块)
         # 设 0.0m: 比桌面高 15mm, 夹爪手指有足够离地间隙
-        MIN_GRASP_Z = 0.0
+        MIN_GRASP_Z = 0.004
         # 蓝方块专用 Z 偏移: 二分法调试
         # 0.064 → 夹到了(width=54-69mm) 但 gripper_link1 z=-0.036 触碰台面
         # 0.1355 → gripper_link1 z=0.038 对齐顶面 但 空夹(width=0mm)
         # 0.10 → 折中测试 (gripper_link1 z≈-0.018, 接近台面但不深入)
-        GRIPPER_PICK_Z_OFFSET = 0.10
+        GRIPPER_PICK_Z_OFFSET = 0.0
         loop_count = config.get('loop_count', 0)
         MAX_BLUE_BLOCK_RETRIES = 2  # 蓝方块重试上限 (任务要求 2 次)
 
@@ -2432,9 +2601,10 @@ class MoveItActionClient(Node):
                                     block_width_m = det.get('block_width_m', block_width_m)
                                     block_height_m = det.get('block_height_m', block_height_m)
                                     # 重新计算动态偏移和 clamping_z
-                                    clamping_z = max(float(new_surf), MIN_GRASP_Z)
+                                    clamping_z = float(new_surf)
+                                    if clamping_z < MIN_GRASP_Z:raise ValueError("蓝方块TCP目标低于安全下限")
                                     new_height = float(block_height_m) if block_height_m else 0.04
-                                    dynamic_offset = max((0.1358 + 0.004) - new_height, 0.05)
+                                    dynamic_offset = 0.0
                                     POSE_PICK['z'] = clamping_z + dynamic_offset
                                     POSE_PICK_UP = POSE_PICK.copy()
                                     POSE_PICK_UP['z'] += 0.12
@@ -2756,19 +2926,10 @@ def main():
     GRIPPER_SETTLE_SEC = 0.05
     MAX_GRASP_RETRIES = 3       # 抓取失败最大重试次数
 
-    # ── 抓取点 z 补偿: link6 原点到夹爪夹持点的 z 距离 ──
-    # 实测 (2026-07-20): 青苹果 det_z=0.07, 正确夹住时 link6_z=0.136, offset=0.066
-    # 当前值 0.072 = 实测 0.066 + 微调 0.006 (用户从 0.066 上调)
-    # 原值 0.11 偏高 4.4cm 导致空夹; 若仍空夹→减小, 若碰桌面→增大, 步长 0.005
-    GRIPPER_PICK_Z_OFFSET = 0.064
-
-    # ── 夹爪夹持点 z 安全下限 (base 系, 米) ──
-    # 防止 D455 深度偏差导致夹爪夹持点低于台面 → 碰撞.
-    # 物体高度 4.6-7.1cm, 中心约 2.3-3.5cm; 夹爪手指延伸到夹持点下方,
-    # 设 0.045m 确保夹持点不低于台面上 4.5cm, 给手指留出离地间隙.
-    # (0.025→0.035→0.045 逐步上调; Z 补偿已在 YOLO 节点 z_offset_m 源头修正,
-    #  此值为最后安全兜底; 若仍碰→增大, 若空夹→减小, 步长 0.005)
-    MIN_GRASP_Z = 0.045
+    # 兼容既有蓝方块调用参数；实际TCP目标不再添加这个偏移。
+    GRIPPER_PICK_Z_OFFSET = 0.0
+    # conveyor.scene中传送带顶面z=0；低于安全下限时拒绝，不移动目标坐标。
+    MIN_GRASP_Z = 0.004  # conveyor.scene的belt_deck顶面z=0，保留4mm几何安全间隙
 
     # ── 动态抓取 (sort_dynamic) ──
     # P_HOVER: 抓取区上方悬停位 (base 系, link6 末端位置, 待用户标定后替换示例值)
@@ -2792,35 +2953,14 @@ def main():
     #   在当前架构下已多余: 第6段预测 t_arrive=t_launch+1.5+1.1, 而轨迹第6段实际在
     #   t_send+1.5(≈t_launch+1.7) 到达 → 抓取点比物体超前 1.1s×0.0214≈2.4cm → 戳到前侧.
     #   正确值应只覆盖"t_launch→轨迹真正开始执行"的延迟 (6段IK求解~0.2s+下发), 取 0.2.
-    DESC_LEAD_S = 0.2
+    DESC_LEAD_S = 0.0  # 移除历史经验时延；实际运动预测仍按时间戳计算
     # 动态抓取最低下降高度 (base 系, 米); 与静态 MIN_GRASP_Z 含义相同, 兜底防碰
-    DYNAMIC_MIN_GRASP_Z = 0.045
-    # 动态抓取抓取高度抬升量 (米): 叠加到 grasp_z, 用于"防碰台面"微调.
-    # 日志14: clamping_z 被钳位到 0.045 → grasp_z=0.109, 手指底部=0.109-0.1358=-27mm,
-    # 已插入台面. 此处 +5mm (0.005) 抬高抓取点, 手指底部≈-22mm→若仍碰再逐步调大.
-    # ⚠️ 标定旋钮: 仍碰台→增大, 空抓(离物体太远)→减小, 步长 0.002~0.005.
-    DYNAMIC_GRASP_Z_LIFT = 0.005
+    DYNAMIC_MIN_GRASP_Z = 0.004
     # 动态抓取可达性预检阈值 (base 系径向距离 R=√(x²+y²), 米).
     # 影子对齐/下降目标点若 R 超过该值, 判定为工作空间外 (Piper 悬停高度下满伸约 0.85m,
     # 保持直下手腕姿态有效可达约 0.55m), 直接回退, 避免白等 IK 时间预算 / MoveIt 全失败.
     # 也可顺带过滤视觉检测异常点 (如现场日志 x=0.867 远超实际皮带范围).
     DYNAMIC_R_MAX = 0.55
-
-    # ── eye-to-hand 标定系统性 X/Y 偏移补偿 (单位: 米) ──
-    # ⚠️ 已在 realsense_yolo_node.py 源头补偿 (x_offset_m/y_offset_m 参数),
-    # 此处设 0 避免双重修正. 如需额外微调, 改为非 0 值叠加补偿.
-    PICK_X_OFFSET = 0.0   # 已在 YOLO 节点源头补偿
-    PICK_Y_OFFSET = 0.0   # 已在 YOLO 节点源头补偿
-
-    # ── 按物体类别的 z 抓取修正 (单位: 米) ──
-    # 在 GRIPPER_PICK_Z_OFFSET 基础上叠加; 正值=抬高(防碰台面), 负值=降低(防空夹)
-    # 物体类别从 pick_name 提取 (如 "lemon (detected)" → "lemon")
-    # 未列出的类别用 0 (无修正); 步长 0.005, 调到刚好夹住为止
-    PER_OBJECT_Z_CORRECTION = {
-        'lemon': 0.025,        # 柠檬 height_m +20% 后深度估算偏高 → 下探过多碰台面, 抬高 2cm 补偿
-        'green apple': -0.015, # 青苹果三维 +10% 后深度估算偏低 → 夹取不够深, 多下降 1.5cm
-        'strawberry': 0.010,   # 草莓深度估算偏高 → 下探碰台面, 抬高 1cm 补偿
-    }
 
     def compute_gripper_targets(object_diameter_m):
         # target_pos is the signed opening magnitude in this action server.
@@ -2865,30 +3005,15 @@ def main():
             return False
         x_now, y_now, t_meas = xy
 
-        # ── 夹取高度 (link6 z): 与静态抓取一致, 用 D455 质心顶面 z 作夹持点 ──
-        # 教训 (日志2): 之前用 base_position_m.z (≈ 台面/物体底部, 0.03m) + 0.064,
-        # link6 仅 0.094, 而手指底部在 link6 下方 0.1358 (FK 实测) → 手指底部=-0.042m,
-        # 插入台面 4cm 戳台! 静态抓取正确做法: clamping_z = centroid_base_z (顶面≈0.08),
-        # link6 = 顶面+0.064 ≈ 0.144, 手指底部≈+8mm 台面上方, 安全.
+        # ── 夹取高度：使用检测输出的物体中心TCP高度 ──
         det = self._latest_detection
         obj = self._dynamic_find_object(det.get('objects', []), pick_id)
         surface_z = float(obj.get('base_position_m', {}).get('z', 0.0)) if obj else float(start_pose.get('z', 0.0))
-        centroid_z = det.get('centroid_base_z') if det else None
-        if centroid_z is not None:
-            clamping_z = float(centroid_z)
-        else:
-            # fallback: 表面 z + 按类别经验修正 (与静态 PER_OBJECT_Z_CORRECTION 一致)
-            obj_class = pick_id.split(' (')[0].strip().lower()
-            clamping_z = surface_z + PER_OBJECT_Z_CORRECTION.get(obj_class, 0.0)
+        clamping_z = surface_z
         if clamping_z < DYNAMIC_MIN_GRASP_Z:
-            self.get_logger().info(
-                f"⚠️ 动态 夹持点 z={clamping_z:.3f}m 低于安全下限 {DYNAMIC_MIN_GRASP_Z}m, "
-                f"钳位 (防碰台面)")
-            clamping_z = DYNAMIC_MIN_GRASP_Z
-        grasp_z = clamping_z + GRIPPER_PICK_Z_OFFSET + DYNAMIC_GRASP_Z_LIFT
-        self.get_logger().info(
-            f"📐 动态 夹持点 clamping_z={clamping_z:.3f}m (质心顶面) → "
-            f"link6_z={grasp_z:.3f}m, 手指底部≈{(grasp_z - 0.1358)*1000:.0f}mm (台面=0)")
+            self.get_logger().error('动态TCP目标低于台面安全下限')
+            return False
+        grasp_z = clamping_z
 
         # ── 2. 影子点计算 (合并进追踪轨迹起点, 不再单独慢速 move_arm_pose) ──
         # ── 重要架构重构 (全链路实时逐点追踪) ──
@@ -3142,11 +3267,23 @@ def main():
                 
             try:
                 data = json.loads(cmd_data_str)
+                assert_visual_target_fresh(data)  # 出队重新查戳，不能只在ROS接收时检查
             except Exception as e:
                 print(f"❌ 收到无法解析的指令: {cmd_data_str}, 错误: {e}")
                 continue
                 
-            if data.get("cmd") == "quit":
+            camera = data.get("camera_id", "d455")
+            if camera != getattr(node,'_active_camera','d455'):
+                node._latest_detection = None
+                node._pending_grasp_request = None
+                node._graspnet_event.clear()
+            node._active_camera = camera
+            node._visual_target_meta = data if data.get('vision_target') else {}
+
+            if data.get("cmd") == "select_camera":
+                continue
+
+            elif data.get("cmd") == "quit":
                 print("\n🛑 收到来自客户端的退出指令，准备复位...")
                 node.move_arm_joint(JOINT_STANDBY, "退出前回到待机位")
                 node.operate_gripper(GRIPPER_OPEN, "退出前张开夹爪")
@@ -3166,9 +3303,11 @@ def main():
                 status_msg.data = 'busy'
                 node.status_pub.publish(status_msg)
 
-                print("\n👁️ 收到客户端指令：回到待机位")
-                # 关节空间直接运动到待机位，不改变夹爪状态
-                node.move_arm_joint(JOINT_STANDBY, "回到待机位 (关节空间)")
+                print(f"\n👁️ 收到客户端指令：到 {node._active_camera} 相机观察位")
+                # 通过 MoveIt 到当前相机观察位，不改变夹爪状态
+                observation = runtime_config.load_runtime_config()['cameras'][node._active_camera].get('observation_joints',JOINT_STANDBY)
+                if len(observation)!=6 or not np.isfinite(observation).all():raise ValueError('观察位关节参数无效')
+                node.move_arm_joint(observation, "到当前相机观察位 (关节空间)")
                 
             elif data.get("cmd") == "set_gripper_force":
                 # 力矩调节 (GUI 滑块/预设按钮发送), 不需要 is_busy
@@ -3191,50 +3330,37 @@ def main():
                 node.last_planning_strategy = ''
                 cycle_strategies = []
                 cycle_profiles = []
+                node._grasp_geometry = data.get('grasp_geometry') if not use_graspnet else None
                 object_diameter_m = data.get("object_diameter_m", None)
+                geometry = node._grasp_geometry or {}
+                if geometry.get('elongation_ratio', 0) >= 1.5:
+                    object_diameter_m = geometry.get('width_m', object_diameter_m)
+                    node.get_logger().info(
+                        f"长条物体短轴夹持: 长约{geometry['length_m'] * 1000:.1f}mm "
+                        f"宽约{object_diameter_m * 1000:.1f}mm，沿短轴调整夹爪方向与开度")
+
                 dynamic_open, dynamic_close = compute_gripper_targets(object_diameter_m)
 
                 pick_pose = data["pick"]
                 pick_id = data.get("pick_name", "Pick")
+                obj_class = str(data.get("object_name") or pick_id).split(' (')[0].strip()
                 cycle_id = str(data.get("cycle_id", ""))
 
-                # 从 pick_name 提取物体类别 (如 "lemon (detected)" → "lemon"), 查 z 修正表
-                obj_class = pick_id.split(' (')[0].strip().lower()
-                z_correction = PER_OBJECT_Z_CORRECTION.get(obj_class, 0.0)
-                if z_correction:
-                    print(f"📏 物体='{obj_class}', z 修正={z_correction:+.3f}m (叠加在 GRIPPER_PICK_Z_OFFSET 上)")
-
                 place_id = "放置点"
-
                 POSE_PICK = pick_pose.copy()
-                # ── eye-to-hand 标定 X/Y 系统性偏差补偿 ──
-                # base_position_m 的 X/Y 偏大 2-3cm, 减去补偿量修正
-                POSE_PICK['x'] -= PICK_X_OFFSET
-                POSE_PICK['y'] -= PICK_Y_OFFSET
-                print(f"📐 X/Y 补偿: dx={-PICK_X_OFFSET:+.3f} dy={-PICK_Y_OFFSET:+.3f} "
-                      f"→ x={POSE_PICK['x']:.3f} y={POSE_PICK['y']:.3f}")
-                # link6 原点到夹爪夹持点的 z 距离 (GRIPPER_PICK_Z_OFFSET=0.064)
-                # 抓取高度优先用质心 z (D455 深度点云估算, eye-to-hand 配置下深度可靠);
-                # fallback: 表面 z + 按类别的经验 z 修正 (PER_OBJECT_Z_CORRECTION)
-                # 安全钳位: 夹爪夹持点 z 不得低于台面上方 MIN_GRASP_Z (防深度偏差碰台面)
-                centroid_z = None
-                latest_det = getattr(node, '_latest_detection', None)
-                if latest_det:
-                    centroid_z = latest_det.get('centroid_base_z')
-                if centroid_z is not None:
-                    print(f"📐 质心补偿: centroid_z={centroid_z:.3f}m (D455点云估算, 替代表面z+经验修正)")
-                    clamping_z = float(centroid_z)
-                else:
-                    clamping_z = POSE_PICK['z'] + z_correction
-                    if z_correction:
-                        print(f"📏 无质心数据, 用表面z+经验修正: {obj_class} z_corr={z_correction:+.3f}m")
-                if clamping_z < MIN_GRASP_Z:
-                    print(f"⚠️ 夹持点 z={clamping_z:.3f}m 低于安全下限 "
-                          f"{MIN_GRASP_Z}m, 钳位至 {MIN_GRASP_Z}m (防碰台面)")
-                    clamping_z = MIN_GRASP_Z
-                POSE_PICK['z'] = clamping_z + GRIPPER_PICK_Z_OFFSET
+                # 全部目标为指尖中点TCP；不添加旧XYZ、类别或夹爪长度补偿。
+                # base_link的Z=0不是实测台面；不以固定4mm阈值裁剪或抬高水果目标。
+                try:
+                    coordinates = {k: float(POSE_PICK[k]) for k in ('x', 'y', 'z')}
+                    if not all(math.isfinite(v) for v in coordinates.values()):
+                        raise ValueError('XYZ包含非有限数值')
+                except (KeyError, TypeError, ValueError) as exc:
+                    node.get_logger().error(f'本次抓取坐标无效，跳过并继续接收指令: {exc}')
+                    continue
+                POSE_PICK.update(coordinates)
                 POSE_PICK_UP = POSE_PICK.copy()
-                POSE_PICK_UP['z'] += 0.13  # 抬起脱离高 13cm
+                approach_height = 0.13 if node._active_camera == 'dabai' and use_graspnet else 0.06
+                POSE_PICK_UP['z'] += approach_height  # 普通水果抓取随后按工具轴重算预抓取XYZ
                 POSE_LIFT_SOFT = POSE_PICK.copy()
                 POSE_LIFT_SOFT['z'] += 0.035  # 先小幅抬起，降低惯性导致的滑脱
 
@@ -3272,35 +3398,28 @@ def main():
                             node.move_arm_joint(JOINT_STANDBY, "两阶段失败→回到待机位")
                             node.operate_gripper(GRIPPER_OPEN, "张开夹爪(两阶段失败)")
                             success = False; break
+                        node._grasp_geometry = refine_result.get('grasp_geometry')
                         # 用精定位坐标更新相关位姿
                         for p in (POSE_PICK, POSE_PICK_UP, POSE_LIFT_SOFT):
                             p['x'] = refine_result['x']
                             p['y'] = refine_result['y']
-                        # 两阶段质心补偿: 用二次检测的质心 z 重算抓取高度
-                        # (替代表面 z + 经验修正, 夹爪夹物体腰部/质心而非顶部)
-                        # ⚠️ 仅当 refine_centroid_z 为有效正值时才覆盖 z:
-                        # 验证位(verify_height=0.25m)相机离物体<0.4m, D455 近距离深度
-                        # 严重失真(系统性偏大), 导致 object_base_z=robot_z-depth 变负
-                        # (如 0.25-0.85=-0.60m). 负值被 MIN_GRASP_Z 钳位到 0.025m, 且
-                        # 遮/不遮 IR 都一样(质心z和表面z都负→都钳位), 表现为"双目无变化".
-                        # 修复: 非正值时保留待机位(远距离 D455 正常, z≈0.054m)算出的 z.
-                        refine_centroid_z = refine_result.get('centroid_z')
-                        if refine_centroid_z is not None and float(refine_centroid_z) > 0.0:
-                            rcz = max(float(refine_centroid_z), MIN_GRASP_Z)
-                            POSE_PICK['z'] = rcz + GRIPPER_PICK_Z_OFFSET
-                            POSE_PICK_UP['z'] = POSE_PICK['z'] + 0.13
-                            POSE_LIFT_SOFT['z'] = POSE_PICK['z'] + 0.035
-                            print(f"📐 两阶段质心补偿: centroid_z={refine_centroid_z:.3f}m "
-                                  f"→ link6_z={POSE_PICK['z']:.3f}m")
-                        else:
-                            print(f"⚠️ 两阶段质心z无效({refine_centroid_z})≤0, 保留待机位 z "
-                                  f"(D455 近距离失真), link6_z={POSE_PICK['z']:.3f}m")
+                        # 二次检测输出物体三维中心；不使用尺寸推断的质心或旧偏置。
+                        measured_z = float(refine_result['z'])
+                        if not math.isfinite(measured_z):
+                            node.get_logger().error('精定位TCP目标Z不是有限数值，本次抓取失败')
+                            success = False; break
+                        POSE_PICK['z'] = measured_z
+                        POSE_PICK_UP['z'] = measured_z + approach_height
+                        POSE_LIFT_SOFT['z'] = measured_z + 0.035
 
                     # ── GraspNet 主导抓取 (sort_graspnet) ──
-                    # 在待机位运行 GraspNet (D455 在 0.5-0.8m 深度可靠), 用 6DoF 位姿覆盖 POSE_PICK
+                    # 同帧RGB-D重估选中物体中心；网络提供姿态和宽度。
                     if use_graspnet:
                         # a. 确保待机位 + 张开夹爪 (避免夹爪遮挡, 保证深度数据新鲜)
-                        node.move_arm_joint(JOINT_STANDBY, "GraspNet: 回到待机位")
+                        if node._active_camera == 'd455':
+                            if not node.move_arm_joint(JOINT_STANDBY, "GraspNet: 回到待机位"):
+                                success = False;break
+                        # Dabai保持当前已看到物体的观察位，不先退到零点造成失去视野。
                         node.operate_gripper(dynamic_open, "GraspNet: 张开夹爪")
                         time.sleep(0.5)  # 等待待机位深度数据刷新
 
@@ -3320,9 +3439,15 @@ def main():
                         gn_w = float(result.get("width", 0.06))
                         for p in (POSE_PICK, POSE_PICK_UP, POSE_LIFT_SOFT):
                             p['x'] = float(gn_t[0]); p['y'] = float(gn_t[1])
-                        # GraspNet translation.z 是物体抓取点 base 系 z, 叠加 link6→夹持点偏置
-                        POSE_PICK['z'] = max(float(gn_t[2]), MIN_GRASP_Z) + GRIPPER_PICK_Z_OFFSET
-                        POSE_PICK_UP['z'] = POSE_PICK['z'] + 0.13
+                        # 服务返回的translation已经是物体中心TCP目标，不再加长度。
+                        if result.get('target_frame') != 'tcp_link' or result.get('reference_point') != 'midpoint_between_fingertips' or result.get('grasp_point_type') != 'estimated_centroid':
+                            node.get_logger().error('GraspNet返回未知目标参考点，本次抓取失败')
+                            success = False; break
+                        if not np.isfinite(np.asarray(gn_t, dtype=float)).all():
+                            node.get_logger().error('GraspNet TCP目标不是有限数值，本次抓取失败')
+                            success = False; break
+                        POSE_PICK['z'] = float(gn_t[2])
+                        POSE_PICK_UP['z'] = POSE_PICK['z'] + approach_height
                         POSE_LIFT_SOFT['z'] = POSE_PICK['z'] + 0.035
                         # GraspNet 6DoF 姿态 (机器人约定: R[:,0]=opening, R[:,1]=ortho, R[:,2]=approach)
                         graspnet_quat = [float(gn_q[0]), float(gn_q[1]), float(gn_q[2]), float(gn_q[3])]
@@ -3331,7 +3456,7 @@ def main():
                         node.get_logger().info(
                             f"🎯 GraspNet 位姿: t=({gn_t[0]:.3f},{gn_t[1]:.3f},{gn_t[2]:.3f}) "
                             f"score={result.get('score',0):.3f} width={gn_w:.3f} "
-                            f"(候选{result.get('n_candidates','?')}个) → link6_z={POSE_PICK['z']:.3f}m")
+                            f"(候选{result.get('n_candidates','?')}个) → TCP中心z={POSE_PICK['z']:.3f}m")
 
                     # 【第零步】 在前往途中或起点提前张开夹爪
                     node.operate_gripper(dynamic_open, "张开夹爪(准备抓取)")
@@ -3339,10 +3464,17 @@ def main():
                         success = False; break
 
                     # ── 姿态预规划: 在第一步(移动到抓取点上方)之前计算好目标姿态 ──
-                    # 确保第一步到位时 link6 已对齐, 第二步下降时无需旋转 → joint6 零旋转
+                    # 双相机普通水果抓取共用自动姿态；GraspNet保留网络姿态。
+                    tool_axis_grasp = (node._active_camera == 'd455'
+                                       or (node._active_camera == 'dabai' and not use_graspnet))
                     if use_graspnet:
                         active_ori = graspnet_quat
                         node.get_logger().info("📐 姿态预规划: GraspNet 6DoF 姿态")
+                    elif tool_axis_grasp:
+                        active_ori = ([float(POSE_PICK[k]) for k in ('qx', 'qy', 'qz', 'qw')]
+                                      if all(k in POSE_PICK for k in ('qx', 'qy', 'qz', 'qw'))
+                                      else node._build_pick_orientation(POSE_PICK)[0])
+                        node.get_logger().info(f'{node._active_camera}自动选择抓取姿态，GUI中的RPY不再用于普通抓取')
                     else:
                         pick_fallback_ori = node._build_pick_orientation(POSE_PICK)[0]
                         # 从视觉节点获取 PCA 短轴对齐朝向
@@ -3377,12 +3509,18 @@ def main():
                                 node.get_logger().info("📐 姿态预规划: 径向朝下姿态 (PCA 数据无效)")
 
                     # 【第一步】 抓取过渡(防止碰桌面) — IK 优先, 传入预规划姿态
-                    if two_stage:
+                    if two_stage and not tool_axis_grasp:
                         node.get_logger().info("⚡ 两阶段模式：已在物体正上方，直接下降抓取")
                     elif not node.move_arm_pose(POSE_PICK_UP, "抓取位上方过渡点",
                                                   continuous=True, planning_mode='normal',
-                                                  preferred_orientation=active_ori):
+                                                  preferred_orientation=active_ori,
+                                                  fixed_orientation=tool_axis_grasp,
+                                                  approach_target_z=POSE_PICK['z'] if tool_axis_grasp else None,
+                                                  auto_grasp=tool_axis_grasp and not use_graspnet):
                         success = False; break
+                    if tool_axis_grasp:
+                        active_ori = node.last_successful_orientation
+                        POSE_PICK_UP.update(node.last_approach_pose)
                     if node.last_planning_strategy:
                         cycle_strategies.append(node.last_planning_strategy)
                     if node.last_planning_profile_name:
@@ -3419,28 +3557,40 @@ def main():
                             # 获取视觉系统最新坐标
                             fresh_pose = node._get_fresh_detection(pick_id, timeout_s=2.0)
                             if fresh_pose:
-                                old_x, old_y = POSE_PICK['x'], POSE_PICK['y']
+                                old_x, old_y, old_z = (POSE_PICK[k] for k in ('x', 'y', 'z'))
+                                node._grasp_geometry = fresh_pose.get('grasp_geometry')
                                 for p in (POSE_PICK, POSE_PICK_UP, POSE_LIFT_SOFT):
                                     p['x'] = fresh_pose['x']
                                     p['y'] = fresh_pose['y']
+                                POSE_PICK['z'] = fresh_pose['z']
+                                POSE_PICK_UP['z'] = fresh_pose['z'] + approach_height
+                                POSE_LIFT_SOFT['z'] = fresh_pose['z'] + 0.035
                                 node.get_logger().info(
                                     f"📡 重试: 观察位坐标 "
-                                    f"({old_x:.3f},{old_y:.3f}) → "
-                                    f"({fresh_pose['x']:.3f},{fresh_pose['y']:.3f})")
+                                    f"({old_x:.3f},{old_y:.3f},{old_z:.3f}) → "
+                                    f"({fresh_pose['x']:.3f},{fresh_pose['y']:.3f},{fresh_pose['z']:.3f})")
                             else:
                                 node.get_logger().warn(
                                     "⚠️ 重试: 未获取到新坐标, 使用原始坐标继续")
                             # 重新计算姿态 (坐标变了, 径向朝下方向也变了)
-                            pick_fallback_ori = node._build_pick_orientation(POSE_PICK)[0]
-                            active_ori = getattr(node, 'last_successful_orientation', pick_fallback_ori)
-                            node.get_logger().info("📐 重试: 姿态已按新坐标重新计算")
+                            if not tool_axis_grasp:
+                                pick_fallback_ori = node._build_pick_orientation(POSE_PICK)[0]
+                                active_ori = getattr(node, 'last_successful_orientation', pick_fallback_ori)
+                            node.get_logger().info(f'{node._active_camera}重试: 重新选择工具轴接近姿态' if tool_axis_grasp
+                                                   else '📐 重试: 姿态已按新坐标重新计算')
                             # 从观察位移到新 POSE_PICK_UP (重走第一步)
                             node.get_logger().info("📡 重试: 移动到新坐标上方...")
                             if not node.move_arm_pose(POSE_PICK_UP, f"重试{retry+1}-上方过渡点",
                                                       continuous=False, planning_mode='normal',
-                                                      preferred_orientation=active_ori):
+                                                      preferred_orientation=active_ori,
+                                                      fixed_orientation=tool_axis_grasp,
+                                                      approach_target_z=POSE_PICK['z'] if tool_axis_grasp else None,
+                                                      auto_grasp=tool_axis_grasp and not use_graspnet):
                                 node.get_logger().warn("⚠️ 重试: 上方过渡点移动失败, 跳过本次重试")
                                 continue
+                            if tool_axis_grasp:
+                                active_ori = node.last_successful_orientation
+                                POSE_PICK_UP.update(node.last_approach_pose)
                             # 记录新过渡点关节角 + 禁用碰撞
                             pick_up_joints = (node.current_joints.copy()
                                               if node.current_joints else None)
@@ -3449,10 +3599,18 @@ def main():
                             if node._check_emergency(f"retry{retry+1}-上方过渡点"):
                                 success = False; break
 
-                        # 【第二步】 下降抓取 — IK 关节空间优先 (固定 joint6), 笛卡尔兜底
-                        # active_ori 已在姿态预规划中计算, IK 直接求解保证 joint6 不旋转
+                        # 【第二步】双相机普通水果抓取共用固定姿态、工具轴接近。
                         descent_success = False
-                        if node.enable_ik and node.ik_solver is not None:
+                        if tool_axis_grasp:
+                            node.get_logger().info(f'{node._active_camera}沿夹爪工具+Z轴直线接近，保持抓取姿态')
+                            descent_success = node._execute_fixed_tcp_descent(
+                                POSE_PICK, active_ori, f'{node._active_camera}工具轴接近,retry{retry+1}',
+                                extra_depth=getattr(node, 'last_grasp_extra_depth', 0.0),
+                                per_point_dur=0.12 if use_graspnet else 0.05)
+                            if descent_success:
+                                cycle_strategies.append('fixed_tcp_waypoints')
+                                cycle_profiles.append('pinocchio_full_pose')
+                        if not tool_axis_grasp and node.enable_ik and node.ik_solver is not None:
                             pick_orientations = [active_ori] + node._build_pick_orientations_multi(POSE_PICK)
                             ik_ok, ik_joints = node.move_arm_via_ik(POSE_PICK, pick_orientations, "下降抓取 (IK关节空间)", continuous=True)
                             if ik_ok:
@@ -3461,14 +3619,14 @@ def main():
                                 cycle_profiles.append('ik_solution')
                                 node.get_logger().info("✅ IK 关节空间下降完成 (joint6 固定)")
 
-                        if not descent_success:
-                            # IK 失败, 回退到笛卡尔路径 (可能有 joint6 旋转)
-                            node.get_logger().info("🟡 IK失败, 回退到笛卡尔直线插补...")
+                        if not descent_success and not tool_axis_grasp:
+                            # 未接入工具轴流程的GraspNet分支保留原有笛卡尔兜底。
+                            node.get_logger().info('🟡 IK失败, 回退到笛卡尔直线插补...')
                             pose_pick_msg = node._create_pose(POSE_PICK, active_ori)
                             if node.execute_cartesian_path([pose_pick_msg], f"下降抓取 (直线插补,retry{retry+1})", fraction_threshold=0.50):
                                 descent_success = True
 
-                        if not descent_success:
+                        if not descent_success and not tool_axis_grasp:
                             node.get_logger().info("🟡 直线插补+IK均受限！启动多路并发退避规划...")
                             if not node.move_arm_cartesian(POSE_PICK, f"下降抓取 (退避规划,retry{retry+1})", continuous=True, preferred_orientation=active_ori, allow_position_only_fallback=True, planning_mode='descend'):
                                 continue  # 下降失败跳过本次重试
@@ -3476,6 +3634,10 @@ def main():
                                 cycle_strategies.append(node.last_planning_strategy)
                             if node.last_planning_profile_name:
                                 cycle_profiles.append(node.last_planning_profile_name)
+
+                        if not descent_success:
+                            success = False
+                            break
 
                         if node._check_emergency(f"step2-下降抓取,retry{retry+1}"):
                             success = False; break

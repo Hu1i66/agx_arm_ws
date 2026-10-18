@@ -1,0 +1,36 @@
+# D455 RGB 相机内参标定结果
+# 标定工具: ROS2 camera_calibration (cameracalibrator)
+# 标定板: 12x9 棋盘格, 方格边长 20mm (内角点 11x8)
+# 图像分辨率: 640x480
+
+image_width: 640
+image_height: 480
+camera_name: d455_rgb
+
+# 相机内参矩阵 (3x3)
+camera_matrix:
+  rows: 3
+  cols: 3
+  data:
+    - 388.771262   # fx
+    - 0.0
+    - 326.175632   # cx
+    - 0.0
+    - 388.892913   # fy
+    - 238.690157   # cy
+    - 0.0
+    - 0.0
+    - 1.0
+
+distortion_model: plumb_bob
+
+# 畸变系数: [k1, k2, p1, p2, k3]
+distortion_coefficients:
+  rows: 1
+  cols: 5
+  data:
+    - -0.045132   # k1
+    - 0.043254    # k2
+    - 0.000272    # p1
+    - 0.000643    # p2
+    - 0.0         # k3

@@ -1,0 +1,47 @@
+{
+  "kind": "tcp_verification_acceptance",
+  "schema_version": 1,
+  "accepted_by": "user_explicit_conversation_confirmation",
+  "accepted_on": "2026-10-17",
+  "scope": "verification_only",
+  "applied": false,
+  "candidate_file": "/home/lxf/agx_arm_ws/data/calibration/tcp/2026-10-16_22-42-05_c3296802/candidate.json",
+  "candidate_sha256": "3486699467a7bbcc61129f95a42a0bb7db6bc8e68dcce6b2faf81b1043b56e83",
+  "input_file": "/home/lxf/agx_arm_ws/data/calibration/tcp/2026-10-16_22-42-05_c3296802/solve_input_680d217bd0414c34855999abb4020719.json",
+  "input_sha256": "a9f7ad04d70a2742567cf3a383bc9c6b7fd2e37c9fb00ae14bb00b6be609b3a2",
+  "source_quality_status": "failed",
+  "qualified": false,
+  "quality_waiver": {
+    "scope": "verification_only",
+    "reason": "用户2026-10-17明确接受本次粗标定，仅限TCP定点姿态验证，不作为生产合格标定",
+    "source_quality_status": "failed",
+    "original_gates": {
+      "min_samples": 6,
+      "max_rms_mm": 2.0,
+      "max_residual_mm": 5.0,
+      "max_condition": 100.0
+    },
+    "failed_checks": [
+      "max_residual_mm",
+      "rms_mm"
+    ],
+    "production_qualified": false
+  },
+  "tcp_offset": [
+    0.014575441592672675,
+    -0.005306490263008168,
+    0.1457583484569631,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "original_metrics": {
+    "sample_count": 10,
+    "rank": 6,
+    "condition": 4.199976779490851,
+    "rms_mm": 5.358227754611016,
+    "max_residual_mm": 8.718494213648277
+  },
+  "raw_frames_sha256": "4705ec56fa524b59a2b9b1f4c5dc94086f60f0c7b54cb61fe7c8703938225e7e",
+  "explanation": "秩和条件数可用，固定点一致性残差超门；不能仅凭残差定位对点误差、工具松动或运动学误差。全部10组参与，不删样本，不放宽质量门。"
+}

@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>tcp_trajectory_tools</name><version>0.1.0</version>
+  <description>Offline MoveIt time parameterization for TCP verification.</description>
+  <maintainer email="developers@example.invalid">Piper developers</maintainer><license>BSD-3-Clause</license>
+  <buildtool_depend>ament_cmake</buildtool_depend><depend>moveit_core</depend><depend>nlohmann_json</depend>
+  <export><build_type>ament_cmake</build_type></export>
+</package>

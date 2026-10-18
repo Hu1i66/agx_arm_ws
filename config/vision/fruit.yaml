@@ -1,0 +1,27 @@
+# 水果检测 ROS 参数（object_detector）
+# 冻结基线（计划 3.4）：d455 默认开启，dabai 默认关闭，GUI 内嵌模式，深度配对延迟开启。
+# 本文件不重复存外参数值——外参统一读 config/calibration/d455_eye_to_hand.json。
+object_detector:
+  ros__parameters:
+    # ── 相机开关与模式 ──
+    d455.enabled: true
+    dabai.enabled: false
+    show_gui_window: false
+    depth_pair_delay: true
+    # ── D455 偏差补偿（当前生产默认值）──
+    d455.use_depth_camera: true
+    d455.x_offset_m: 0.0
+    d455.y_offset_m: 0.0
+    d455.z_offset_m: 0.0
+    d455.depth_offset_m: 0.0
+    # ── 通用滤波与周期（当前默认值）──
+    filter_alpha: 0.25
+    filter_match_dist_px: 80.0
+    filter_max_misses: 10
+    detect_period_s: 0.1
+    base_frame_id: base_link
+
+    # Dabai单次静态抓取：同一水果的重叠框去重，D455沿用原检测参数。
+    dabai.yolo_conf: 0.35
+    dabai.yolo_iou: 0.4
+    dabai.yolo_agnostic_nms: true

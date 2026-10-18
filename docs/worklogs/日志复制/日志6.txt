@@ -1,0 +1,104 @@
+lxf@lxf-ubantu:~/agx_arm_ws$ cd /home/lxf/agx_arm_ws && source /opt/ros/humble/setup.bash && source install/setup.bash && python3 auto_sorting_action.py
+[INFO] [1787497237.861068419] [piper_moveit_action_client]: ✅ 传送带方向标定已加载: d̂=(0.0546,0.9985) angle=1.516rad
+✅ Pinocchio model loaded: 6 DOF, EE frame: link6
+[INFO] [1787497237.911129629] [piper_moveit_action_client]: ✅ Embedded Pinocchio IK solver ready
+[INFO] [1787497237.912278007] [piper_moveit_action_client]: 等待 MoveGroup Action 服务器...
+[INFO] [1787497237.912572077] [piper_moveit_action_client]: ✅ 已连接到 MoveIt2 规划器！
+✅ 内嵌 Pinocchio IK 已启用 - 优先使用 IK 求解, 失败回退 MoveIt2
+
+
+======== 🔵 自动分拣服务端已启动 (等待 GUI 客户端指令) ========
+
+[INFO] [1787497237.912751913] [piper_moveit_action_client]: 🚀 正在规划(关节空间) -> 初始回到待机位 (Standby)
+[INFO] [1787497237.913898468] [piper_moveit_action_client]: 发送规划目标...
+[INFO] [1787497237.914988376] [piper_moveit_action_client]: ⭕ 目标被接受，正在执行...
+[INFO] [1787497238.102256701] [piper_moveit_action_client]: ✅ 动作规划并执行成功完成！
+[INFO] [1787497238.252767130] [piper_moveit_action_client]: ✊ 正在执行夹爪动作 -> 初始化张开夹爪(待机) (target: 0.09)
+[INFO] [1787497239.303997812] [piper_moveit_action_client]: ⭕ 夹爪动作执行中（gripper_joint1/2）...
+[INFO] [1787497257.860622345] [piper_moveit_action_client]: 📐 动态 夹持点 clamping_z=0.166m (质心顶面) → link6_z=0.230m, 手指底部≈94mm (台面=0)
+[WARN] [1787497257.860891489] [piper_moveit_action_client]: ⚠️ 动态: 影子点 R=√(sx²+sy²)=0.775 > 0.55m, 超出工作空间, 回退静态
+[WARN] [1787497257.861094138] [piper_moveit_action_client]: ⚠️ 动态抓取失败, 回退静态抓取流程
+[INFO] [1787497257.861259507] [piper_moveit_action_client]: 🚀 正在规划(关节空间) -> 动态失败-回待机位
+[INFO] [1787497257.861988140] [piper_moveit_action_client]: 发送规划目标...
+[INFO] [1787497257.863301006] [piper_moveit_action_client]: ⭕ 目标被接受，正在执行...
+[INFO] [1787497258.051969057] [piper_moveit_action_client]: ✅ 动作规划并执行成功完成！
+[INFO] [1787497258.202498762] [piper_moveit_action_client]: ✊ 正在执行夹爪动作 -> 动态失败-张开夹爪 (target: 0.09)
+[INFO] [1787497259.253794838] [piper_moveit_action_client]: ⭕ 夹爪动作执行中（gripper_joint1/2）...
+[INFO] [1787497264.660762027] [piper_moveit_action_client]: ⚠️ 动态 夹持点 z=0.030m 低于安全下限 0.045m, 钳位 (防碰台面)
+[INFO] [1787497264.660983701] [piper_moveit_action_client]: 📐 动态 夹持点 clamping_z=0.045m (质心顶面) → link6_z=0.109m, 手指底部≈-27mm (台面=0)
+[INFO] [1787497264.661168246] [piper_moveit_action_client]: 🎯 动态: 影子点=(0.302,-0.253,z=0.320) 速度=0.0278 m/s (作为追踪轨迹起点, 不再单独对齐)
+[INFO] [1787497264.813423266] [piper_moveit_action_client]: 🛡️ 已禁用碰撞检测: ['belt_deck', 'rail_py', 'rail_ny', 'leg_fr', 'leg_fl', 'leg_br', 'leg_bl', 'platform', 'control_box', 'conveyor_structure', 'conveyor_belt_col', 'conveyor_control_box'] (ACM 条目数: 22, 保留原有 10 条)
+[INFO] [1787497264.813731733] [piper_moveit_action_client]: 🧩 动态抓取: 已禁用传送带碰撞体碰撞检测
+[WARN] [1787497266.000349674] [piper_moveit_action_client]: ⚠️ 动态: 下降航点#1 (0.297,-0.277,z=0.297) IK 无解, 回退静态
+[INFO] [1787497266.152801851] [piper_moveit_action_client]: 🛡️ 已恢复碰撞检测: ['belt_deck', 'rail_py', 'rail_ny', 'leg_fr', 'leg_fl', 'leg_br', 'leg_bl', 'platform', 'control_box', 'conveyor_structure', 'conveyor_belt_col', 'conveyor_control_box'] (ACM 条目数: 22, 保留原有 22 条)
+[INFO] [1787497266.153021683] [piper_moveit_action_client]: 🧩 动态抓取: 已恢复传送带碰撞检测
+[WARN] [1787497266.153245952] [piper_moveit_action_client]: ⚠️ 动态抓取失败, 回退静态抓取流程
+[INFO] [1787497266.153407284] [piper_moveit_action_client]: 🚀 正在规划(关节空间) -> 动态失败-回待机位
+[INFO] [1787497266.154018918] [piper_moveit_action_client]: 发送规划目标...
+[INFO] [1787497266.155286639] [piper_moveit_action_client]: ⭕ 目标被接受，正在执行...
+[INFO] [1787497266.342330096] [piper_moveit_action_client]: ✅ 动作规划并执行成功完成！
+[INFO] [1787497266.492827147] [piper_moveit_action_client]: ✊ 正在执行夹爪动作 -> 动态失败-张开夹爪 (target: 0.09)
+[INFO] [1787497267.544294756] [piper_moveit_action_client]: ⭕ 夹爪动作执行中（gripper_joint1/2）...
+[INFO] [1787497268.061806791] [piper_moveit_action_client]: ⚠️ 动态 夹持点 z=0.030m 低于安全下限 0.045m, 钳位 (防碰台面)
+[INFO] [1787497268.062011184] [piper_moveit_action_client]: 📐 动态 夹持点 clamping_z=0.045m (质心顶面) → link6_z=0.109m, 手指底部≈-27mm (台面=0)
+[INFO] [1787497268.062193905] [piper_moveit_action_client]: 🎯 动态: 影子点=(0.296,-0.171,z=0.320) 速度=0.0282 m/s (作为追踪轨迹起点, 不再单独对齐)
+[INFO] [1787497268.214040249] [piper_moveit_action_client]: 🛡️ 已禁用碰撞检测: ['belt_deck', 'rail_py', 'rail_ny', 'leg_fr', 'leg_fl', 'leg_br', 'leg_bl', 'platform', 'control_box', 'conveyor_structure', 'conveyor_belt_col', 'conveyor_control_box'] (ACM 条目数: 22, 保留原有 10 条)
+[INFO] [1787497268.214361550] [piper_moveit_action_client]: 🧩 动态抓取: 已禁用传送带碰撞体碰撞检测
+[INFO] [1787497269.864497671] [piper_moveit_action_client]: 🎯 动态: 关节空间连续下降 10 航点 (z=0.320→0.109), 拦截点=(0.293,-0.159) 每段=0.15s, 总量=1.50s
+[INFO] [1787497269.865176931] [piper_moveit_action_client]: 🚀 连续关节轨迹一次下发 -> 动态-关节空间连续下降 (10航点→28插入平滑点, 总量=1.50s)
+[INFO] [1787497271.416225461] [piper_moveit_action_client]: ✅ 连续关节轨迹执行完毕: 动态-关节空间连续下降
+[INFO] [1787497271.416459098] [piper_moveit_action_client]: 🏃 空跑模式: 下降完成, 跳过夹取, 直接回待机位
+[INFO] [1787497271.416620079] [piper_moveit_action_client]: 🚀 正在规划(关节空间) -> 动态-空跑回待机位
+[INFO] [1787497271.417169246] [piper_moveit_action_client]: 发送规划目标...
+[INFO] [1787497271.418031038] [piper_moveit_action_client]: ⭕ 目标被接受，正在执行...
+[ERROR] [1787497271.447261280] [piper_moveit_action_client]: ⚠️ 执行失败，错误码: -4
+[INFO] [1787497271.599069671] [piper_moveit_action_client]: 🛡️ 已恢复碰撞检测: ['belt_deck', 'rail_py', 'rail_ny', 'leg_fr', 'leg_fl', 'leg_br', 'leg_bl', 'platform', 'control_box', 'conveyor_structure', 'conveyor_belt_col', 'conveyor_control_box'] (ACM 条目数: 22, 保留原有 22 条)
+[INFO] [1787497271.599298929] [piper_moveit_action_client]: 🧩 动态抓取: 已恢复传送带碰撞检测
+[INFO] [1787497271.599458969] [piper_moveit_action_client]: ✅ 空跑完成: 下降路径验证通过
+[INFO] [1787497272.061198341] [piper_moveit_action_client]: ⚠️ 动态 夹持点 z=0.009m 低于安全下限 0.045m, 钳位 (防碰台面)
+[INFO] [1787497272.061564546] [piper_moveit_action_client]: 📐 动态 夹持点 clamping_z=0.045m (质心顶面) → link6_z=0.109m, 手指底部≈-27mm (台面=0)
+[INFO] [1787497272.061825855] [piper_moveit_action_client]: 🎯 动态: 影子点=(0.291,0.032,z=0.320) 速度=0.0280 m/s (作为追踪轨迹起点, 不再单独对齐)
+[INFO] [1787497272.214477222] [piper_moveit_action_client]: 🛡️ 已禁用碰撞检测: ['belt_deck', 'rail_py', 'rail_ny', 'leg_fr', 'leg_fl', 'leg_br', 'leg_bl', 'platform', 'control_box', 'conveyor_structure', 'conveyor_belt_col', 'conveyor_control_box'] (ACM 条目数: 22, 保留原有 10 条)
+[INFO] [1787497272.214699438] [piper_moveit_action_client]: 🧩 动态抓取: 已禁用传送带碰撞体碰撞检测
+[INFO] [1787497273.073818512] [piper_moveit_action_client]: 🎯 动态: 关节空间连续下降 10 航点 (z=0.320→0.109), 拦截点=(0.288,0.046) 每段=0.15s, 总量=1.50s
+[INFO] [1787497273.074518271] [piper_moveit_action_client]: 🚀 连续关节轨迹一次下发 -> 动态-关节空间连续下降 (10航点→28插入平滑点, 总量=1.50s)
+[INFO] [1787497274.625597623] [piper_moveit_action_client]: ✅ 连续关节轨迹执行完毕: 动态-关节空间连续下降
+[INFO] [1787497274.625854233] [piper_moveit_action_client]: 🏃 空跑模式: 下降完成, 跳过夹取, 直接回待机位
+[INFO] [1787497274.626037646] [piper_moveit_action_client]: 🚀 正在规划(关节空间) -> 动态-空跑回待机位
+[INFO] [1787497274.626657576] [piper_moveit_action_client]: 发送规划目标...
+[INFO] [1787497274.627437003] [piper_moveit_action_client]: ⭕ 目标被接受，正在执行...
+[ERROR] [1787497274.652778051] [piper_moveit_action_client]: ⚠️ 执行失败，错误码: -2
+[INFO] [1787497274.804758732] [piper_moveit_action_client]: 🛡️ 已恢复碰撞检测: ['belt_deck', 'rail_py', 'rail_ny', 'leg_fr', 'leg_fl', 'leg_br', 'leg_bl', 'platform', 'control_box', 'conveyor_structure', 'conveyor_belt_col', 'conveyor_control_box'] (ACM 条目数: 22, 保留原有 22 条)
+[INFO] [1787497274.805042754] [piper_moveit_action_client]: 🧩 动态抓取: 已恢复传送带碰撞检测
+[INFO] [1787497274.805201861] [piper_moveit_action_client]: ✅ 空跑完成: 下降路径验证通过
+[INFO] [1787497275.110630379] [piper_moveit_action_client]: ⚠️ 动态 夹持点 z=0.001m 低于安全下限 0.045m, 钳位 (防碰台面)
+[INFO] [1787497275.110836284] [piper_moveit_action_client]: 📐 动态 夹持点 clamping_z=0.045m (质心顶面) → link6_z=0.109m, 手指底部≈-27mm (台面=0)
+[INFO] [1787497275.111016040] [piper_moveit_action_client]: 🎯 动态: 影子点=(0.188,0.205,z=0.320) 速度=0.0280 m/s (作为追踪轨迹起点, 不再单独对齐)
+[INFO] [1787497275.262549044] [piper_moveit_action_client]: 🛡️ 已禁用碰撞检测: ['belt_deck', 'rail_py', 'rail_ny', 'leg_fr', 'leg_fl', 'leg_br', 'leg_bl', 'platform', 'control_box', 'conveyor_structure', 'conveyor_belt_col', 'conveyor_control_box'] (ACM 条目数: 22, 保留原有 10 条)
+[INFO] [1787497275.262778673] [piper_moveit_action_client]: 🧩 动态抓取: 已禁用传送带碰撞体碰撞检测
+[INFO] [1787497277.996038312] [piper_moveit_action_client]: 🎯 动态: 关节空间连续下降 10 航点 (z=0.320→0.109), 拦截点=(0.186,0.220) 每段=0.15s, 总量=1.50s
+[INFO] [1787497277.996769479] [piper_moveit_action_client]: 🚀 连续关节轨迹一次下发 -> 动态-关节空间连续下降 (10航点→28插入平滑点, 总量=1.50s)
+[INFO] [1787497279.547861050] [piper_moveit_action_client]: ✅ 连续关节轨迹执行完毕: 动态-关节空间连续下降
+[INFO] [1787497279.548106129] [piper_moveit_action_client]: 🏃 空跑模式: 下降完成, 跳过夹取, 直接回待机位
+[INFO] [1787497279.548292828] [piper_moveit_action_client]: 🚀 正在规划(关节空间) -> 动态-空跑回待机位
+[INFO] [1787497279.548886038] [piper_moveit_action_client]: 发送规划目标...
+[INFO] [1787497279.550882321] [piper_moveit_action_client]: ⭕ 目标被接受，正在执行...
+[ERROR] [1787497279.577189986] [piper_moveit_action_client]: ⚠️ 执行失败，错误码: -4
+[INFO] [1787497279.729140048] [piper_moveit_action_client]: 🛡️ 已恢复碰撞检测: ['belt_deck', 'rail_py', 'rail_ny', 'leg_fr', 'leg_fl', 'leg_br', 'leg_bl', 'platform', 'control_box', 'conveyor_structure', 'conveyor_belt_col', 'conveyor_control_box'] (ACM 条目数: 22, 保留原有 22 条)
+[INFO] [1787497279.729433117] [piper_moveit_action_client]: 🧩 动态抓取: 已恢复传送带碰撞检测
+[INFO] [1787497279.729595530] [piper_moveit_action_client]: ✅ 空跑完成: 下降路径验证通过
+[INFO] [1787497280.110699343] [piper_moveit_action_client]: ⚠️ 动态 夹持点 z=-0.001m 低于安全下限 0.045m, 钳位 (防碰台面)
+[INFO] [1787497280.110992832] [piper_moveit_action_client]: 📐 动态 夹持点 clamping_z=0.045m (质心顶面) → link6_z=0.109m, 手指底部≈-27mm (台面=0)
+[INFO] [1787497280.111208305] [piper_moveit_action_client]: 🎯 动态: 影子点=(0.194,0.339,z=0.320) 速度=0.0282 m/s (作为追踪轨迹起点, 不再单独对齐)
+[INFO] [1787497280.263004389] [piper_moveit_action_client]: 🛡️ 已禁用碰撞检测: ['belt_deck', 'rail_py', 'rail_ny', 'leg_fr', 'leg_fl', 'leg_br', 'leg_bl', 'platform', 'control_box', 'conveyor_structure', 'conveyor_belt_col', 'conveyor_control_box'] (ACM 条目数: 22, 保留原有 10 条)
+[INFO] [1787497280.263286847] [piper_moveit_action_client]: 🧩 动态抓取: 已禁用传送带碰撞体碰撞检测
+[WARN] [1787497280.863043800] [piper_moveit_action_client]: ⚠️ 动态: 下降航点#0 (0.197,0.320,z=0.320) IK 无解, 回退静态
+[INFO] [1787497281.015682700] [piper_moveit_action_client]: 🛡️ 已恢复碰撞检测: ['belt_deck', 'rail_py', 'rail_ny', 'leg_fr', 'leg_fl', 'leg_br', 'leg_bl', 'platform', 'control_box', 'conveyor_structure', 'conveyor_belt_col', 'conveyor_control_box'] (ACM 条目数: 22, 保留原有 22 条)
+[INFO] [1787497281.015961592] [piper_moveit_action_client]: 🧩 动态抓取: 已恢复传送带碰撞检测
+[WARN] [1787497281.016192614] [piper_moveit_action_client]: ⚠️ 动态抓取失败, 回退静态抓取流程
+[INFO] [1787497281.016366219] [piper_moveit_action_client]: 🚀 正在规划(关节空间) -> 动态失败-回待机位
+[INFO] [1787497281.016992290] [piper_moveit_action_client]: 发送规划目标...
+[INFO] [1787497281.018387078] [piper_moveit_action_client]: ⭕ 目标被接受，正在执行...
+[ERROR] [1787497281.048653538] [piper_moveit_action_client]: ⚠️ 执行失败，错误码: -2
+[INFO] [1787497281.048882135] [piper_moveit_action_client]: ✊ 正在执行夹爪动作 -> 动态失败-张开夹爪 (target: 0.09)
+[INFO] [1787497282.099909313] [piper_moveit_action_client]: ⭕ 夹爪动作执行中（gripper_joint1/2）...

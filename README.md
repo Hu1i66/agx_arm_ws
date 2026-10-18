@@ -1,1088 +1,326 @@
-# AgileX 机械臂 ROS2 驱动
+# 智能仓储分拣系统 — 主工作空间运行指南
 
-[English](./README_EN.md)
+## 当前稳定版：双相机静止抓取（2026-10-18）
 
-|ROS |STATE|
-|---|---|
-|![humble](https://img.shields.io/badge/ros-humble-blue.svg)|![Pass](https://img.shields.io/badge/Pass-blue.svg)|
-|![jazzy](https://img.shields.io/badge/ros-jazzy-blue.svg)|![Pass](https://img.shields.io/badge/Pass-blue.svg)|
+D455与Dabai的普通水果抓取已由用户现场确认可用。支持圆形和长条物体：自动选择竖直或小倾角，长条物体沿短轴夹持，沿工具+Z接近，无需手调GUI的RPY。优先额外深入2cm，受限时按20→15→10→5→0mm尝试；接近每航点0.05s，重试同步更新XYZ。最终深入量以动作日志为准。
 
-## 概述
+日常运行目录为`/home/lxf/agx_arm_ws`。CAN激活和`activate_robot.py`仍按下方T0顺序执行；T1启动会应用当前TCP，不能用在线参数修改代替重启。D455采用2026-10-18 14:25:07手眼结果与本次39帧内参；Dabai采用2026-10-17 22:53:28手眼结果。当前TCP为15组固定点标定的两指尖中点。
 
-本驱动包为 AgileX 系列机械臂（Piper、Nero 等）提供完整的 ROS2 接口支持。
+完整启动、相机切换、观察位及抓取步骤见[双相机抓取教程](docs/dual_camera_grasping.md)；版本范围、外部依赖和Git恢复方式见[稳定版说明](docs/releases/2026-10-18-stable.md)。后面的日期小节保留历史记录，参数冲突以当前稳定版及教程末节为准。
 
-|说明 |文档|
-|---|---|
-|SDK|[pyAgxArm](https://github.com/agilexrobotics/pyAgxArm)|
-|官方CAN模块的使用|[can_user](./docs/CAN_USER.md)|
-|TCP偏移设置|[tcp_offset](./docs/tcp_offset/TCP_OFFSET.md)|
-|URDF|[URDF](https://github.com/agilexrobotics/agx_arm_urdf)|
-|Moveit| [Moveit](./src/agx_arm_moveit/README.md) |
-|Q&A|[Q&A](./docs/Q&A.md)|
+本 README 是**日常入口**。之前的文档已恢复为 [`README_previous.md（旧版）`](README_previous.md)。详细标定步骤见 [`docs/calibration.md`](docs/calibration.md)，
+本次整合的迁移证据见 [`docs/migration_report.md`](docs/migration_report.md)，
+后续审查与修正记录见 [`docs/review_2026-10-14.md`](docs/review_2026-10-14.md)，
+2026-10-15 的标定专项审查及 TCP 工具说明见 [`docs/calibration_review_2026-10-15.md`](docs/calibration_review_2026-10-15.md)。
 
 ---
 
-## 快速开始
+## 1. 环境解释与依赖路径
 
-### 1. 安装 Python SDK
+本工作空间**不新建、不合并虚拟环境**：控制、视觉、标定各自沿用现有解释器，由统一入口显式选择。
 
-```bash
-git clone https://github.com/agilexrobotics/pyAgxArm.git
-cd pyAgxArm
-```
+| 用途 | 解释器 / 环境 | 说明 |
+|---|---|---|
+| 控制、GUI、动作、GraspNet 依赖的 ROS 侧 | `/usr/bin/python3`（3.10.12） | 系统 Python + 用户库（`~/.local/lib/python3.10/site-packages`） |
+| 视觉（YOLO / 蓝方块）与 GraspNet 运行时 | `/home/lxf/orange_dataset/.venv/bin/python3` | 复用共享虚拟环境，**不迁移、不重建、不升级** |
+| 标定（内参/手眼） | `/usr/bin/python3` + 用户 OpenCV(≥4.7；本机 4.13)/NumPy/SciPy | 不进入旧 handeye 的两个 venv |
+| IK / Pinocchio | `~/.local/lib/python3.10/site-packages`（cmeel pinocchio 3.9.0） | 控制代码保持 NumPy → IK 路径注入 → 延迟 Pinocchio 导入顺序 |
 
-根据你的 ROS 版本选择安装命令：
+**DDS 统一**：所有组件显式使用 `rmw_cyclonedds_cpp` 与项目内 `config/dds/cyclonedds.xml`；
+`ROS_DOMAIN_ID` 保留调用者值（未设置则 ROS 默认 0）；**不 source `~/.bashrc`**。
 
-**Jazzy** 安装命令：
+**关键路径**（全部记录在受 Git 管理的 `config/runtime.json`，键名固定）：
 
-```bash
-pip3 install . --break-system-packages
-```
+| 键 | 值 |
+|---|---|
+| `vision_python` | `/home/lxf/orange_dataset/.venv/bin/python3` |
+| `system_python` | `/usr/bin/python3` |
+| `ros_setup` | `/opt/ros/humble/setup.bash` |
+| `workspace_setup` | `install/setup.bash` |
+| `orbbec_setup` | `/home/lxf/orbbec_ros2_ws/install/setup.bash` |
+| `dds_xml` | `config/dds/cyclonedds.xml` |
+| `yolo_weights` | `models/yolo/fruits12.pt` |
+| `graspnet_checkpoint` | `models/graspnet/checkpoint-rs.tar` |
+| `graspnet_baseline` | `/home/lxf/graspnet/graspnet-baseline` |
+| `d455_handeye` | `config/calibration/d455_eye_to_hand.json` |
+| `ik_site_packages` / `cmeel_site_packages` | `~/.local/lib/python3.10/site-packages` / `.../cmeel.prefix/.../site-packages` |
+| `ik_urdf` | `src/agx_arm_ros/src/agx_arm_moveit/config/test2.urdf` |
+| `saved_poses` / `conveyor_calib` | `saved_poses.json` / `conveyor_calib.json` |
 
-**Humble** 安装命令：
+部署来源/哈希/外部实现路径另见 `config/deployment_manifest.json`。
+大权重与环境不进 Git 大文件历史；**fresh clone 不含环境与权重**，需按下文"回退/部署"恢复部署资产。
 
-```bash
-pip3 install .
-```
-
-### 2. 安装 ROS2 驱动
-
-1. 创建工作空间
-
-    ```bash
-    mkdir -p ~/agx_arm_ws/src
-    cd ~/agx_arm_ws/src
-    ```
-
-2. 克隆仓库
-
-    ```bash
-    git clone -b ros2 --recurse-submodules https://github.com/agilexrobotics/agx_arm_ros.git
-    ```
-
-    ```bash
-    cd agx_arm_ros/
-    git submodule update --remote --recursive
-    ```
-
-### 3. 安装依赖
-
-运行脚本一键安装所有依赖
+### 只读预检（推荐在开工前执行）
 
 ```bash
-cd ~/agx_arm_ws/src/agx_arm_ros/scripts/
-chmod +x agx_arm_install_deps.sh
-bash ./agx_arm_install_deps.sh
+cd /home/lxf/agx_arm_ws
+./scripts/run_component.sh preflight            # 分组件报告缺失（只读）
+./scripts/run_component.sh preflight --live     # 附加 live 接口查询
 ```
 
-或者依次执行以下命令手动安装：
-
-1. Python 依赖
-
-    根据你的 ROS 版本选择安装命令：
-
-    **Jazzy** 安装命令:
-
-    ```bash
-    pip3 install python-can scipy numpy --break-system-packages
-    ```
-
-    **Humble** 安装命令:
-
-    ```bash
-    pip3 install python-can scipy numpy
-    ```
-
-2. CAN 工具
-
-    ```bash
-    sudo apt update && sudo apt install can-utils ethtool
-    ```
-
-3. ROS2 依赖
-
-    ```bash
-    sudo apt install -y \
-        ros-$ROS_DISTRO-ros2-control \
-        ros-$ROS_DISTRO-ros2-controllers \
-        ros-$ROS_DISTRO-controller-manager \
-        ros-$ROS_DISTRO-topic-tools \
-        ros-$ROS_DISTRO-joint-state-publisher-gui \
-        ros-$ROS_DISTRO-robot-state-publisher \
-        ros-$ROS_DISTRO-xacro \
-        python3-colcon-common-extensions
-    ```
-
-4. Moveit
-
-    使用 MoveIt 前，需先配置相关依赖。 具体步骤请参考：[agx_arm_moveit](./src/agx_arm_moveit/README.md)
-    
-    或者依次执行以下命令进行配置：
-
-    ```bash
-    sudo apt install ros-$ROS_DISTRO-moveit*
-    ```
-
-    ```bash
-    sudo apt-get install -y \
-        ros-$ROS_DISTRO-control* \
-        ros-$ROS_DISTRO-joint-trajectory-controller \
-        ros-$ROS_DISTRO-joint-state-* \
-        ros-$ROS_DISTRO-gripper-controllers \
-        ros-$ROS_DISTRO-trajectory-msgs
-    ```
-
-    若系统语言区域设置不为英文区域，须设置为英文区域
-
-    ```bash
-    echo "export LC_NUMERIC=en_US.UTF-8" >> ~/.bashrc
-    source ~/.bashrc
-    ```
-
-### 4.编译并Source工作空间
-
-检查是否在虚拟环境里，如果是，建议先退出虚拟环境。
-
-```bash
-which pip3
-```
-
-编译工作空间并加载环境配置：
-
-```bash
-cd ~/agx_arm_ws
-colcon build
-source install/setup.bash
-```
+`--live` 会区分**"接口存在"**与**"模型就绪"**：GraspNet 的 req/result 话题存在**不等于**模型已加载；
+托管进程以日志出现"就绪, 等待请求..."才算就绪，外部手动进程需人工核查其终端日志。
 
 ---
 
-## 使用说明
+## 2. 硬件激活与七终端启动
 
-### 激活 CAN 模块
+**完整顺序：连接并上电 → 激活 CAN 接口 → 运行机械臂激活脚本 → T1 → T2 → T2b → T3 → T4 → T5 → T6。**
 
-使用前需先激活 CAN 模块，详见：[CAN 配置指南](./docs/CAN_USER.md)
+### T0：启动 ROS2 前先激活 CAN 和机械臂
 
-当电脑仅连接单个 CAN 模块时，可通过以下步骤**快速完成激活**：
-
-打开一个终端窗口，执行以下命令：
+连接机械臂并上电后，在终端按顺序执行；前一步成功后再执行下一步：
 
 ```bash
-cd ~/agx_arm_ws/src/agx_arm_ros/scripts 
-bash can_activate.sh
-```
+cd /home/lxf/agx_arm_ws
+
+# T0a：激活 CAN 接口，名称 can0，波特率 1 Mbps；脚本内 sudo 可能要求密码
 bash ~/agx_arm_ws/src/agx_arm_ros/scripts/can_activate.sh can0 1000000 && cansend can0 123#1122334455667788 && ip -s link show can0
 
-python3 /home/lxf/agx_arm_ws/activate_robot.py
-### 启动驱动
+# 可选的详细确认：标志包含 UP、bitrate 1000000，且 CAN 状态不是 BUS-OFF
+ip -details link show can0
 
-您可以通过 launch 文件或直接运行节点来启动驱动。
+# T0b：唤醒机械臂、切换 CAN 控制模式、发送电机使能指令
+/usr/bin/python3 /home/lxf/agx_arm_ws/activate_robot.py
+```
 
-> **重要提示：启动前必读**
-> 以下启动命令中的参数**必须**根据您的实际硬件配置进行替换：
-> - **`can_port`**：机械臂连接的 CAN 端口，示例值 `can0`。
-> - **`arm_type`**：机械臂的型号，示例值 `piper`。
-> - **`effector_type`**：末端执行器类型，示例值 `none` 或 `agx_gripper`。
-> - **`tcp_offset`**：工具中心（TCP）相对法兰盘中心的偏移量，示例值：[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
->   - 注意 ：`tcp_offset` 所有值均需为浮点数；关于 TCP 偏移实际配置示例，请参考 [TCP 设置详解](./docs/tcp_offset/TCP_OFFSET.md)。
->
-> 所有参数的完整说明、默认值及可选值，请参阅下方的 **[启动参数](#启动参数)** 。
+`activate_robot.py` 固定使用 `can0`，依次发送待机、CAN 控制和 `EnableArm(7)` 指令。
+等待脚本执行完毕，再启动下面的 T1。脚本的完成提示表示激活指令已发送，实际反馈仍需在 T1 后核对。
+仅激活 Linux CAN 接口还没有完成机械臂使能；`./scripts/run_component.sh arm` 只负责启动 ROS2，
+不能省略前面的激活脚本。重新上电或重新连接后，按上述顺序重新准备。
 
+多 CAN 设备的接口选择见 [`CAN 配置指南`](src/agx_arm_ros/docs/CAN_USER.md)。
 
-**使用 launch 文件启动：**
+### T1～T6：七终端启动
+
+每条命令在**独立终端**执行，先 `cd /home/lxf/agx_arm_ws`。
+
+| 终端 | 命令 | 就绪判据 |
+|---|---|---|
+| T1 | `./scripts/run_component.sh arm` | MoveIt、控制及机器人反馈就绪 |
+| T2 | `./scripts/run_component.sh camera --camera d455` | RGB、对齐深度、CameraInfo 更新，`publish_tf=false` |
+| T2b | `./scripts/run_component.sh camera_tf` | base→optical 完整矩阵与活动外参一致 |
+| T3 | `./scripts/run_component.sh detector --mode fruit` | 检测消息更新（空场景 `detected=false` 合法） |
+| T4 | `./scripts/run_component.sh graspnet` | 日志出现"就绪, 等待请求..."（不能只看话题） |
+| T5 | `./scripts/run_component.sh action` | 分拣执行节点就绪 |
+| T6 | `./scripts/run_component.sh gui` | 图像/状态/控制正常 |
+
+T1 底层仍是：
 
 ```bash
-ros2 launch agx_arm_ctrl start_single_agx_arm.launch.py can_port:=can0 arm_type:=piper effector_type:=none tcp_offset:='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]'
-```
-
-**直接运行节点启动:**
-
-```bash
-ros2 run agx_arm_ctrl agx_arm_ctrl_single --ros-args -p can_port:=can0 -p arm_type:=piper -p effector_type:=none -p tcp_offset:='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]'
-```
-
-**可视化调试启动:**
-
-```bash
-ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_type:=piper effector_type:=none tcp_offset:='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]'
-```
-
-> **注意：**
-> - `start_single_agx_arm_rviz.launch` 会订阅 `/feedback/joint_states` 话题；通过参数 `control` 可控制是否从 RViz 侧发布 `/control/joint_states`（默认 `control:=false`，不会从 RViz 发布控制话题）。
-> - 若希望仅用于可视化跟随真实机械臂状态，推荐保持 `control:=false`；
-> - 若希望使用 RViz 自带的关节滑条控制 `/control/joint_states`，可显式设置 `control:=true`，此时可能会与 [控制示例](#控制示例) 中的控制指令产生冲突。
-
-**MoveIt 一键启动（臂控 + MoveIt + RViz）：**
-
-```bash
-ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py can_port:=can0 arm_type:=piper effector_type:=agx_gripper
-```
-
-
-
-> 该 launch 文件同时启动机械臂控制节点和 MoveIt2，自动将关节反馈 (`/feedback/joint_states`) 接入 MoveIt，无需手动分两个终端启动。支持所有 `agx_arm_ctrl` 的参数（如 `tcp_offset`、`speed_percent` 等），详见 [Moveit](./src/agx_arm_moveit/README.md)。
-
----
-
-## GraspNet 抓取分拣全链路 (眼在手外 eye-to-hand)
-
-基于 D455 深度相机 + GraspNet-1Billion + YOLOv8 的传送带物品自动分拣系统。
-相机固定安装在传送带上方 (eye-to-hand 配置), 通过手眼标定将相机坐标系映射到机械臂基坐标系。
-
-### 系统架构
-
-```
-D455 相机 (固定) ──→ realsense_yolo_node (YOLO检测 + D455深度)
-                   │                      ↓
-                   │                 /detection_info (JSON)
-                   │                      ↓
-                   ├─→ graspnet_service_node (GraspNet 6DoF位姿推理)
-                   │                      ↓
-                   │                 /graspnet/result (JSON)
-                   │                      ↓
-                   └──→ auto_sorting_action (MoveIt规划 + IK + 抓取执行)
-                                          ↓
-                                   sorting_gui_client (GUI控制面板)
-```
-
-### 前置条件
-
-1. **CAN 已激活**: `bash /home/lxf/piper_ws/src/piper_ros/can_activate.sh can0 1000000`
-2. **机械臂已使能**: `python3 /home/lxf/agx_arm_ws/activate_robot.py`
-3. **D455 相机已连接** (固定安装在传送带上方)
-4. **CH340 继电器已连接** (传送带控制)
-5. **手眼标定数据**: `/home/lxf/handeye/result/2026-09-15_21-25-46_calibration.json`
-6. **GraspNet checkpoint**: `/home/lxf/graspnet/checkpoints/checkpoint-rs.tar`
-
-### 一键前置检查
-
-```bash
-bash /home/lxf/agx_arm_ws/start_graspnet_pipeline.sh
-```
-该脚本检查 CAN、D455、机械臂使能、GraspNet checkpoint、手眼标定数据、agx_arm_msgs 编译状态,通过后打印各终端启动命令。
-
-### 启动流程 (7 个终端依次执行)
-
-#### T1 — MoveIt2 + 机械臂控制
-
-```bash
-source /opt/ros/humble/setup.bash && \
-source /home/lxf/agx_arm_ws/install/setup.bash && \
 ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py \
-  can_port:=can0 arm_type:=piper effector_type:=agx_gripper
+  can_port:=can0 arm_type:=piper effector_type:=agx_gripper \
+  'tcp_offset:=[0.0015631133283368326,0.00007546221381904417,0.1484896328004612,0.0,0.0,0.0]'
 ```
 
-#### T2 — D455 相机 (align_depth + 禁用自带 TF)
+TF 只读复核：
 
 ```bash
-source /opt/ros/humble/setup.bash && \
-ros2 launch realsense2_camera rs_launch.py \
-  rgb_camera.color_profile:=640,480,30 \
-  align_depth.enable:=true \
-  depth_module.profile:=640,480,30 \
-  publish_tf:=false
+source /home/lxf/agx_arm_ws/scripts/runtime_env.sh
+ros2 run tf2_ros tf2_echo base_link camera_color_optical_frame
+# 平移应接近 [0.610467, -0.089283, 0.618773]，同时核验完整旋转
 ```
 
-> ⚠️ 必须设置 `publish_tf:=false`, 由 T2b 发布眼在手外静态 TF, 避免冲突。
-
-#### T2b — 相机 TF 发布器 (眼在手外静态变换)
-
-```bash
-source /opt/ros/humble/setup.bash && \
-ros2 launch /home/lxf/agx_arm_ws/launch/eye_to_hand_camera_tf.launch.py
-```
-
-发布 `base_link → camera_color_optical_frame` 静态变换, 供 RViz/MoveIt 可视化。
-验证: `ros2 run tf2_ros tf2_echo base_link camera_color_optical_frame` 应显示平移 `[0.649, -0.054, 0.596]`。
-
-#### T3 — YOLO 检测节点 (D455 深度)
-
-```bash
-cd /home/lxf/orange_dataset && \
-source .venv/bin/activate && \
-source /opt/ros/humble/setup.bash && \
-python3 realsense_yolo_node.py \
-  --ros-args -p show_gui_window:=false \
-  -p use_depth_camera:=true
-```
-
-就绪标志: 日志输出 `YOLO 已上线` 和 `🔧 手眼标定参数已加载 (eye-to-hand)`。
-
-**在线调参** (标定偏差补偿, 无需重启):
-```bash
-ros2 param set /object_detector x_offset_m -0.015   # X 补偿 (负=减)
-ros2 param set /object_detector y_offset_m -0.025   # Y 补偿 (负=减)
-ros2 param set /object_detector z_offset_m 0.030     # Z 补偿 (正=抬高, 防撞台面)
-ros2 param set /object_detector depth_offset_m 0.0   # 深度补偿 (默认0)
-```
-
-#### T4 — GraspNet 抓取位姿服务节点
-
-```bash
-cd /home/lxf/agx_arm_ws && \
-source /home/lxf/orange_dataset/.venv/bin/activate && \
-source /opt/ros/humble/setup.bash && \
-export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp && \
-export CYCLONEDDS_URI=file:///home/lxf/ROS2-Gazebo-GO2/src/docker/cyclonedds.xml && \
-python3 graspnet_service_node.py
-```
-
-就绪标志: 日志输出 `graspnet_service_node 就绪, 等待请求...`。
-
-> ⚠️ 必须设置 `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` 确保与其他节点 DDS 一致。
-
-#### T5 — 分拣动作执行节点
-
-```bash
-cd /home/lxf/agx_arm_ws && \
-source /opt/ros/humble/setup.bash && \
-source install/setup.bash && \
-python3 auto_sorting_action.py
-```
-
-#### T6 — GUI 控制面板
-
-```bash
-cd /home/lxf/agx_arm_ws && \
-source /opt/ros/humble/setup.bash && \
-source install/setup.bash && \
-python3 sorting_gui_client.py
-```
-
-### 使用流程
-
-1. 启动 T1→T2→T2b→T3→T4→T5→T6 (按顺序)
-2. 等 T3 输出 `YOLO 已上线`, T4 输出 `就绪, 等待请求...`
-3. 在传送带放置物体 (苹果/橘子/香蕉/柠檬/桃/梨/草莓)
-4. 在 GUI 选择放置料框 (料框1/料框2)
-5. **手动抓取**: 点击 `GraspNet抓取` 按钮触发单次 GraspNet 抓取
-6. **自动分拣**: 点击紫色 `开始自动分拣` 按钮
-   - 物体从画面左侧向右移动, 越过分界线 (u=260) 后传送带停止
-   - 系统自动选择最右侧物体 (最远离分界线) 进行抓取
-   - 分拣完成后继续检测, 循环执行直到点击 `停止自动分拣`
-
-### 分拣规则
-
-| 物体 | 目标料框 |
-|------|----------|
-| 苹果 / 草莓 / 橙子 | 料框1 |
-| 柠檬 / 桃 / 梨 | 料框2 |
-
-### 关键参数
-
-| 参数 | 位置 | 默认值 | 说明 |
-|------|------|--------|------|
-| `x_offset_m` | YOLO 节点 | -0.015 | X 标定偏差补偿 (负=减) |
-| `y_offset_m` | YOLO 节点 | -0.025 | Y 标定偏差补偿 (负=减) |
-| `z_offset_m` | YOLO 节点 | +0.030 | Z 标定偏差补偿 (正=抬高) |
-| `MIN_GRASP_Z` | action 节点 | 0.045 | 夹持点 Z 安全下限 (防撞台面) |
-| `GRIPPER_PICK_Z_OFFSET` | action 节点 | 0.064 | link6 到夹持点 Z 距离 |
-| 分界线 u | GUI 节点 | 260 | 自动分拣物体越线检测位置 |
-
-### 仿真gazebo
-> **建议：实机与仿真不要同时运行。切换模式前先关闭另一侧进程。**
-```bash+
-pkill -f 'gzserver|gzclient|agx_sim_bridge|gripper_mirror_controller|move_group|rviz2|ros2_control_node' || true
-```
-
-**推荐（仿真专用一键启动）：**
-```bash
-cd /home/lxf/agx_arm_ws
-source install/setup.bash
-ros2 launch agx_arm_ctrl start_sim_piper_moveit.launch.py > /tmp/start_sim_delay.log 2>&1
-```
-
-**等价分步启动（旧方式）：**
-```bash
-cd /home/lxf/agx_arm_ws
-source install/setup.bash
-
-ros2 launch piper_gazebo piper_gazebo.launch.py
-
-ros2 launch agx_arm_moveit demo.launch.py arm_type:=piper effector_type:=agx_gripper follow:=true use_sim_time:=true
-
-python3 /home/lxf/agx_arm_ws/auto_sorting_action.py
-
-python3 /home/lxf/agx_arm_ws/sorting_gui_client.py
-```
-
-
-### 启动参数
-
-| 参数 | 默认值 | 说明 | 可选值 |
-|------|--------|------|--------|
-| `can_port` | `can0` | CAN 端口 | - |
-| `arm_type` | `piper` | 机械臂型号 | `nero`, `piper`, `piper_h`, `piper_l`, `piper_x` |
-| `effector_type` | `none` | 末端执行器类型 | `none`, `agx_gripper`, `revo2` |
-| `revo2_type` | `left` | Revo2 灵巧手类型 | `left`, `right` |
-| `auto_enable` | `true` | 启动时自动使能 | `true`, `false` |
-| `installation_pos` | `horizontal` | 安装方向 (Piper 系列专用) | `horizontal`, `left`, `right` |
-| `payload` | `empty` | 负载配置 (暂时只对piper系列生效) | `full`, `half`, `empty` |
-| `speed_percent` | `100` | 运动速度 (%) | `0-100` |
-| `pub_rate` | `200` | 状态发布频率 (Hz) | - |
-| `enable_timeout` | `5.0` | 使能超时 (秒) | - |
-| `tcp_offset` | `[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]` | 工具中心(TCP)相对法兰盘中心的偏移 [x, y, z, rx, ry, rz] | - |
-| `publish_gripper_joint` | `true` | 是否在 `/feedback/joint_states` 中发布 `gripper` 关节（夹爪开口宽度）。与 MoveIt 联用时设为 `false`，因 URDF 中仅有 `gripper_joint1`/`gripper_joint2` | `true`, `false` |
-| `log_level` | `info` | 日志级别 | `debug`, `info`, `warn`, `error`, `fatal` |
-
-### URDF 模型可视化
-
-#### 独立查看模型
-
-在 RViz 中加载 URDF 模型并通过 GUI 滑条手动调试关节，可以不启动机械臂节点：
-
-```bash
-ros2 launch agx_arm_description display.launch.py arm_type:=piper
-```
-
-**支持以下三种方式指定模型：**
-
-1. **预设型号名称（通过 `arm_type` 指定）**（推荐）：直接使用内置型号名，自动匹配对应 URDF 文件
-
-    ```bash
-    ros2 launch agx_arm_description display.launch.py arm_type:=piper
-    ```
-
-2. **相对路径（通过 `custom_model` 指定）**：相对于 `agx_arm_urdf/` 目录的路径，适用于自定义模型  
-
-    ```bash
-    ros2 launch agx_arm_description display.launch.py custom_model:=piper/urdf/piper_description.urdf
-    ```
-
-3. **绝对路径（通过 `custom_model` 指定）**：直接指定 URDF 文件的绝对路径，适用于任意位置的模型文件
-
-    ```bash
-    ros2 launch agx_arm_description display.launch.py custom_model:=~/agx_arm_ws/src/agx_arm_ros/src/agx_arm_description/agx_arm_urdf/piper/urdf/piper_description.urdf
-    ```
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `arm_type` | `piper` | 机械臂型号，预设值：`nero`, `piper`, `piper_h`, `piper_l`, `piper_x` |
-| `custom_model` | 空字符串 | 可选自定义模型路径；相对路径时相对于 `agx_arm_urdf/` 目录，绝对路径可指向任意 URDF/xacro 文件。若设置该参数，则 `arm_type` 和 `effector_type` 将被忽略 |
-| `effector_type` | `none` | 末端执行器类型，预设值：`none`, `agx_gripper`, `revo2` |
-| `revo2_type` | `left` | Revo2 灵巧手类型，预设值：`left`, `right` |
-| `pub_rate` | `200` | 状态发布频率 (Hz) |
-| `gui` | `true` | 是否启用 joint_state_publisher_gui 关节滑条控制界面 |
-| `rvizconfig` | 内置配置 | 自定义 RViz 配置文件的绝对路径 |
-| `follow` | `false` | 是否跟随真实机械臂状态（订阅 `/feedback/joint_states`，并在 robot_state_publisher 中重映射 `/joint_states` 为 `feedback/joint_states`） |
-| `tcp_offset` | `[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]` | TCP 偏移 [x, y, z, rx, ry, rz]（米/弧度）。非零时自动发布 `tcp_link` 坐标系 |
-| `control` | `true` | 是否通过 joint_state_publisher（或 GUI 版本）发布控制话题：`true` 时发布到 `control/joint_states`；`false` 时仅用于跟随或显示，不发布控制话题。与 `follow:=true` 配合时，常用组合为 `follow:=true, control:=false`（只跟随真实机械臂，不从 RViz 发出控制） |
-
-#### 典型应用组合示例（follow / control）
-
-下面给出几种**常见使用场景**下，`follow` 与 `control` 的推荐组合及对应示例指令：
-
-- **场景 1：纯模型调试（无真机，仅看 URDF、用滑条拖动）**  
-  - 是否需要真机：否  
-  - 推荐配置：`follow:=false, control:=true`  
-  - 示例：  
-    ```bash
-    ros2 launch agx_arm_description display.launch.py arm_type:=piper follow:=false control:=true
-    ```
-
-- **场景 2：真机 + 仅控制不跟随**（从 RViz 发控制，但 RViz 不显示真实反馈）  
-  - 是否需要真机：是  
-  - 推荐配置：`follow:=false, control:=true`  
-  - 示例：  
-    ```bash
-    ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_type:=piper follow:=false control:=true
-    ```
-
-- **场景 3：真机 + 仅跟随不控制**（常见：只看状态，不希望 RViz 干扰控制）  
-  - 是否需要真机：是  
-  - 推荐配置：`follow:=true, control:=false`  
-  - 示例：  
-    ```bash
-    ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_type:=piper follow:=true control:=false
-    ```
-
-- **场景 4：真机 + 控制 + 跟随**（从 RViz 发控制，并在 RViz 跟随真实反馈）  
-  - 是否需要真机：是  
-  - 推荐配置：`follow:=true, control:=false`
-  - 示例：  
-    ```bash
-    ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_type:=piper follow:=true control:=true
-    ```
-
-> **提示：** 一般情况下，建议**控制通道保持唯一**，即只保留一个组件负责发布 `/control/*` 话题（如 `agx_arm_ctrl` 节点、MoveIt、或 RViz 中的 joint_state_publisher 三者选其一），以避免多源控制导致冲突。
+**手动各入口默认前台监督**：由启动器创建组件进程组、转发 `SIGINT/SIGTERM`、`wait` 回收并返回真实退出码。
+每个入口都支持 `--dry-run`（只输出解释器/argv/配置/关键环境，不加载模型、不建目录、不启动组件、不访问 CAN/串口）。
 
 ---
 
-## 控制示例
-
-额外启动一个终端,运行以下指令:
+## 3. GUI 使用
 
 ```bash
-cd ~/agx_arm_ws
-source install/setup.bash
-cd src/agx_arm_ros
+cd /home/lxf/agx_arm_ws && ./scripts/run_component.sh gui
 ```
 
-### Piper 机械臂
+- **单实例**：GUI 启动即取得 `.runtime/gui.lock`；已有实例运行时第二个窗口会提示并退出，
+  避免两个 worker 抢占相机/串口并发布错误状态。
+- **自动启动范围**：GUI 只确保 **相机 + 相机 TF + 检测** 三类组件（共用统一入口的命令构造、锁与就绪规则）。
+  机械臂（T1）、动作（T5）、GraspNet（T4）仍按明确终端入口启动。
+- **Tk 主进程 / ROS worker 架构保留**：自动管线在 ROS worker 内、`rclpy.init` 与 Node 创建**之后**启动；
+  等待就绪期间 spinner 保持运转。
+- **正常退出**：关闭窗口 → 队列请求 worker 清理本会话子进程、释放串口 → 收到 ACK 再 join；
+  ACK 等待与正常 join 均有超时；未收到 ACK 或进程仍未退出时才兜底 `terminate`。
+  图像/状态输出队列允许丢弃最后的遥测消息，ACK 队列正常刷新，避免关闭时等待未消费的图像。
+  父进程异常退出时 worker 的 watchdog 也走同一清理路径。
 
-1. 关节运动
+- 启动时复用已在线的水果或蓝方块检测，不因 GUI 打开而替换模式。检测离线时可再次点击当前模式恢复。
+- 自动分拣与动态抓取当前要求**水果模式**；蓝方块使用其单次抓取按钮。
 
-    ```bash
-    ros2 topic pub /control/move_j sensor_msgs/msg/JointState \
-      "$(cat test/piper/test_move_j.yaml)" -1
-    ```
+### 模式切换（水果 ↔ 蓝方块）
 
-2. 点到点运动
+- `requested_mode`（请求）与 `detection_mode`（已确认/active）**分开保存**；
+  只有目标节点上线、`/detection_info` 恰有一个目标发布者、且收到切换后新消息，才提交 active 模式。
+- 切换失败**保持旧模式**；若旧节点已不在线，界面显示 `offline`。
+- 排队执行、单次抓取等待 busy 确认、自动分拣、动态抓取或控制 busy 时**拒绝**视觉切换。
+  确认框返回后重新检查占用；切换期间暂停队列派发和新抓取，迟到的旧请求结果不能提交新模式。
+- **显式模式切换允许停止同 workspace 登记的 manual detector**：若 T3 是手工终端启动且已登记，
+  GUI 会停止它（`--allow-cross-initiator`），**旧 T3 监督终端随之结束**，新 detector 归当前 GUI。
+- **外部未登记节点**：若检测节点是旧式手工命令启动、未登记，GUI **无法证明所有权故不停止**，
+  会明确报冲突并提示关闭该终端；此时不会叠加第二个检测节点。
 
-    ```bash
-    ros2 topic pub /control/move_p geometry_msgs/msg/PoseStamped \
-      "$(cat test/piper/test_move_p.yaml)" -1
-    ```
+### 依赖差异（重要）
 
-3. 直线运动
-
-    ```bash
-    ros2 topic pub /control/move_l geometry_msgs/msg/PoseStamped \
-      "$(cat test/piper/test_move_l.yaml)" -1
-    ```
-
-4. 圆弧运动（起点 → 中间点 → 终点）
-
-    ```bash
-    ros2 topic pub /control/move_c geometry_msgs/msg/PoseArray \
-      "$(cat test/piper/test_move_c.yaml)" -1
-    ```
-
-### Nero 机械臂
-
-1. 关节运动
-
-    ```bash
-    ros2 topic pub /control/move_j sensor_msgs/msg/JointState \
-      "$(cat test/nero/test_move_j.yaml)" -1
-    ```
-
-2. 点到点运动
-
-    ```bash
-    ros2 topic pub /control/move_p geometry_msgs/msg/PoseStamped \
-      "$(cat test/nero/test_move_p.yaml)" -1
-    ```
-
-3. 直线运动
-
-    ```bash
-    ros2 topic pub /control/move_l geometry_msgs/msg/PoseStamped \
-      "$(cat test/nero/test_move_l.yaml)" -1
-    ```
-
-4. 圆弧运动（起点 → 中间点 → 终点）
-
-    ```bash
-    ros2 topic pub /control/move_c geometry_msgs/msg/PoseArray \
-      "$(cat test/nero/test_move_c.yaml)" -1
-    ```
-
-### Gripper 夹爪
-
-1. 夹爪控制（通过 `/control/joint_states`控制）
-
-    ```bash
-    ros2 topic pub /control/joint_states sensor_msgs/msg/JointState \
-      "$(cat test/gripper/test_gripper_joint_states.yaml)" -1
-    ```
-
-2. 机械臂 + 夹爪联合控制（通过 `/control/joint_states`控制）
-
-    ```bash
-    ros2 topic pub /control/joint_states sensor_msgs/msg/JointState \
-      "$(cat test/piper/test_arm_gripper_joint_states.yaml)" -1
-    ```
-
-> **注意：** 以上夹爪控制指令，需在 launch 文件或参数中设置 `effector_type=agx_gripper`。
-
-### Hand 灵巧手
-
-1. 灵巧手 — 位置模式（所有手指移动到 10）
-
-    ```bash
-    ros2 topic pub /control/hand agx_arm_msgs/msg/HandCmd \
-      "$(cat test/hand/test_hand_position.yaml)" -1
-    ```
-
-2. 灵巧手 — 速度模式（所有手指速度 50）
-
-    ```bash
-    ros2 topic pub /control/hand agx_arm_msgs/msg/HandCmd \
-      "$(cat test/hand/test_hand_speed.yaml)" -1
-    ```
-
-3. 灵巧手 — 电流模式（所有手指电流 50）
-
-    ```bash
-    ros2 topic pub /control/hand agx_arm_msgs/msg/HandCmd \
-      "$(cat test/hand/test_hand_current.yaml)" -1
-    ```
-
-4. 灵巧手 — 位置-时间控制（所有手指移动到 50，时间 1 秒）
-
-    ```bash
-    ros2 topic pub /control/hand_position_time agx_arm_msgs/msg/HandPositionTimeCmd \
-      "$(cat test/hand/test_hand_position_time.yaml)" -1
-    ```
-
-5. 灵巧手控制（通过 `/control/joint_states`控制）
-
-    ```bash
-    ros2 topic pub /control/joint_states sensor_msgs/msg/JointState \
-      "$(cat test/hand/test_hand_joint_states.yaml)" -1
-    ```
-
-6. 机械臂 + 灵巧手联合控制（通过 `/control/joint_states`控制）
-
-    ```bash
-    ros2 topic pub /control/joint_states sensor_msgs/msg/JointState \
-      "$(cat test/piper/test_arm_hand_joint_states.yaml)" -1
-    ```
-
-> **注意：** 以上灵巧手控制指令，需在 launch 文件或参数中设置 `effector_type=revo2`。
-
-### 服务调用
-
-1. 使能机械臂
-
-    ```bash
-    ros2 service call /enable_agx_arm std_srvs/srv/SetBool "{data: true}"
-    ```
-
-2. 失能机械臂
-
-    ```bash
-    ros2 service call /enable_agx_arm std_srvs/srv/SetBool "{data: false}"
-    ```
-
-3. 回零位
-
-    ```bash
-    ros2 service call /move_home std_srvs/srv/Empty
-    ```
-
-4. 退出示教模式（Piper 系列）
-
-    ```bash
-    ros2 service call /exit_teach_mode std_srvs/srv/Empty
-    ```
-
-    > **⚠️ 重要安全提示:** 
-    > 1. 执行该指令后，机械臂会先执行回零位操作，随后自动重启；此过程中机械臂存在坠落风险，建议在回零位完成后用手轻扶机械臂，防止坠落损坏。
-    > 2. Piper 系列机器臂若固件版本为 1.8.5 及以上，已支持 模式无缝切换 功能，无需执行上述退出示教模式的服务指令，系统会自动完成模式切换，可规避上述坠落风险。
-
-### 状态订阅
-
-1. 关节状态
-
-    ```bash
-    ros2 topic echo /feedback/joint_states
-    ```
-
-2. TCP 位姿
-
-    ```bash
-    ros2 topic echo /feedback/tcp_pose
-    ```
-
-3. 机械臂状态
-
-    ```bash
-    ros2 topic echo /feedback/arm_status
-    ```
-
-4. 主导臂关节角度(主导臂模式下使用)
-
-    ```bash
-    ros2 topic echo /feedback/leader_joint_angles
-    ```
-
-5. 夹爪状态
-
-    ```bash
-    ros2 topic echo /feedback/gripper_status
-    ```
-
-6. 灵巧手状态
-
-    ```bash
-    ros2 topic echo /feedback/hand_status
-    ```
+- 经 `./scripts/run_component.sh` 启动的组件**属于受管登记**（`.runtime/registry.json`），
+  可被 `stop`/GUI 按身份与归属停止。
+- 直接用旧命令（如 `python3 vision/realsense_yolo_node.py ...`）启动的节点属 **external**：
+  仍可运行，但**不取得 GUI 的停止/切换权限**。
 
 ---
 
-## ROS2 接口
+## 4. 参数：临时（在线热更新）与永久
 
-### 反馈话题
+### 人工位置偏置已移除
 
-| 话题 | 消息类型 | 说明 | 适用条件 |
-|------|----------|------|----------|
-| `/feedback/joint_states` | `sensor_msgs/JointState` | 关节状态 | 始终可用 |
-| `/feedback/tcp_pose` | `geometry_msgs/PoseStamped` | TCP 位姿 | 始终可用 |
-| `/feedback/arm_status` | `agx_arm_msgs/AgxArmStatus` | 机械臂状态 | 始终可用 |
-| `/feedback/leader_joint_angles` | `sensor_msgs/JointState` | 主导臂关节角度 | 主导臂模式 |
-| `/feedback/gripper_status` | `agx_arm_msgs/GripperStatus` | 夹爪状态 | 配置 AgxGripper |
-| `/feedback/hand_status` | `agx_arm_msgs/HandStatus` | 灵巧手状态 | 配置 Revo2 |
-
-#### `/feedback/joint_states` 详细说明
-
-该话题包含机械臂和末端执行器的组合关节状态：
-
-**机械臂关节** (`joint1` ~ `joint*`)
-
-| 字段 | 说明 |
-|------|------|
-| `position` | 关节角度 (rad) |
-| `velocity` | 关节速度 (rad/s) |
-| `effort` | 关节力矩 (Nm) |
-
-**夹爪关节** （需配置 `effector_type=agx_gripper`）
-
-默认发布 `gripper`、`gripper_joint1`、`gripper_joint2` 三个关节；若 `publish_gripper_joint` 设为 `false`，仅发布 `gripper_joint1` 和 `gripper_joint2`（URDF 中的关节名，适配 MoveIt）。
-
-| 关节名 | `position` 说明 | `velocity` | `effort` |
-|--------|-----------------|------------|----------|
-| `gripper` | 夹爪开口宽度 (m)，范围 [0, 0.1] | 0.0 | 力 (N) |
-| `gripper_joint1` | 单侧夹片位移 = 宽度 × 0.5 (m) | 0.0 | 力 (N) |
-| `gripper_joint2` | 单侧夹片位移 = 宽度 × -0.5 (m) | 0.0 | 力 (N) |
-
-**灵巧手关节**（需配置 `effector_type=revo2`）
-
-左手关节命名：
-
-- `left_thumb_metacarpal_joint`
-- `left_thumb_proximal_joint`
-- `left_index_proximal_joint`
-- `left_middle_proximal_joint`
-- `left_ring_proximal_joint`
-- `left_pinky_proximal_joint`
-
-右手关节命名：
-
-- `right_thumb_metacarpal_joint`
-- `right_thumb_proximal_joint`
-- `right_index_proximal_joint`
-- `right_middle_proximal_joint`
-- `right_ring_proximal_joint`
-- `right_pinky_proximal_joint`
-
-| 字段 | 说明 |
-|------|------|
-| `position` | 手指关节角度 (rad) |
-| `velocity` | 0.0 |
-| `effort` | 0.0 |
-
-#### `/feedback/arm_status` 详细说明
-
-消息类型：`agx_arm_msgs/AgxArmStatus`
-
-**消息字段说明：**
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `ctrl_mode` | `uint8` | 控制模式，见下表 |
-| `arm_status` | `uint8` | 机械臂状态，见下表 |
-| `mode_feedback` | `uint8` | 模式反馈，见下表 |
-| `teach_status` | `uint8` | 示教状态，见下表 |
-| `motion_status` | `uint8` | 运动状态：0=已到达目标位置，1=未到达目标位置 |
-| `trajectory_num` | `uint8` | 当前轨迹点序号（0~255，离线轨迹模式下反馈） |
-| `err_status` | `int64` | 错误状态码 |
-| `joint_1_angle_limit` ~ `joint_7_angle_limit` | `bool` | 关节1~7角度超限（true=异常，false=正常） |
-| `communication_status_joint_1` ~ `communication_status_joint_7` | `bool` | 关节1~7通信状态（true=异常，false=正常） |
-
-**控制模式 (`ctrl_mode`)：**
-
-| 值 | 说明 |
-|----|------|
-| 0 | 待机 |
-| 1 | CAN指令控制 |
-| 2 | 示教模式 |
-| 3 | 以太网控制 |
-| 4 | WiFi控制 |
-| 5 | 遥控模式 |
-| 6 | 联动示教输入 |
-| 7 | 离线轨迹模式 |
-| 8 | TCP控制 |
-
-**机械臂状态 (`arm_status`)：**
-
-| 值 | 说明 |
-|----|------|
-| 0 | 正常 |
-| 1 | 急停 |
-| 2 | 无解 |
-| 3 | 奇异点 |
-| 4 | 目标角度超限 |
-| 5 | 关节通信异常 |
-| 6 | 关节刹车未释放 |
-| 7 | 发生碰撞 |
-| 8 | 示教拖动超速 |
-| 9 | 关节状态异常 |
-| 10 | 其他异常 |
-| 11 | 示教记录中 |
-| 12 | 示教执行中 |
-| 13 | 示教暂停 |
-| 14 | 主控NTC过温 |
-| 15 | 释放电阻NTC过温 |
-
-**模式反馈 (`mode_feedback`)：**
-
-| 值 | 说明 |
-|----|------|
-| 0 | MOVE P |
-| 1 | MOVE J |
-| 2 | MOVE L |
-| 3 | MOVE C |
-| 4 | MOVE MIT |
-| 5 | MOVE CPV |
-
-**示教状态 (`teach_status`)：**
-
-| 值 | 说明 |
-|----|------|
-| 0 | 关闭 |
-| 1 | 开始示教记录（进入拖动示教） |
-| 2 | 结束示教记录（退出拖动示教） |
-| 3 | 执行示教轨迹 |
-| 4 | 暂停执行 |
-| 5 | 继续执行 |
-| 6 | 终止执行 |
-| 7 | 移动至轨迹起点 |
-
-#### `/feedback/gripper_status` 详细说明
-
-消息类型：`agx_arm_msgs/GripperStatus`
-
-**消息字段说明：**
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `header` | `std_msgs/Header` | 消息头 |
-| `width` | `float64` | 当前夹爪开口宽度（单位：米） |
-| `force` | `float64` | 当前夹持力（单位：牛顿） |
-| `voltage_too_low` | `bool` | 电压过低（true=异常，false=正常） |
-| `motor_overheating` | `bool` | 电机过热（true=异常，false=正常） |
-| `driver_overcurrent` | `bool` | 驱动器过流（true=异常，false=正常） |
-| `driver_overheating` | `bool` | 驱动器过热（true=异常，false=正常） |
-| `sensor_status` | `bool` | 传感器状态（true=异常，false=正常） |
-| `driver_error_status` | `bool` | 驱动器错误状态（true=异常，false=正常） |
-| `driver_enable_status` | `bool` | 驱动器使能状态（true=已使能，false=未使能） |
-| `homing_status` | `bool` | 回零/归零状态（true=已完成，false=未完成） |
-
-#### `/feedback/hand_status` 详细说明
-
-消息类型：`agx_arm_msgs/HandStatus`
-
-**消息字段说明：**
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `header` | `std_msgs/Header` | 消息头 |
-| `left_or_right` | `uint8` | 手部类型标识：1=左手，2=右手 |
-
-**手指位置字段（范围：[0, 100]，0=完全张开，100=完全弯曲）：**
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `thumb_tip_pos` | `uint8` | 拇指指尖位置 |
-| `thumb_base_pos` | `uint8` | 拇指指根位置 |
-| `index_finger_pos` | `uint8` | 食指位置 |
-| `middle_finger_pos` | `uint8` | 中指位置 |
-| `ring_finger_pos` | `uint8` | 无名指位置 |
-| `pinky_finger_pos` | `uint8` | 小指位置 |
-
-**手指电机状态字段（0=空闲，1=运行中，2=堵转/卡死）：**
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `thumb_tip_status` | `uint8` | 拇指指尖电机状态 |
-| `thumb_base_status` | `uint8` | 拇指指根电机状态 |
-| `index_finger_status` | `uint8` | 食指电机状态 |
-| `middle_finger_status` | `uint8` | 中指电机状态 |
-| `ring_finger_status` | `uint8` | 无名指电机状态 |
-| `pinky_finger_status` | `uint8` | 小指电机状态 |
-
-### 控制话题
-
-| 话题                            | 消息类型                               | 说明           | 适用条件          |
-| ----------------------------- | ---------------------------------- | ------------ | ------------- |
-| `/control/joint_states`       | `sensor_msgs/JointState`           | 关节控制（含末端执行器） | 始终可用          |
-| `/control/move_j`             | `sensor_msgs/JointState`           | 关节控制运动       | 始终可用          |
-| `/control/move_p`             | `geometry_msgs/PoseStamped`        | 点到点运动        | 始终可用          |
-| `/control/move_l`             | `geometry_msgs/PoseStamped`        | 直线运动         | 始终可用      |
-| `/control/move_c`             | `geometry_msgs/PoseArray`          | 圆弧运动         | 始终可用      |
-| `/control/move_js`            | `sensor_msgs/JointState`           | MIT 模式关节运动   | 始终可用      |
-| `/control/move_mit`           | `agx_arm_msgs/MoveMITMsg`          | MIT 力矩控制     | 始终可用      |
-| `/control/hand`               | `agx_arm_msgs/HandCmd`             | 灵巧手控制        | 配置 Revo2      |
-| `/control/hand_position_time` | `agx_arm_msgs/HandPositionTimeCmd` | 灵巧手位置时间控制    | 配置 Revo2      |
-
-#### `/control/joint_states` 详细说明
-
-该话题使用 `sensor_msgs/JointState` 消息类型，支持同时控制机械臂关节和末端执行器（夹爪/灵巧手）。只需发送要控制的关节即可，未包含的关节不受影响。
-
-**消息字段说明：**
-
-| 字段 | 说明 |
-|------|------|
-| `name` | 关节名称列表 |
-| `position` | 对应关节的目标位置 |
-| `velocity` | 未使用（可留空） |
-| `effort` | 用于夹爪力控制（仅对 `gripper` 关节有效） |
-
-**通过 `/control/joint_states` 控制夹爪**（需配置 `effector_type=agx_gripper`）
-
-在 `name` 中包含 `gripper`，通过 `position` 设置目标宽度，通过 `effort` 设置夹持力。
-
-| 关节名 | position（宽度） | effort（力） |
-|--------|-----------------|-------------|
-| `gripper` | 目标宽度 (m)，范围: [0.0, 0.1] | 目标力 (N)，范围: [0.5, 3.0]，默认: 1.0 |
-
-> **注意：** 当 `effort` 为 0 或未指定时，使用默认力 1.0N。
-
-示例：控制夹爪宽度 0.05m、力 1.5N
-```bash
-ros2 topic pub /control/joint_states sensor_msgs/msg/JointState \
-  "{name: [gripper], position: [0.05], velocity: [], effort: [1.5]}" -1
-```
-
-**通过 `/control/joint_states` 控制灵巧手**（需配置 `effector_type=revo2`）
-
-在 `name` 中包含灵巧手关节名，通过 `position` 设置目标位置（position 模式, 单位: rad）。仅需发送要控制的关节，未包含的关节将保持当前位置。
-
-示例：仅控制左手食指到位置 0.5rad
-```bash
-ros2 topic pub /control/joint_states sensor_msgs/msg/JointState \
-  "{name: [left_index_proximal_joint], position: [0.5], velocity: [], effort: []}" -1
-```
-
-| 关节名 | 说明 | position 范围 |
-|--------|------|--------------|
-| `left_thumb_metacarpal_joint` / `right_thumb_metacarpal_joint` | 大拇指指根 | [0, 1.57] |
-| `left_thumb_proximal_joint` / `right_thumb_proximal_joint` | 大拇指指尖 | [0, 1.03] |
-| `left_index_proximal_joint` / `right_index_proximal_joint` | 食指 | [0, 1.41] |
-| `left_middle_proximal_joint` / `right_middle_proximal_joint` | 中指 | [0, 1.41] |
-| `left_ring_proximal_joint` / `right_ring_proximal_joint` | 无名指 | [0, 1.41] |
-| `left_pinky_proximal_joint` / `right_pinky_proximal_joint` | 小指 | [0, 1.41] |
-
-#### `/control/move_mit` 详细说明
-
-消息类型：`agx_arm_msgs/MoveMITMsg`
-
-**消息字段说明：**
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `joint_index` | `int32[]` | 要控制的关节索引数组 |
-| `p_des` | `float64[]` | 期望关节位置数组（单位：弧度） |
-| `v_des` | `float64[]` | 期望关节速度数组（单位：弧度/秒） |
-| `kp` | `float64[]` | 位置增益数组 |
-| `kd` | `float64[]` | 速度增益数组 |
-| `torque` | `float64[]` | 期望关节力矩数组（单位：牛·米，N·m） |
-
-> **注意：** 所有数组字段长度需与 `joint_index` 一致，支持同时控制多个关节。
-
-#### `/control/hand` 详细说明
-
-消息类型：`agx_arm_msgs/HandCmd`
-
-**消息字段说明：**
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `mode` | `string` | 控制模式：`position`（位置）/ `speed`（速度）/ `current`（电流） |
-
-**各手指目标值字段：**
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `thumb_tip` | `int8` | 拇指指尖目标值 |
-| `thumb_base` | `int8` | 拇指指根目标值 |
-| `index_finger` | `int8` | 食指目标值 |
-| `middle_finger` | `int8` | 中指目标值 |
-| `ring_finger` | `int8` | 无名指目标值 |
-| `pinky_finger` | `int8` | 小指目标值 |
-
-**不同模式下的数值范围：**
-
-| 模式 | 数值范围 | 说明 |
-|------|---------|------|
-| `position` | [0, 100] | 0=完全张开，100=完全弯曲 |
-| `speed` | [-100, 100] | 负值=张开方向，正值=弯曲方向 |
-| `current` | [-100, 100] | 负值=张开方向，正值=弯曲方向 |
-
-#### `/control/hand_position_time` 详细说明
-
-消息类型：`agx_arm_msgs/HandPositionTimeCmd`
-
-**消息字段说明：**
-
-**各手指目标位置字段（范围：[0, 100]，0=完全张开，100=完全弯曲）：**
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `thumb_tip_pos` | `int8` | 拇指指尖位置 |
-| `thumb_base_pos` | `int8` | 拇指指根位置 |
-| `index_finger_pos` | `int8` | 食指位置 |
-| `middle_finger_pos` | `int8` | 中指位置 |
-| `ring_finger_pos` | `int8` | 无名指位置 |
-| `pinky_finger_pos` | `int8` | 小指位置 |
-
-**各手指到达时间字段（单位：10毫秒，范围：[0, 255]，例如：200 = 2秒）：**
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `thumb_tip_time` | `uint8` | 拇指指尖到达时间 |
-| `thumb_base_time` | `uint8` | 拇指指根到达时间 |
-| `index_finger_time` | `uint8` | 食指到达时间 |
-| `middle_finger_time` | `uint8` | 中指到达时间 |
-| `ring_finger_time` | `uint8` | 无名指到达时间 |
-| `pinky_finger_time` | `uint8` | 小指到达时间 |
-
-### 服务
-
-| 服务 | 类型 | 说明 | 适用条件 |
-|------|------|------|----------|
-| `/enable_agx_arm` | `std_srvs/SetBool` | 使能/失能机械臂 | 始终可用 |
-| `/move_home` | `std_srvs/Empty` | 回零位 | 始终可用 |
-| `/exit_teach_mode` | `std_srvs/Empty` | 退出示教模式 | Piper 系列 |
+当前视觉XYZ/深度偏置为0；坐标只使用相机手眼、TCP和RGB-D几何中心估计，不再使用旧XYZ/类别Z/工具长度补偿。
+历史非零offset命令不再适用，启动与在线回调会明确拒绝非零人工偏置。
+相机来源在GUI选择；外参由`config/calibration/manifest.json`登记，TCP由`config/calibration/tcp.json`提供。
+更换TCP或相机碰撞模型后需重启T1，不能使用在线param set代替SDK启动应用。
 
 ---
 
-## 参数限制
+## 5. 操作流程
 
-### 夹爪 (Gripper)
-
-| 参数 | 范围 | 默认值 | 说明 |
-|------|------|--------|------|
-| width (宽度) | [0.0, 0.1] m | - | 目标开合宽度 |
-| force (力) | [0.5, 3.0] N | 1.0 | 夹持力度 |
-
-> ⚠️ 超出范围的值将被拒绝（不执行），节点输出警告日志。例如：发送 force=5.0 时，该指令不会执行，并输出 `force must be in range [0.5, 3.0], current value: 5.0` 警告。
-
-### 灵巧手 (Revo2)
-
-| 参数 | 范围 | 说明 |
-|------|------|------|
-| position (位置) | [0, 100] | 手指目标位置，0 为完全张开，100 为完全握紧 |
-| speed (速度) | [-100, 100] | 手指运动速度 |
-| current (电流) | [-100, 100] | 手指驱动电流 |
-| time (时间) | [0, 255] | 到达目标位置的时间（单位: 10ms，例如 100 = 1 秒） |
-
-> ⚠️ 超出范围的值将被拒绝（不执行），节点输出警告日志。例如：发送 position=120 时，该指令不会执行，并输出 `position must be in range [0, 100], current value: 120` 警告。
+0. 连接并上电后，先完成 §2 的 **T0a CAN 激活 → T0b 机械臂激活**，再按七终端顺序启动。
+1. 等相机、检测与 GraspNet 加载就绪，再放物体。
+2. 选择料框 1/2，点"单次按钮"执行 GraspNet 抓取。
+3. 自动分拣：物体**左→右越 u=260 停带** → 选**最右**目标 → 抓取放置 → 继续循环。
+4. 停止按钮结束自动任务；在途动作按既有状态机处理（不新增未定义的回零动作）。
+5. 模式切换按登记进程替换（见 §3）。
+6. 正常停止顺序：GUI 停止自动/动态任务并暂停排队 → 等待机械臂完成、确认传送带停止和状态稳定 → 正常退出 GUI →
+   `Ctrl+C` 停止 T5/T4 → 停止检测、TF、相机 → **最后**停止 T1。现场急停按既有设备流程。
 
 ---
 
-## 注意事项
+## 6. 停止、状态与日志排查
 
-### CAN 通信
+```bash
+./scripts/run_component.sh status camera --camera d455   # 查看登记与身份校验
+./scripts/run_component.sh stop detector --mode fruit    # 按身份受控停止
+./scripts/run_component.sh stop detector --initiator gui --allow-cross-initiator  # 显式模式切换
+```
 
-- 使用前**必须先激活 CAN 模块**
-- 波特率：**1000000 bps**
-- 若出现 `SendCanMessage failed` 错误，请检查 CAN 连接
+- 停止前逐项校验身份（PID + `/proc` starttime + UID + boot_id + PGID 归属），
+  `SIGINT` 等 5s → `SIGTERM` 等 5s → 仍存活则报告失败；**不按文件名 pkill**。
+- leader 退出但 launch 子孙仍占相机/话题 → 报告"未完全退出"，保留登记，**不删状态后重启第二实例**。
+- 日志：`log/runtime/launcher.log`（启动/停止/就绪事件）与 `log/runtime/<组件>.log`（组件输出）。
 
-### ⚠️ 安全警告
+---
 
-- **保持安全距离**：机械臂运动时，请勿进入其工作空间，以免造成伤害
-- **奇异点风险**：靠近运动学奇异点时，关节可能发生突然大幅运动
-- **MIT 模式危险**：高速响应的 MIT 模式极具危险性，请谨慎使用
+## 7. 双相机标定与候选批准
+
+TCP 工具中心位置标定见 [`docs/tcp_calibration.md`](docs/tcp_calibration.md)：
+
+```bash
+./scripts/run_component.sh calibrate-tcp
+```
+
+固定点法标定 XYZ，保留当前 RPY；仅接收位姿和保存候选。核验后用候选给出的 `tcp_offset` 启动 T1，
+生效需要重启 T1；不能通过 `ros2 param set tcp_offset` 在线应用。Dabai 手眼标定须记录同一 TCP 配置。
+
+TCP 定点姿态验证（默认离线零运动）：
+
+```bash
+./scripts/run_component.sh verify-tcp --dry-run
+```
+
+现场只规划、明确确认执行、粗标定的**仅验证质量豁免**及人工漂移记录，见
+[`docs/tcp_calibration.md §7`](docs/tcp_calibration.md#7-tcp-定点姿态运动验证)。
+验证不启动 T1/CAN/使能/回零；必须先结束抓取任务并关闭 T5/T6。当前粗标定的原质量仍为 failed，
+未自动应用到生产。
+
+
+完整步骤（含板生成、采样、质量门、批准、恢复生产）见 **[`docs/calibration.md`](docs/calibration.md)**。速览：
+
+```bash
+./scripts/run_component.sh generate-board                 # 生成 7x5/32mm ChArUco 板
+./scripts/run_component.sh calibrate-intrinsics --camera d455
+./scripts/run_component.sh approve-intrinsics  --camera d455 --candidate <候选绝对路径>
+./scripts/run_component.sh calibrate-handeye    --camera d455
+./scripts/run_component.sh approve-handeye      --camera d455 --candidate <候选绝对路径> --scene-verified
+```
+
+- 内参输出到 `data/calibration/<cam>/intrinsics/<会话>/candidate.yaml`；手眼输出到 `data/calibration/<cam>/handeye/`。
+- **候选不自动成为生产**：须通过质量门并由操作者 `approve-*` 批准（手眼另需 `--scene-verified`）。
+- 批准会先备份旧批准文件与 manifest，再原子替换并追加审计记录（`config/calibration/approved_backup/`）。
+- 生产 D455 抓取仍使用**原驱动 CameraInfo**；迁入的新内参不会自动改写当前 K/D。
+- 批准后**运行中的节点不会自动重载**：先结束任务，再重启受影响的检测/GraspNet/TF 并重新核对完整矩阵。
+
+### 恢复生产
+
+```bash
+ros2 service call /exit_teach_mode std_srvs/srv/Empty   # 退出示教
+# 移除标定板 → 按 §2 重启七终端 → 复验单次/自动分拣
+```
+
+Dabai已接入图像时刻的腕载坐标变换，TF、检测、GraspNet和GUI均可使用，见双相机教程。首轮按停带静态单次流程操作。
+
+---
+
+## 8. 常见错误对照
+
+| 现象 | 可能原因 | 处理 |
+|---|---|---|
+| T1 启动后机械臂无反馈或无法控制 | CAN 未激活、波特率错误，或遗漏机械臂激活脚本 | 回到 §2：先激活 `can0 1000000`，再运行 `activate_robot.py`，完成后启动 T1 |
+| preflight 报资源缺失 | 权重/checkpoint/外参/配置缺失或被移动 | 按输出路径恢复（见 `config/deployment_manifest.json`）；必要时从备份取回 |
+| 节点互相看不到 | DDS 不一致（RMW/CYCLONEDDS_URI） | 统一用 `./scripts/run_component.sh ...` 或 `source scripts/runtime_env.sh` |
+| 相机启动失败/被占用 | 已有相机进程，或另一终端已启动 | `status`/`preflight --live` 查占用；按登记停止或关闭旧终端 |
+| 没收到 CameraInfo | 相机未就绪/话题名不符 | 等相机组件就绪；核验 `camera_info_topic` |
+| 双 TF / 位姿错乱 | 相机自带 TF 与项目 TF 同时发布 | 相机固定 `publish_tf=false`；TF 只由 `camera_tf` 组件发布 |
+| 模式切换冲突 | 旧检测节点为外部未登记 | 关闭旧终端，或用统一入口启动以便受控切换 |
+| 检测信息过期 | 检测节点停止/卡住 | 查看 `log/runtime/detector_d455.log`，重启 T3 |
+| GraspNet 一直未就绪 | 模型仍在加载或 checkpoint 缺失 | 查日志"就绪, 等待请求..."；核验 checkpoint |
+| 标定分辨率错误 | input 图像与内参分辨率不一致 | 用同一分辨率采集（640×480）；候选会被判 failed |
+| 候选质量失败 | 帧数/RMS/覆盖/同步不达标 | 按候选打印的 `[NG]` 项补采（覆盖四角+中心、多倾角） |
+| 串口占用（传送带） | 旧 GUI/worker 未释放 | 关闭重复 GUI；等待 watchdog 清理；确认单实例锁 |
+| 第二个 GUI 打不开 | 单实例锁被占用 | 关闭已运行窗口 |
+
+---
+
+## 9. 回退
+
+1. 正常停止任务与节点（§5/§6）。
+2. 先在外部目录保全**迁移后新数据**（新会话/结果/配置/saved_poses/conveyor_calib/运行日志）并生成清单哈希。
+3. 优先按清单恢复原入口/配置与索引；若全量回退：先将当前空间重命名保全，
+   再从已验证归档恢复到**原绝对路径**（避免直接覆盖丢新数据）。
+4. 原始归档重新验哈希时，清单实际位于备份根目录，须在 `archives/` 下运行：
+   ```bash
+   cd /home/lxf/agx_arm_ws_backups/20261013-214530/archives
+   sha256sum -c ../SHA256SUMS
+   ```
+   备份位置与恢复要求见 `/home/lxf/agx_arm_ws_backups/20261013-214530/BACKUP_VERIFIED.md`。
+5. 旧 `/home/lxf/orange_dataset` 与 `/home/lxf/handeye` 目录保留作回退来源（其中
+   `realsense_yolo_node.py` / `blue_block_detector.py` 已改为薄包装，原实现保留为同名 `.orig`）。
+
+---
+
+## 10. 目录速览
+
+```
+config/            runtime.json、vision/*.yaml、calibration/、dds/、deployment_manifest.json
+scripts/           runtime_env.sh（环境）、run_component.sh（统一入口）
+vision/            realsense_yolo_node.py、blue_block_detector.py（canonical 实现）
+models/            yolo/fruits12.pt、graspnet/checkpoint-rs.tar（部署资产，不入 Git）
+data/calibration/  候选与历史（小 JSON 入 Git；大图像另归档）
+archive/legacy/    旧代码/资料归档（见 archive/README.md）
+docs/              guides/ reports/ requirements/ worklogs/ calibration.md migration_report.md
+runtime_*.py       共享配置、进程管理、启动器（仅 stdlib + 子进程 ros2）
+.runtime/          本机组件登记与锁（不提交）
+log/runtime/       运行日志
+```
+
+
+### D455接近微调（2026-10-18）
+
+普通D455水果抓取接近速度已提高，沿工具+Z额外深入1cm；如深入路径受碰撞/可达性限制，自动保留原深度并提示。Dabai仍为原抓取流程，不应用本次速度和深度调整。重启T5生效，详细说明见docs/dual_camera_grasping.md末节。
+
+
+### 双相机长条水果自适应夹持（2026-10-18）
+
+D455与Dabai普通水果抓取现支持从物体深度点云估计长短轴：长宽比≥1.5时，两指沿短轴闭合，开度参考短边宽度；近圆形物体仍使用原径向姿态。保持自动倾角、工具+Z接近和原速度/深入量，无需手调GUI的RPY。J6会在需要时转到能夹住短边的方向。
+
+本次修改涉及T3检测、T5动作和T6 GUI，三者需要退出重启；T1/相机驱动/TF无需因本次修改重启。完整命令、日志及现场检查步骤见[双相机抓取说明](docs/dual_camera_grasping.md)末节。此前“Dabai仍为旧流程”的历史说明已被双相机统一流程替代。
+
+
+### 矮物体抓取微调（2026-10-18，当前值）
+
+D455/Dabai普通水果抓取优先沿工具+Z额外深入2cm；路径受限时按20→15→10→5→0mm逐级尝试，保留碰撞检查。接近每航点0.05s（原0.08s），重试同步刷新XYZ。当前动作结束后重启T5生效，完整说明见[双相机抓取说明](docs/dual_camera_grasping.md)末节；实际采用深度以动作日志为准。

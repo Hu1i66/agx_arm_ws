@@ -1,0 +1,87 @@
+image_width: 640
+image_height: 480
+camera_matrix:
+  rows: 3
+  cols: 3
+  data:
+  - 392.3930482744803
+  - 0.0
+  - 326.44841337323766
+  - 0.0
+  - 392.1100261147096
+  - 232.23853189284898
+  - 0.0
+  - 0.0
+  - 1.0
+distortion_coefficients:
+  rows: 1
+  cols: 5
+  data:
+  - -0.04066605108706088
+  - 0.06412053589625871
+  - -0.003896677364928487
+  - 0.0006641296992625085
+  - -0.014519206107748109
+reprojection_error: 0.29853339698378917
+frames: 39
+coverage: 9
+board:
+  squares_x: 7
+  squares_y: 5
+  square_m: 0.032
+  marker_m: 0.024
+  dict: DICT_5X5_1000
+candidate:
+  kind: intrinsics_candidate
+  camera_id: d455
+  camera_optical_frame: camera_color_optical_frame
+  source: charuco_calibration
+  resolution:
+  - 640
+  - 480
+  board:
+    squares:
+    - 7
+    - 5
+    square_m: 0.032
+    marker_m: 0.024
+    dict: DICT_5X5_1000
+    required_cells:
+    - 0
+    - 2
+    - 4
+    - 6
+    - 8
+  valid_frames: 39
+  coverage_cells:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  - 6
+  - 7
+  - 8
+  quality_status: passed
+  quality_checks:
+  - check: "\u6709\u6548\u5E27\u6570 >= min_frames"
+    ok: true
+    detail: 39/15
+  - check: "\u6574\u4F53\u91CD\u6295\u5F71 RMS < max_reproj_rms"
+    ok: true
+    detail: 0.2985px < 0.5px
+  - check: "3x3 \u8986\u76D6\u7F51\u683C(\u4E2D\u5FC3+\u56DB\u89D2)"
+    ok: true
+    detail: "\u8986\u76D6 9/9, \u7F3A []"
+  - check: "\u56FE\u50CF/CameraInfo/\u8F93\u51FA\u5C3A\u5BF8\u4E00\u81F4"
+    ok: true
+    detail: "\u4E00\u81F4"
+  - check: "\u5185\u53C2/\u7578\u53D8\u7CFB\u6570\u4E3A\u6709\u9650\u6570\u503C"
+    ok: true
+    detail: ''
+  approved: true
+  note: "\u5019\u9009\u5185\u53C2\uFF1B\u6587\u4EF6\u751F\u6210\u4E0D\u7B49\u4E8E\u8FBE\
+    \u6807\uFF1B\u987B approve-intrinsics \u6279\u51C6\u540E\u624D\u4F9B\u624B\u773C\
+    \u6807\u5B9A\u5F15\u7528"
+  approved_at: 2026-10-18_13-57-12

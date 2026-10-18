@@ -1,0 +1,262 @@
+{
+    "position": [
+        -0.06692139388230045,
+        0.003969724591065465,
+        0.046240533934709345
+    ],
+    "orientation": [
+        -0.11836555672201625,
+        0.12249753614843861,
+        -0.7020197435076555,
+        0.6914855228744087
+    ],
+    "rpy": [
+        [
+            -0.3423368507740725,
+            0.0032206356962663067,
+            -1.5864717833164188
+        ]
+    ],
+    "criteria": {
+        "mode": "eye_in_hand",
+        "session_dir": "/home/lxf/.codex/worktrees/parallel-dev/agx_arm_ws/data/calibration/dabai/handeye/2026-10-17_22-48-35_session",
+        "frames_used": 22,
+        "median_rel_angle_deg": 26.001504176651835,
+        "consistency_deg": 3.025781511322985e-05,
+        "n_pairs_ge25deg": 124,
+        "eq_residual_mm_reference_only": 5.7944471181081845,
+        "capture_frames": [
+            {
+                "markers": 17,
+                "corners": 24,
+                "reproj_rms_px": 0.44333658759664857,
+                "square_px": 46.02046701133014
+            },
+            {
+                "markers": 17,
+                "corners": 24,
+                "reproj_rms_px": 0.2834052643375766,
+                "square_px": 40.994115473390885
+            },
+            {
+                "markers": 17,
+                "corners": 24,
+                "reproj_rms_px": 0.2815845461880142,
+                "square_px": 42.05029026244131
+            },
+            {
+                "markers": 17,
+                "corners": 24,
+                "reproj_rms_px": 0.2623306435364679,
+                "square_px": 34.85166739775637
+            },
+            {
+                "markers": 16,
+                "corners": 22,
+                "reproj_rms_px": 0.28179528815494664,
+                "square_px": 39.24703701457683
+            },
+            {
+                "markers": 17,
+                "corners": 24,
+                "reproj_rms_px": 0.29836602911484716,
+                "square_px": 36.2739649350687
+            },
+            {
+                "markers": 17,
+                "corners": 24,
+                "reproj_rms_px": 0.2501237080549806,
+                "square_px": 35.73393749402762
+            },
+            {
+                "markers": 17,
+                "corners": 24,
+                "reproj_rms_px": 0.27679234075258025,
+                "square_px": 38.88252380768971
+            },
+            {
+                "markers": 17,
+                "corners": 24,
+                "reproj_rms_px": 0.3170655486040815,
+                "square_px": 38.36506692525803
+            },
+            {
+                "markers": 17,
+                "corners": 24,
+                "reproj_rms_px": 0.4322948359947328,
+                "square_px": 40.04309713674911
+            },
+            {
+                "markers": 17,
+                "corners": 24,
+                "reproj_rms_px": 0.48942583165077996,
+                "square_px": 39.97081414856896
+            },
+            {
+                "markers": 17,
+                "corners": 24,
+                "reproj_rms_px": 0.44632424889687605,
+                "square_px": 41.33161657305175
+            },
+            {
+                "markers": 17,
+                "corners": 24,
+                "reproj_rms_px": 0.4639745895752201,
+                "square_px": 42.34514496062931
+            },
+            {
+                "markers": 17,
+                "corners": 24,
+                "reproj_rms_px": 0.46773139960449467,
+                "square_px": 47.61805537204718
+            },
+            {
+                "markers": 17,
+                "corners": 24,
+                "reproj_rms_px": 0.3458402059562633,
+                "square_px": 35.939308845025785
+            },
+            {
+                "markers": 17,
+                "corners": 24,
+                "reproj_rms_px": 0.30260030695346124,
+                "square_px": 36.31121468152921
+            },
+            {
+                "markers": 17,
+                "corners": 24,
+                "reproj_rms_px": 0.3143506377689822,
+                "square_px": 46.89174453354254
+            },
+            {
+                "markers": 17,
+                "corners": 24,
+                "reproj_rms_px": 0.3301858409603078,
+                "square_px": 46.67748111727695
+            },
+            {
+                "markers": 17,
+                "corners": 24,
+                "reproj_rms_px": 0.30512046210901533,
+                "square_px": 48.007356587402356
+            },
+            {
+                "markers": 17,
+                "corners": 24,
+                "reproj_rms_px": 0.28476314492644716,
+                "square_px": 45.708980208087205
+            },
+            {
+                "markers": 17,
+                "corners": 24,
+                "reproj_rms_px": 0.28109609910296574,
+                "square_px": 35.53935171401491
+            },
+            {
+                "markers": 17,
+                "corners": 24,
+                "reproj_rms_px": 0.401791154196308,
+                "square_px": 34.96890019006625
+            }
+        ],
+        "validation_thresholds": {
+            "holdout_median_mm_lt": 15.0,
+            "median_rel_angle_deg_min": 20.0,
+            "consistency_deg_lt": 0.02,
+            "min_usable_pairs_ge25deg": 10
+        },
+        "acquisition_thresholds": {
+            "min_markers": 14,
+            "min_corners": 20,
+            "max_reproj_rms": 0.5,
+            "min_square_px": 25.0
+        },
+        "holdout": {
+            "n": 4,
+            "median_mm": 3.5741215890522686,
+            "p95_mm": 3.9126079286398943,
+            "max_mm": 3.94141200139138,
+            "indices": [
+                0,
+                7,
+                14,
+                21
+            ]
+        }
+    },
+    "metadata": {
+        "kind": "handeye_candidate",
+        "camera_id": "dabai",
+        "mode": "eye_in_hand",
+        "resolution": [
+            640,
+            480
+        ],
+        "board": {
+            "squares": [
+                7,
+                5
+            ],
+            "square_m": 0.032,
+            "marker_m": 0.024,
+            "dict": "DICT_5X5_1000"
+        },
+        "frames_used": 22,
+        "session_dir": "/home/lxf/.codex/worktrees/parallel-dev/agx_arm_ws/data/calibration/dabai/handeye/2026-10-17_22-48-35_session",
+        "intrinsics_source": "camera_info",
+        "sync_time_source": "receive",
+        "max_message_age_s": 1.0,
+        "convention": "T_base_camera(t) = T_base_tcp(t) @ T_tcp_camera",
+        "quality_status": "passed",
+        "quality_checks": [
+            {
+                "check": "\u6709\u6548\u59ff\u6001\u6570 >= max(15,min_num)",
+                "ok": true,
+                "detail": "22/15"
+            },
+            {
+                "check": "\u9010\u5e27\u56fa\u5b9a\u63a8\u5e7f\u95e8",
+                "ok": true,
+                "detail": "markers>=14 corners>=20 RMS<0.5px square>=25px"
+            },
+            {
+                "check": "consistency_deg < 0.02",
+                "ok": true,
+                "detail": "0.00003"
+            },
+            {
+                "check": "median_rel_angle_deg >= 20",
+                "ok": true,
+                "detail": "26.00"
+            },
+            {
+                "check": "n_pairs_ge25deg >= 10",
+                "ok": true,
+                "detail": "124"
+            },
+            {
+                "check": "holdout median_mm < 15",
+                "ok": true,
+                "detail": "median=3.5741 p95=3.9126 max=3.9414"
+            }
+        ],
+        "approved": false,
+        "note": "\u5019\u9009\u7ed3\u679c\uff1b\u6587\u4ef6\u751f\u6210\u4e0d\u7b49\u4e8e\u9a8c\u6536\u901a\u8fc7\uff1b\u987b\u64cd\u4f5c\u8005 approve-handeye \u4e14 --scene-verified \u540e\u624d\u6210\u4e3a\u6d3b\u52a8\u5916\u53c2",
+        "robot_base_frame": "base_link",
+        "robot_pose_frame": "link6",
+        "camera_optical_frame": "dabai_color_optical_frame",
+        "tcp_offset": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+        ],
+        "tcp_offset_source": "/agx_arm_ctrl_single_node/tcp_offset",
+        "transform_parent": "link6",
+        "transform_child": "dabai_color_optical_frame",
+        "units": "m",
+        "quaternion_order": "xyzw"
+    }
+}

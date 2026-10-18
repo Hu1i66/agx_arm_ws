@@ -1,0 +1,270 @@
+{
+  "manifest_version": 1,
+  "description": "标定资产 manifest：生产外参语义、来源、legacy 状态与推广记录。JSON 外参原样保存，本文件记录语义；不伪造历史文件已通过新判据。",
+  "convention": {
+    "eye_to_hand": "p_base = T_base_camera @ p_camera；TF parent→child 直接使用标定 R,t",
+    "eye_in_hand": "parent=link6: T_base_camera(t)=T_base_link6(t) @ T_link6_camera；SDK TCP反馈须先乘inverse(T_link6_tcp)"
+  },
+  "cameras": {
+    "d455": {
+      "mode": "eye_to_hand",
+      "parent": "base_link",
+      "child": "camera_color_optical_frame",
+      "active_file": "d455_eye_to_hand.json",
+      "status": "selected_for_verification",
+      "status_note": "用户选用42帧结果进行抓取验证；现场物理精度验证待完成",
+      "source": "/home/lxf/agx_arm_ws/data/calibration/d455/handeye/2026-10-18_14-25-07_calibration.json",
+      "approved_intrinsics": "config/calibration/d455/intrinsics.yaml",
+      "approved_intrinsics_note": "config/calibration/d455/intrinsics.yaml 存在时只能是已批准本相机内参；当前不存在，手眼标定前须先采集并批准",
+      "promotion_log": [
+        {
+          "kind": "handeye",
+          "candidate": "/home/lxf/.codex/worktrees/parallel-dev/agx_arm_ws/data/calibration/d455/handeye/2026-10-17_21-32-01_calibration_accepted.json",
+          "scene_verified": true,
+          "mode": "eye_to_hand",
+          "frames_used": 29,
+          "resolution": [
+            640,
+            480
+          ],
+          "intrinsics_source": "camera_info",
+          "holdout": {
+            "n": 4,
+            "median_mm": 11.781103511954235,
+            "p95_mm": 15.065677106739649,
+            "max_mm": 15.30253522352589,
+            "indices": [
+              0,
+              9,
+              19,
+              28
+            ]
+          },
+          "tcp_offset": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "robot_pose_frame": "link6",
+          "transform_parent": "base_link",
+          "transform_child": "camera_color_optical_frame",
+          "acceptance": {
+            "reason": "用户已现场验证并明确要求启用；采用更新后的粗标定接受标准",
+            "original_candidate": "/home/lxf/.codex/worktrees/parallel-dev/agx_arm_ws/data/calibration/d455/handeye/2026-10-17_21-32-01_calibration.json",
+            "original_quality_status": "failed",
+            "original_quality_checks": [
+              {
+                "check": "有效姿态数 >= max(15,min_num)",
+                "ok": true,
+                "detail": "29/15"
+              },
+              {
+                "check": "逐帧固定推广门",
+                "ok": true,
+                "detail": "markers>=14 corners>=20 RMS<0.5px square>=25px"
+              },
+              {
+                "check": "consistency_deg < 0.02",
+                "ok": true,
+                "detail": "0.00058"
+              },
+              {
+                "check": "median_rel_angle_deg >= 25",
+                "ok": false,
+                "detail": "23.91"
+              },
+              {
+                "check": "n_pairs_ge25deg >= 10",
+                "ok": true,
+                "detail": "191"
+              },
+              {
+                "check": "holdout median_mm < 1.0",
+                "ok": false,
+                "detail": "median=11.7811 p95=15.0657 max=15.3025"
+              }
+            ],
+            "user_scene_verified": true,
+            "accepted_at": "2026-10-17T21:39:35.642419"
+          },
+          "validation_thresholds": {
+            "holdout_median_mm_lt": 15.0,
+            "median_rel_angle_deg_min": 20.0,
+            "consistency_deg_lt": 0.02,
+            "min_usable_pairs_ge25deg": 10
+          },
+          "at": "2026-10-17_21-39-48",
+          "camera": "d455",
+          "target": "config/calibration/d455_eye_to_hand.json",
+          "target_sha256": "434cc3987541a48b7de0625e7ef8f89a6eec575284eea9d5ddd9b21fca9abbc7",
+          "old_target_backup": "config/calibration/approved_backup/2026-10-17_21-39-48_a6f172f0b6a54c36b08bc3e57b487931/d455_eye_to_hand.json",
+          "manifest_backup": "config/calibration/approved_backup/2026-10-17_21-39-48_a6f172f0b6a54c36b08bc3e57b487931/manifest.json"
+        },
+        {
+          "kind": "intrinsics",
+          "candidate": "/home/lxf/agx_arm_ws/data/calibration/d455/intrinsics/2026-10-18_13-51-08_session/candidate.yaml",
+          "valid_frames": 39,
+          "resolution": [
+            640,
+            480
+          ],
+          "reprojection_error": 0.29853339698378917,
+          "coverage_cells": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "scene_verified": false,
+          "at": "2026-10-18_13-57-12",
+          "camera": "d455",
+          "target": "config/calibration/d455/intrinsics.yaml",
+          "target_sha256": "cd9fec135d782e451e592f7e823497a0720a31134e934c1889c959452310e36b",
+          "old_target_backup": null,
+          "manifest_backup": "config/calibration/approved_backup/2026-10-18_13-57-12_bb358dd717b044639adf5d04bf97f725/manifest.json"
+        },
+        {
+          "kind": "handeye",
+          "candidate": "/home/lxf/agx_arm_ws/data/calibration/d455/handeye/2026-10-18_14-25-07_calibration.json",
+          "scene_verified": false,
+          "selection": "user_selected_for_grasp_verification",
+          "physical_grasp_verification": "pending",
+          "mode": "eye_to_hand",
+          "frames_used": 42,
+          "resolution": [
+            640,
+            480
+          ],
+          "intrinsics_source": "approved_intrinsics_file:/home/lxf/agx_arm_ws/config/calibration/d455/intrinsics.yaml",
+          "holdout": {
+            "n": 4,
+            "median_mm": 5.957694472099714,
+            "p95_mm": 9.04406614514708,
+            "max_mm": 9.405814517268979,
+            "indices": [
+              0,
+              14,
+              27,
+              41
+            ]
+          },
+          "tcp_offset": [
+            0.0015631133283368326,
+            7.546221381904417e-05,
+            0.1484896328004612,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "robot_pose_frame": "tcp_link",
+          "transform_parent": "base_link",
+          "transform_child": "camera_color_optical_frame",
+          "validation_thresholds": {
+            "holdout_median_mm_lt": 15.0,
+            "median_rel_angle_deg_min": 20.0,
+            "consistency_deg_lt": 0.02,
+            "min_usable_pairs_ge25deg": 10
+          },
+          "at": "2026-10-18_14-28-52",
+          "camera": "d455",
+          "target": "config/calibration/d455_eye_to_hand.json",
+          "target_sha256": "ababbd36ecb8a9136727c33afd534450f241cd9dfd20f293602122d9d11b5ccd",
+          "old_target_backup": "config/calibration/approved_backup/2026-10-18_14-28-52_5a7c4c81392d4880add12203f7f39a9e/d455_eye_to_hand.json",
+          "manifest_backup": "config/calibration/approved_backup/2026-10-18_14-28-52_5a7c4c81392d4880add12203f7f39a9e/manifest.json"
+        }
+      ],
+      "tcp_offset": [
+        0.0015631133283368326,
+        7.546221381904417e-05,
+        0.1484896328004612,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    "dabai": {
+      "mode": "eye_in_hand",
+      "parent": "link6",
+      "child": "dabai_color_optical_frame",
+      "active_file": "dabai_eye_in_hand.json",
+      "status": "approved",
+      "status_note": "用户授权启用本次passed结果；尚待现场抓取和外部坐标核查",
+      "source": "/home/lxf/agx_arm_ws/data/calibration/imported/dual_camera_20261018/2026-10-17_22-53-28_calibration.json",
+      "approved_intrinsics": null,
+      "approved_intrinsics_note": "config/calibration/dabai/intrinsics.yaml 当前不存在，不伪造",
+      "promotion_log": [
+        {
+          "kind": "handeye",
+          "candidate": "/home/lxf/.codex/worktrees/parallel-dev/agx_arm_ws/data/calibration/dabai/handeye/2026-10-17_22-53-28_calibration.json",
+          "scene_verified": false,
+          "mode": "eye_in_hand",
+          "frames_used": 22,
+          "resolution": [
+            640,
+            480
+          ],
+          "intrinsics_source": "camera_info",
+          "holdout": {
+            "n": 4,
+            "median_mm": 3.5741215890522686,
+            "p95_mm": 3.9126079286398943,
+            "max_mm": 3.94141200139138,
+            "indices": [
+              0,
+              7,
+              14,
+              21
+            ]
+          },
+          "tcp_offset": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "robot_pose_frame": "link6",
+          "transform_parent": "link6",
+          "transform_child": "dabai_color_optical_frame",
+          "acceptance": null,
+          "validation_thresholds": {
+            "holdout_median_mm_lt": 15.0,
+            "median_rel_angle_deg_min": 20.0,
+            "consistency_deg_lt": 0.02,
+            "min_usable_pairs_ge25deg": 10
+          },
+          "at": "2026-10-17_23-17-27",
+          "camera": "dabai",
+          "target": "config/calibration/dabai_eye_in_hand.json",
+          "target_sha256": "976e883687915e68473edc1429746fb5553d7ef95a2676b938c547d62be47c26",
+          "old_target_backup": null,
+          "manifest_backup": "config/calibration/approved_backup/2026-10-17_23-17-27_dcfbfe701c5140cfb4173dc0881a0953/manifest.json",
+          "authorization": "用户明确要求使用本次Dabai手眼结果；不代表本代理已完成现场验证"
+        }
+      ],
+      "tcp_offset": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "source_worktree": "/home/lxf/.codex/worktrees/parallel-dev/agx_arm_ws/data/calibration/dabai/handeye/2026-10-17_22-53-28_calibration.json"
+    }
+  },
+  "promotion_policy": {
+    "intrinsics": "approve-intrinsics 仅接受满足内参批准门的候选（≥15 有效帧、RMS<0.5px、3×3 覆盖网格）",
+    "handeye": "approve-handeye 仅接受满足手眼保留标准且操作者 --scene-verified 的候选；先保存旧批准文件及 manifest，再原子替换并追加审计记录",
+    "audit_note": "--scene-verified 仅由已完成现场坐标核查的操作者显式使用，不由标定程序自动追加"
+  }
+}

@@ -1,0 +1,135 @@
+{
+  "manifest_version": 1,
+  "generated_at": "2026-10-13 (Asia/Shanghai)",
+  "workspace_root": "/home/lxf/agx_arm_ws",
+  "description": "Piper 工作空间整合部署清单：记录迁移来源、目标、大小、SHA256、解释器与外部实现路径。权重与环境不进 Git 大文件历史，由部署目录与完整备份另交付。",
+  "backup_reference": "/home/lxf/agx_arm_ws_backups/20261013-214530/ (BACKUP_VERIFIED.md)",
+  "migrated_assets": [
+    {
+      "target": "vision/realsense_yolo_node.py",
+      "source": "/home/lxf/orange_dataset/realsense_yolo_node.py",
+      "git_policy": "git_tracked",
+      "size_bytes": 80886,
+      "sha256": "dc71511dab838eff1d48867a9162bf0ff36750bf40e78c76fd9f5c04784605a5",
+      "review_current_sha256": "932e6ef1406ef612dddd8294d5483dac7d02ec01d90ba43980f4be220879b734",
+      "review_current_size_bytes": 85856,
+      "reviewed_at": "2026-10-14"
+    },
+    {
+      "target": "vision/blue_block_detector.py",
+      "source": "/home/lxf/orange_dataset/blue_block_detector.py",
+      "git_policy": "git_tracked",
+      "size_bytes": 42769,
+      "sha256": "ec3b00d57cafc19403c272ec69d505d4cfcb815f36c45b54b87a69a9ff1f5ccb",
+      "review_current_sha256": "b320dbc59a655f555b114a69057e5643d3ef36070ad3235f766fd7419f4f936b",
+      "review_current_size_bytes": 45768,
+      "reviewed_at": "2026-10-14"
+    },
+    {
+      "target": "models/yolo/fruits12.pt",
+      "source": "/home/lxf/orange_dataset/runs/detect/runs/detect/train/weights/best.pt",
+      "git_policy": "git_ignored_deployment_asset",
+      "size_bytes": 40549932,
+      "sha256": "9162f7af73c86fa9e18b0a2a50a08d5ed8e683e7bcb3f9cda9014f152a78ce3c"
+    },
+    {
+      "target": "models/graspnet/checkpoint-rs.tar",
+      "source": "/home/lxf/graspnet/checkpoints/checkpoint-rs.tar",
+      "git_policy": "git_ignored_deployment_asset",
+      "size_bytes": 12468415,
+      "sha256": "60680087c61cba2b6791614fef1519071e294f6dcaf99b3f581bb95f7c51a868"
+    },
+    {
+      "target": "config/calibration/d455_eye_to_hand.json",
+      "source": "/home/lxf/handeye/result/2026-09-15_21-25-46_calibration.json",
+      "git_policy": "git_tracked",
+      "size_bytes": 391,
+      "sha256": "2d0907d8333e5c4c91fe176754a4e45345b0c31ee41d4698cc720a610b7f5c4f"
+    },
+    {
+      "target": "config/dds/cyclonedds.xml",
+      "source": "/home/lxf/ROS2-Gazebo-GO2/src/docker/cyclonedds.xml",
+      "git_policy": "git_tracked",
+      "size_bytes": 355,
+      "sha256": "8c897754b80c379b46ba2c5bcadd2a399f9a2e7a8bbd56e750488502727941e7"
+    },
+    {
+      "target": "src/handeye_calibration_ros/",
+      "source": "/home/lxf/handeye/src/handeye_calibration_ros/",
+      "git_policy": "git_tracked",
+      "size_bytes": 84373,
+      "note": "目录整体大小；逐文件清单见迁移核验日志 log/migration/"
+    },
+    {
+      "target": "data/calibration/history/handeye/",
+      "source": "/home/lxf/handeye/result/",
+      "git_policy": "git_tracked",
+      "size_bytes": 730838,
+      "note": "目录整体大小；逐文件清单见迁移核验日志 log/migration/"
+    },
+    {
+      "target": "data/calibration/history/d455_intrinsics_legacy/",
+      "source": "/home/lxf/orange_dataset/标定/calib_results/",
+      "git_policy": "mixed_small_text_tracked_large_images_ignored",
+      "size_bytes": 68940569,
+      "note": "目录整体大小；逐文件清单见迁移核验日志 log/migration/"
+    },
+    {
+      "target": "archive/legacy/handeye/",
+      "source": "/home/lxf/handeye/ (教程/ArUco工具/板样/TF图) + handeye_calibration.py.bak",
+      "git_policy": "git_tracked",
+      "size_bytes": 155523,
+      "note": "目录整体大小；逐文件清单见迁移核验日志 log/migration/"
+    }
+  ],
+  "external_dependencies": {
+    "vision_python": {
+      "path": "/home/lxf/orange_dataset/.venv/bin/python3",
+      "note": "视觉与 GraspNet 共用；复用不迁移不重建"
+    },
+    "system_python": {
+      "path": "/usr/bin/python3",
+      "note": "控制/GUI/标定系统 Python 3.10.12"
+    },
+    "ros_setup": {
+      "path": "/opt/ros/humble/setup.bash",
+      "note": "ROS 2 Humble"
+    },
+    "workspace_setup": {
+      "path": "/home/lxf/agx_arm_ws/install/setup.bash",
+      "note": "主空间 overlay（迁入标定包构建后生成）"
+    },
+    "orbbec_setup": {
+      "path": "/home/lxf/orbbec_ros2_ws/install/setup.bash",
+      "note": "Dabai 驱动 overlay，v1.5.22，工作空间留原位"
+    },
+    "graspnet_baseline": {
+      "path": "/home/lxf/graspnet/graspnet-baseline",
+      "note": "GraspNet 实现与 native 扩展（pointnet2/knn，Git ignored）"
+    },
+    "ik_site_packages": {
+      "path": "/home/lxf/.local/lib/python3.10/site-packages",
+      "note": "标定与控制当前实际依赖（cmeel pinocchio 3.9.0 等）"
+    },
+    "legacy_sources_kept": [
+      "/home/lxf/orange_dataset",
+      "/home/lxf/handeye",
+      "/home/lxf/graspnet"
+    ],
+    "note": "旧 Orange/handeye/graspnet 目录保留作回退来源，验收前不删除"
+  },
+  "git_policy": {
+    "tracked": [
+      "活动外参 d455_eye_to_hand.json",
+      "小型 JSON 历史 data/calibration/history/handeye/",
+      "legacy 小文本 (ost.yaml/rgb_camera_intrinsics.yaml/ost.txt/README)"
+    ],
+    "ignored_deployment_assets": [
+      "models/yolo/*.pt",
+      "models/graspnet/*.tar",
+      "data/calibration/history/d455_intrinsics_legacy 大图像 (*.png/*.tar.gz/rgb_1280x720_k3/)"
+    ],
+    "note": "新增 ignore 不使用一条 data/** 静默排除全部标定成果"
+  },
+  "hash_semantics": "migrated_assets.sha256/size_bytes 记录复制时的来源基线；运行代码随后做配置接入和审查修正，其当前哈希另记录于 review_current_*。模型、DDS、活动外参仍与复制基线相同。"
+}

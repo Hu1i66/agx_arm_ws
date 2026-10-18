@@ -1,0 +1,90 @@
+{
+  "kind": "tcp_pivot_candidate",
+  "schema_version": 1,
+  "quality_status": "passed",
+  "quality_checks": [
+    {
+      "check": "samples",
+      "ok": true
+    },
+    {
+      "check": "rank_6",
+      "ok": true
+    },
+    {
+      "check": "condition",
+      "ok": true
+    },
+    {
+      "check": "rms_mm",
+      "ok": true
+    },
+    {
+      "check": "max_residual_mm",
+      "ok": true
+    }
+  ],
+  "sample_count": 15,
+  "rank": 6,
+  "condition_number": 6.205580763927538,
+  "rms_mm": 4.657449358089706,
+  "max_residual_mm": 9.016730303577544,
+  "residuals_mm": [
+    4.807380354243227,
+    4.762751874554507,
+    5.860172646164271,
+    1.3161564857679178,
+    2.8899279355154293,
+    1.197792213820893,
+    5.390134656310159,
+    5.307954901341677,
+    1.680485896778889,
+    4.9867120599017705,
+    1.1129122461456005,
+    1.4162729289120655,
+    4.868830418903429,
+    9.016730303577544,
+    6.368039023358397
+  ],
+  "thresholds": {
+    "min_samples": 6,
+    "max_rms_mm": 5.0,
+    "max_residual_mm": 10.0,
+    "max_condition": 100.0
+  },
+  "tcp_offset": [
+    0.0015631133283368326,
+    7.546221381904417e-05,
+    0.1484896328004612,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "pivot_base_m": [
+    -0.26955160858305527,
+    -0.38275938046061614,
+    0.12315136928813339
+  ],
+  "orientation_calibrated": false,
+  "preserved_rpy_rad": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "units": "m",
+  "angle_units": "rad",
+  "parent": "link6",
+  "child": "tcp_link",
+  "applied": false,
+  "current_tcp_offset": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "session_file": "/home/lxf/.codex/worktrees/parallel-dev/agx_arm_ws/data/calibration/tcp/2026-10-17_20-42-56_0b43465c/solve_input_7bffb0934bc347799552cc46c4e5be52.json",
+  "working_session_file": "/home/lxf/.codex/worktrees/parallel-dev/agx_arm_ws/data/calibration/tcp/2026-10-17_20-42-56_0b43465c/frames.json",
+  "input_sha256": "035ff21aaf9107628e5036f2108085289da3a694d9a958da0b30c27f093c59e9"
+}

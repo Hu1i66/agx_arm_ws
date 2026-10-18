@@ -1,0 +1,34 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>handeye_calibration_ros</name>
+  <version>0.1.0</version>
+  <description>The handeye_calibration_ros package</description>
+
+  <maintainer email="agilex@todo.com">Your Name</maintainer>
+  <license>Apache-2.0</license>  
+
+  <!-- Dependencies -->
+  <!-- <exec_depend>urdf</exec_depend> -->
+  <depend>rclpy</depend>
+  <depend>rcl_interfaces</depend>
+  <depend>sensor_msgs</depend>
+  <exec_depend>moveit_msgs</exec_depend>
+  <exec_depend>tcp_trajectory_tools</exec_depend>
+  <exec_depend>trajectory_msgs</exec_depend>
+  <exec_depend>action_msgs</exec_depend>
+  <exec_depend>agx_arm_msgs</exec_depend>
+  <depend>geometry_msgs</depend>
+  <depend>cv_bridge</depend>
+  <depend>tf_transformations</depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <!-- 需要 OpenCV >= 4.7 的新 ChArUco API (cv2.aruco.CharucoDetector / detectBoard)；
+       系统 deb 版为 4.5.4, 因此标定节点使用用户 site-packages 的 opencv-python >= 4.13。
+       构建时设 PYTHONNOUSERSITE=1；运行时**不要**继承它, 否则会退回缺新 API 的系统 OpenCV。 -->
+  <exec_depend>python3-opencv</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>python3-scipy</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
