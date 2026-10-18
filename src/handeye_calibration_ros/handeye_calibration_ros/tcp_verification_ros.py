@@ -1,6 +1,5 @@
 """ROS adapter for explicit TCP verification. No arm lifecycle or scene mutation APIs."""
 import copy
-import hashlib
 import json
 import math
 import os
@@ -63,7 +62,7 @@ class RosBackend:
         from sensor_msgs.msg import JointState
         from agx_arm_msgs.msg import AgxArmStatus
         from action_msgs.msg import GoalStatusArray
-        from moveit_msgs.srv import GetCartesianPath,GetPositionFK,GetStateValidity,GetPlanningScene,GetPositionIK
+        from moveit_msgs.srv import GetCartesianPath,GetPositionFK,GetStateValidity,GetPlanningScene
         from moveit_msgs.action import ExecuteTrajectory
         from moveit_msgs.msg import RobotState,RobotTrajectory
         from trajectory_msgs.msg import JointTrajectoryPoint
@@ -71,7 +70,7 @@ class RosBackend:
         from rcl_interfaces.msg import ParameterEvent
         self.rclpy=rclpy;self.Pose=Pose;self.RobotState=RobotState;self.RobotTrajectory=RobotTrajectory
         self.Point=JointTrajectoryPoint;self.GetParameters=GetParameters
-        self.Cart=GetCartesianPath;self.IK=GetPositionIK;self.FK=GetPositionFK;self.Valid=GetStateValidity;self.Scene=GetPlanningScene
+        self.Cart=GetCartesianPath;self.FK=GetPositionFK;self.Valid=GetStateValidity;self.Scene=GetPlanningScene
         self.Execute=ExecuteTrajectory;self.ActionClient=ActionClient
         self.assessment,self.options,self.stop,self.report=assessment,options,stop,report
         self.workspace=Path(__file__).resolve().parents[3]
@@ -91,7 +90,6 @@ class RosBackend:
                                           lambda m:self.receive('execute_status',m),qos_profile_action_status_default)
             self.node.create_subscription(ParameterEvent,'/parameter_events',self.parameter_event,10)
             self.cart=self.node.create_client(GetCartesianPath,'/compute_cartesian_path')
-            self.ik=self.node.create_client(GetPositionIK,'/compute_ik')
             self.fk=self.node.create_client(GetPositionFK,'/compute_fk')
             self.valid=self.node.create_client(GetStateValidity,'/check_state_validity')
             self.scene=self.node.create_client(GetPlanningScene,'/get_planning_scene')
@@ -129,7 +127,7 @@ class RosBackend:
             if self.stop.is_set(): raise InterruptedError('用户中断')
             if time.monotonic()>deadline: raise TimeoutError('ROS请求超时')
             if monitor: self.fresh_feedback()
-            time.sleep(.002)
+            time.sleep(.02)
         if future.exception() is not None: raise ValueError('ROS请求失败: '+str(future.exception()))
         return future.result()
 
@@ -173,7 +171,7 @@ class RosBackend:
 
     def state(self,joints):
         state=self.RobotState();state.joint_state.name=list(joints)
-        state.joint_state.position=[float(joints[n]) for n in joints];state.is_diff=True  # Preserve the planning scene's attached collision bodies.
+        state.joint_state.position=[float(joints[n]) for n in joints];state.is_diff=False
         return state
 
     def pose_message(self,pose):
@@ -193,9 +191,7 @@ class RosBackend:
         nodes=set(self.node.get_node_names())
         if nodes.intersection({'sorting_headless_client_node','piper_moveit_action_client'}):
             raise ValueError('请结束动作后关闭T5和T6，禁止与自动/动态/排队任务并用')
-        arm_workspace=Path(getattr(self.options,'arm_workspace',None) or self.workspace).expanduser().resolve()
-        startup=startup_offset(arm_workspace)
-        startup['workspace']=str(arm_workspace)
+        startup=startup_offset(self.workspace)
         values=self.params('/agx_arm_ctrl_single_node',['tcp_offset','arm_type'])
         if values[0].type!=8 or values[1].type!=4 or not values[1].string_value.startswith('piper'):
             raise ValueError('仅支持Piper，且tcp_offset必须为double_array')
@@ -250,36 +246,13 @@ class RosBackend:
         return next_state
 
     def check_scene(self):
-        request=self.Scene.Request();request.components.components=502  # robot state, attached objects, world, octomap, TF, ACM, padding/scaling
-        scene=self.call(self.scene,request).scene
-        matrix=scene.allowed_collision_matrix
+        request=self.Scene.Request();request.components.components=128  # ALLOWED_COLLISION_MATRIX
+        matrix=self.call(self.scene,request).scene.allowed_collision_matrix
         if any(matrix.default_entry_values): raise ValueError('场景存在默认放行碰撞，拒绝执行验证')
         for i,row in enumerate(matrix.entry_values):
             for j,enabled in enumerate(row.enabled):
                 if enabled and i!=j and frozenset((matrix.entry_names[i],matrix.entry_names[j])) not in self.allowed_pairs:
                     raise ValueError('场景ACM包含非SRDF碰撞放行；请恢复正常场景后重试')
-        from rclpy.serialization import serialize_message
-        parts=[serialize_message(scene.world),serialize_message(matrix)]
-        # Unspecified joints are filled from MoveIt's scene by IK/state-validity services.
-        # Include them even when the hardware feedback omits a gripper joint.
-        nonarm=sorted((name,float(value)) for name,value in zip(
-            scene.robot_state.joint_state.name,scene.robot_state.joint_state.position) if name not in verify.JOINTS)
-        parts.append(json.dumps(nonarm,allow_nan=False).encode())
-        multi=copy.deepcopy(scene.robot_state.multi_dof_joint_state)
-        multi.header.stamp.sec=0;multi.header.stamp.nanosec=0
-        parts.append(serialize_message(multi))
-        for obj in scene.robot_state.attached_collision_objects: parts.append(serialize_message(obj))
-        for original in scene.fixed_frame_transforms:
-            transform=copy.deepcopy(original);transform.header.stamp.sec=0;transform.header.stamp.nanosec=0
-            parts.append(serialize_message(transform))
-        parts.append(str([(p.link_name,p.padding) for p in scene.link_padding]).encode())
-        parts.append(str([(p.link_name,p.scale) for p in scene.link_scale]).encode())
-        self.scene_hash=hashlib.sha256(b''.join(len(p).to_bytes(8,'big')+p for p in parts)).hexdigest()
-
-    def trajectory_proof(self,plan):
-        return hashlib.sha256(json.dumps(dict(points=plan['points'],target=plan['target'],
-            joints=plan['joint_names'],nonarm_state=plan.get('validated_nonarm_state',{})),sort_keys=True,allow_nan=False).encode()).hexdigest()
-
 
     def wait_for_stationary(self):
         """Require a 0.3s window of distinct, fresh hardware joint feedback before bridging."""
@@ -324,28 +297,15 @@ class RosBackend:
             current=self.wait_for_stationary()
             if max(abs(current['joints'][n]-plan['start_state'][n]) for n in verify.JOINTS)>.025:
                 raise ValueError('真实起点已偏离规划起点')
-            if getattr(self.options,'continuous_round',False):
-                self.check_scene()
-                same_start=max(abs(current['joints'][n]-plan['points'][0]['positions'][i]) for i,n in enumerate(verify.JOINTS))<=1e-8
-                same_nonarm={k:float(v) for k,v in current['joints'].items() if k not in verify.JOINTS}==plan.get('validated_nonarm_state',{})
-                if (same_start and same_nonarm and plan.get('checked_scene_hash')==self.scene_hash
-                        and plan.get('trajectory_proof')==self.trajectory_proof(plan)):
-                    plan['dispatch_start']=dict(current['joints']);plan['reused_unchanged_path_proof']=True
-                    return current
             # Account for actual->planned first point with a timed, checked bridge.
             if 'planned_positions' not in plan:
                 plan['planned_positions']=[list(p['positions']) for p in plan['points']]
             positions=[[current['joints'][n] for n in verify.JOINTS]] + plan['planned_positions']
-            plan['points']=self.retime_positions(positions)
+            plan['points']=verify.retime(positions,verify.JOINTS,self.limits,self.options.speed,smooth=getattr(self.options,'sweep',False))
             if plan['points'][-1]['time_s']>60.: raise ValueError('含起点衔接的轨迹超过60秒')
             plan['dispatch_start']=dict(current['joints'])
             self.check_scene()
-            before=getattr(self,'scene_hash',None)
             self.validate_path(plan,current['joints'])
-            if getattr(self.options,'continuous_round',False):
-                self.check_scene()
-                if before!=self.scene_hash: raise ValueError('复核期间场景改变，须重新规划')
-                plan['checked_scene_hash']=self.scene_hash;plan['trajectory_proof']=self.trajectory_proof(plan)
         return current
 
     def compute_fk(self,joints):
@@ -358,7 +318,7 @@ class RosBackend:
         return [p.position.x,p.position.y,p.position.z,p.orientation.x,p.orientation.y,p.orientation.z,p.orientation.w]
 
     def validate_path(self,plan,base_state):
-        maximum=0.;samples=0;orientation_extrema={}
+        maximum=0.;samples=0
         for position in verify.path_samples(plan['points']):
             state=dict(base_state);state.update(zip(verify.JOINTS,map(float,position)))
             request=self.Valid.Request();request.robot_state=self.state(state);request.group_name='arm'
@@ -366,104 +326,33 @@ class RosBackend:
             fk=self.compute_fk(state)
             error=verify.pose_error(plan['target']['pose'],fk)
             maximum=max(maximum,error['position_mm']);samples+=1
-            if error['position_mm']>1.:
-                self.report['path_failure']=dict(error=error,fk=fk,reference=plan['target']['pose'],joints=state,interpolation=plan.get('interpolation'))
-                raise ValueError('规划TCP位置漂移超过1mm: '+str(error['position_mm']))
-            if 'amplitude_deg' in plan['target']:
-                excursion=verify.pose_error(plan['target']['reference_pose'],fk)['orientation_deg']
-                if excursion>plan['target']['amplitude_deg']+.05: raise ValueError('整轮插值超出指定姿态幅度')
-                reference=verify.Rotation.from_quat(plan['target']['reference_pose'][3:])
-                vector=np.degrees((reference.inv()*verify.Rotation.from_quat(fk[3:])).as_rotvec())
-                for axis in plan['target']['axis'].split('/'):
-                    value=float(vector['xyz'.index(axis)]);entry=orientation_extrema.setdefault(axis,dict(min_deg=0.,max_deg=0.))
-                    entry['min_deg']=min(entry['min_deg'],value);entry['max_deg']=max(entry['max_deg'],value)
+            if error['position_mm']>1.: raise ValueError('规划TCP位置漂移超过1mm')
         endpoint=dict(base_state);endpoint.update(zip(verify.JOINTS,plan['points'][-1]['positions']))
         if verify.pose_error(plan['target']['pose'],self.compute_fk(endpoint))['orientation_deg']>.5:
             raise ValueError('规划末端姿态未达到目标')
-        if 'amplitude_deg' in plan['target']:
-            amplitude=plan['target']['amplitude_deg']
-            for axis,entry in orientation_extrema.items():
-                if entry['min_deg']>-amplitude+.05 or entry['max_deg']<amplitude-.05:
-                    raise ValueError('整轮路径未覆盖指定正负幅度: '+axis)
-        plan['validated_nonarm_state']={k:float(v) for k,v in base_state.items() if k not in verify.JOINTS}
-        plan['path_checks']=dict(collision_checked=True,interpolation_states=samples,max_model_position_error_mm=maximum,
-                                  model_orientation_extrema_deg=orientation_extrema)
-
-    def retime_positions(self,positions):
-        if getattr(self.options,'continuous_round',False):
-            try:
-                return verify.retime_round(positions,self.limits,self.options.speed,self.options.motion_seconds,self.workspace)
-            except ValueError:
-                self.report['timing_failure']=dict(positions=positions,limits=self.limits,speed=self.options.speed,requested_seconds=self.options.motion_seconds)
-                raise
-        return verify.retime(positions,verify.JOINTS,self.limits,self.options.speed,smooth=getattr(self.options,'sweep',False))
-
-    def ik_round_positions(self,seed,target):
-        # Humble Cartesian service applies its own coarse TOTG blend before returning positions.
-        # Use collision-aware MoveIt IK samples so our small-tolerance retiming starts from exact poses.
-        previous=target['reference_pose'];state=dict(seed);positions=[[seed[n] for n in verify.JOINTS]]
-        solved=0
-        for endpoint in target['waypoints']:
-            r0=verify.Rotation.from_quat(previous[3:]);r1=verify.Rotation.from_quat(endpoint[3:])
-            delta=(r0.inv()*r1).as_rotvec()
-            count=max(1,int(math.ceil(math.degrees(float(np.linalg.norm(delta)))/.5)))
-            for part in range(1,count+1):
-                self.fresh_feedback()
-                fraction=part/count
-                pose=(np.asarray(previous[:3])*(1-fraction)+np.asarray(endpoint[:3])*fraction).tolist()+(
-                    r0*verify.Rotation.from_rotvec(delta*fraction)).as_quat().tolist()
-                request=self.IK.Request();query=request.ik_request
-                query.group_name='arm';query.ik_link_name='tcp_link';query.avoid_collisions=True
-                query.robot_state=self.state(state);query.pose_stamped.header.frame_id='base_link'
-                query.pose_stamped.pose=self.pose_message(pose);query.timeout.sec=0;query.timeout.nanosec=500000000
-                response=self.call(self.ik,request,timeout=3.)
-                if response.error_code.val!=1: raise ValueError('整轮IK/碰撞失败，拒绝不完整路径: '+str(response.error_code.val))
-                mapping=dict(zip(response.solution.joint_state.name,response.solution.joint_state.position))
-                q=cal.finite_array([mapping[n] for n in verify.JOINTS],(6,),'整轮IK结果')
-                if np.max(np.abs(q-np.asarray(positions[-1])))>.12: raise ValueError('整轮IK关节跳跃超过0.12rad')
-                for i,n in enumerate(verify.JOINTS):
-                    if not self.limits[n]['lower']<=q[i]<=self.limits[n]['upper']: raise ValueError('IK关节越限: '+n)
-                state.update(zip(verify.JOINTS,q.tolist()));positions.append(q.tolist());solved+=1
-                if solved%60==0: print(f'只规划：已求解{solved}个带碰撞检查姿态，尚未发送运动',flush=True)
-            previous=endpoint
-        self.report['round_ik']=dict(complete=True,solved_samples=solved,angular_step_deg=.5,avoid_collisions=True)
-        return positions
+        plan['path_checks']=dict(collision_checked=True,interpolation_states=samples,max_model_position_error_mm=maximum)
 
     def plan(self,seed,target):
         self.fresh_feedback()
-        if getattr(self.options,'continuous_round',False):
-            positions=self.ik_round_positions(seed,target);fraction=1.
-        else:
-            request=self.Cart.Request();request.header.frame_id='base_link';request.group_name='arm';request.link_name='tcp_link'
-            request.start_state=self.state(seed);request.waypoints=[self.pose_message(p) for p in target.get('waypoints',[target['pose']])]
-            request.max_step=.002;request.jump_threshold=5.;request.revolute_jump_threshold=.12
-            request.prismatic_jump_threshold=.005;request.avoid_collisions=True
-            response=self.call(self.cart,request,timeout=20.)
-            if response.error_code.val!=1 or not math.isfinite(response.fraction) or response.fraction<1.-1e-9:
-                raise ValueError('笛卡尔路径不完整或IK/碰撞失败: fraction='+str(response.fraction))
-            trajectory=response.solution.joint_trajectory
-            if list(trajectory.joint_names)!=verify.JOINTS: raise ValueError('规划返回非Piper六轴轨迹')
-            positions=[list(p.positions) for p in trajectory.points]
-            fraction=float(response.fraction)
-            if not positions or np.max(np.abs(np.asarray(positions[0])-np.array([seed[n] for n in verify.JOINTS])))>1e-6:
-                raise ValueError('规划路径起点不一致')
-        points=self.retime_positions(positions)
+        request=self.Cart.Request();request.header.frame_id='base_link';request.group_name='arm';request.link_name='tcp_link'
+        request.start_state=self.state(seed);request.waypoints=[self.pose_message(p) for p in target.get('waypoints',[target['pose']])]
+        request.max_step=.002;request.jump_threshold=5.;request.revolute_jump_threshold=.12
+        request.prismatic_jump_threshold=.005;request.avoid_collisions=True
+        response=self.call(self.cart,request,timeout=20.)
+        if response.error_code.val!=1 or not math.isfinite(response.fraction) or response.fraction<1.-1e-9:
+            raise ValueError('笛卡尔路径不完整或IK/碰撞失败: fraction='+str(response.fraction))
+        trajectory=response.solution.joint_trajectory
+        if list(trajectory.joint_names)!=verify.JOINTS: raise ValueError('规划返回非Piper六轴轨迹')
+        positions=[list(p.positions) for p in trajectory.points]
+        if not positions or np.max(np.abs(np.asarray(positions[0])-np.array([seed[n] for n in verify.JOINTS])))>1e-6:
+            raise ValueError('规划路径起点不一致')
+        points=verify.retime(positions,verify.JOINTS,self.limits,self.options.speed,smooth=getattr(self.options,'sweep',False))
         if points[-1]['time_s']>60.: raise ValueError('单步规划耗时过长，拒绝执行')
-        plan=dict(interpolation='cubic' if getattr(self.options,'sweep',False) else 'quintic_zero_knots',target=target,start_state=dict(seed),end_state=dict(seed),fraction=fraction,
+        plan=dict(interpolation='cubic' if getattr(self.options,'sweep',False) else 'quintic_zero_knots',target=target,start_state=dict(seed),end_state=dict(seed),fraction=float(response.fraction),
                   joint_names=verify.JOINTS,points=points)
-        if getattr(self.options,'continuous_round',False): plan['planned_positions']=positions
         plan['end_state'].update(zip(verify.JOINTS,points[-1]['positions']))
-        self.report['planning_in_progress']=plan
-        if getattr(self.options,'continuous_round',False):
-            self.check_scene();before=self.scene_hash
         self.validate_path(plan,seed)
-        if getattr(self.options,'continuous_round',False):
-            self.check_scene()
-            if before!=self.scene_hash: raise ValueError('规划核查期间场景改变，须重新规划')
-            plan['checked_scene_hash']=self.scene_hash;plan['trajectory_proof']=self.trajectory_proof(plan)
-        self.report.pop('planning_in_progress',None)
-        label=f"±{target['amplitude_deg']:g}deg整轮" if 'amplitude_deg' in target else f"{target['angle_deg']:+.1f}deg"
-        print(f"已规划 {target['step']}: {target['axis']} {label}, {len(points)}点, {points[-1]['time_s']:.2f}s")
+        print(f"已规划 {target['step']}: {target['axis']} {target['angle_deg']:+.1f}deg, {len(points)}点, {points[-1]['time_s']:.2f}s")
         return plan
 
     def execute(self,plan,stop):
@@ -495,14 +384,12 @@ class RosBackend:
             trajectory.joint_trajectory.points.append(msg)
         goal=self.Execute.Goal();goal.trajectory=trajectory
         self.cancel_requested=False;self.cancel_future=None;self.active_goal=None;self.result_future=None
-        feedback_target=plan['target'].get('feedback_reference_pose',plan['target']['pose'])
         samples=[]
         self.report['inflight_step']=dict(step=plan['target']['step'],status='awaiting_acceptance',
-            target_pose=feedback_target,model_target_pose=plan['target']['pose'],samples=samples,started_at=datetime_iso(),
+            target_pose=plan['target']['pose'],samples=samples,started_at=datetime_iso(),
             dispatched_monotonic=time.monotonic())
         if stop.is_set(): raise InterruptedError('goal派发前中断')
         if self.parameter_changed: raise ValueError('goal派发前TCP参数改变')
-        dispatch_time=time.monotonic()
         self.pending_goal=self.execute_client.send_goal_async(goal)
         def accepted(future):
             try:
@@ -518,8 +405,7 @@ class RosBackend:
         self.active_goal=handle
         if self.result_future is None: self.result_future=handle.get_result_async()
         future=self.result_future
-        timeout=plan['points'][-1]['time_s']*1.5+5.
-        deadline=dispatch_time+20. if getattr(self.options,'continuous_round',False) else time.monotonic()+timeout
+        timeout=plan['points'][-1]['time_s']*1.5+5.;deadline=time.monotonic()+timeout
         last=0.
         self.report['inflight_step']['status']='executing'
         self.report['inflight_step']['goal_accepted']=True
@@ -528,32 +414,29 @@ class RosBackend:
             verify.verify_input_hashes(self.assessment)
             if self.parameter_changed: raise ValueError('执行中TCP参数被修改')
             if time.monotonic()>deadline: raise TimeoutError('执行超时')
-            current=self.fresh_feedback();error=verify.pose_error(feedback_target,current['pose'])
+            current=self.fresh_feedback();error=verify.pose_error(plan['target']['pose'],current['pose'])
             if error['position_mm']>self.options.position_tolerance_mm: raise ValueError('内部TCP位置跟踪偏差过大')
             if time.monotonic()-last>.1:
-                samples.append(dict(feedback=current,target_pose=feedback_target,model_target_pose=plan['target']['pose'],error=error,
+                samples.append(dict(feedback=current,target_pose=plan['target']['pose'],error=error,
                                     orientation_comparison='segment_endpoint_not_time_aligned',state='executing'))
                 last=time.monotonic()
             time.sleep(.02)
         response=future.result()
         if response is None or response.status!=GoalStatus.STATUS_SUCCEEDED or response.result.error_code.val!=1:
             raise ValueError('MoveIt执行失败/被取消')
-        stamp=self.fresh_feedback()['source_stamp_ns']
-        deadline=min(deadline,time.monotonic()+3.) if getattr(self.options,'continuous_round',False) else time.monotonic()+3.
+        stamp=self.fresh_feedback()['source_stamp_ns'];deadline=time.monotonic()+3.
         while True:
             if stop.is_set(): raise InterruptedError('执行后检查被中断')
-            if getattr(self.options,'continuous_round',False) and time.monotonic()>deadline:
-                raise TimeoutError('整轮运动超过20秒，取消并停止后续动作')
-            current=self.fresh_feedback();error=verify.pose_error(feedback_target,current['pose'])
+            current=self.fresh_feedback();error=verify.pose_error(plan['target']['pose'],current['pose'])
             if current['source_stamp_ns']!=stamp and error['position_mm']<=self.options.position_tolerance_mm and error['orientation_deg']<=2.:
                 break
             if time.monotonic()>deadline: raise ValueError('执行后新鲜真实TCP未达到目标容差')
             time.sleep(.03)
         self.active_goal=None;self.pending_goal=None;self.result_future=None
         self.report.pop('inflight_step',None)
-        return dict(step=plan['target']['step'],status='succeeded',target_pose=feedback_target,model_target_pose=plan['target']['pose'],
+        return dict(step=plan['target']['step'],status='succeeded',target_pose=plan['target']['pose'],
                     feedback=current,error=error,samples=samples,action_status=int(response.status),
-                    moveit_error_code=int(response.result.error_code.val),timestamp=datetime_iso(),motion_elapsed_s=time.monotonic()-dispatch_time)
+                    moveit_error_code=int(response.result.error_code.val),timestamp=datetime_iso())
 
     def cancel_active(self):
         self.cancel_requested=True

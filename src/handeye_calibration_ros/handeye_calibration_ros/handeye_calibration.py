@@ -19,6 +19,7 @@
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 from geometry_msgs.msg import PoseStamped, Pose
 from sensor_msgs.msg import Image, CameraInfo
 from rcl_interfaces.srv import GetParameters
@@ -37,25 +38,23 @@ import os
 import threading
 
 try:
-    from .camera_qos import image_subscription_qos
     from .charuco_detect import (
         make_board, make_detector, detect_board, board_pose, load_intrinsics,
         DEFAULT_SQUARES_X, DEFAULT_SQUARES_Y, DEFAULT_SQUARE_LENGTH,
         DEFAULT_MARKER_LENGTH, DEFAULT_DICT, FULL_MARKERS, FULL_CORNERS)
     from .axxb import (solve_axxb, holdout_validate, format_criteria_report,
                        rt_to_T, rotation_angle_deg, CONSISTENCY_MAX_DEG,
-                       MEDIAN_REL_ANGLE_MIN_DEG, MIN_USABLE_PAIRS, HOLDOUT_MAX_MM)
+                      MEDIAN_REL_ANGLE_MIN_DEG, MIN_USABLE_PAIRS, HOLDOUT_MAX_MM)
     from .validation import (validate_intrinsics, vector, camera_optical_frame,
                              CalibrationValidationError, validate_capture_frames, MIN_HANDEYE_SQUARE_PX)
 except ImportError:
-    from camera_qos import image_subscription_qos
     from charuco_detect import (
         make_board, make_detector, detect_board, board_pose, load_intrinsics,
         DEFAULT_SQUARES_X, DEFAULT_SQUARES_Y, DEFAULT_SQUARE_LENGTH,
         DEFAULT_MARKER_LENGTH, DEFAULT_DICT, FULL_MARKERS, FULL_CORNERS)
     from axxb import (solve_axxb, holdout_validate, format_criteria_report,
                       rt_to_T, rotation_angle_deg, CONSISTENCY_MAX_DEG,
-                       MEDIAN_REL_ANGLE_MIN_DEG, MIN_USABLE_PAIRS, HOLDOUT_MAX_MM)
+                      MEDIAN_REL_ANGLE_MIN_DEG, MIN_USABLE_PAIRS, HOLDOUT_MAX_MM)
     from validation import (validate_intrinsics, vector, camera_optical_frame,
                             CalibrationValidationError, validate_capture_frames, MIN_HANDEYE_SQUARE_PX)
 
@@ -231,8 +230,7 @@ class HandEyeCalibrationNode(Node):
         self.last_sampled_img_seq = None        # 拒绝重复采样同一帧
 
         # ── 常驻订阅 (整个会话保持, 采集时取最新值) ──
-        self.image_qos = image_subscription_qos(self, self.image_topic)
-        self.create_subscription(Image, self.image_topic, self.image_cb, self.image_qos)
+        self.create_subscription(Image, self.image_topic, self.image_cb, qos_profile_sensor_data)
         self.create_subscription(CameraInfo, self.camera_info_topic, self.camera_info_cb, 10)
         self.create_subscription(PoseStamped, self.piper_topic, self.pose_cb, 10)
 
@@ -921,18 +919,13 @@ class HandEyeCalibrationNode(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    calibration_node = None
+    calibration_node = HandEyeCalibrationNode()
     try:
-        calibration_node = HandEyeCalibrationNode()
         calibration_node.run()
-    except KeyboardInterrupt:
-        print('\n已退出手眼标定，已保存的采样保留。')
     finally:
-        if calibration_node is not None:
-            calibration_node.stop_spin()
-            calibration_node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
+        calibration_node.stop_spin()
+        calibration_node.destroy_node()
+        rclpy.shutdown()
 
 
 if __name__ == "__main__":

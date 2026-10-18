@@ -110,7 +110,7 @@ def test_handeye_label_cannot_bypass_gate(approve, tmp_path, case):
     elif case == "zero_quaternion":
         data["orientation"] = [0.] * 4
     elif case == "bad_holdout":
-        data["criteria"]["holdout"]["median_mm"] = 15.
+        data["criteria"]["holdout"]["median_mm"] = 16.
     elif case == "missing_criteria":
         data.pop("criteria")
     elif case == "missing_tcp":
@@ -157,7 +157,7 @@ def test_valid_handeye_promotes_and_records_tcp(approve, tmp_path):
 
 
 @pytest.mark.parametrize('key,value', [('markers', 13), ('corners', 19),
-                                      ('reproj_rms_px', .6), ('square_px', 24.9)])
+                                      ('reproj_rms_px', .6), ('square_px', 24.)])
 def test_passed_label_cannot_bypass_per_frame_promotion_gate(approve, tmp_path, key, value):
     data = handeye()
     frames = [dict(markers=17, corners=24, reproj_rms_px=.2, square_px=50.) for _ in range(20)]
@@ -168,27 +168,3 @@ def test_passed_label_cannot_bypass_per_frame_promotion_gate(approve, tmp_path, 
     with pytest.raises(approve.ApproveError):
         approve.approve_handeye('d455', source, scene_verified=True)
     assert approve.MANIFEST.read_bytes() == before
-
-
-@pytest.mark.parametrize('square_px',[25.,30.,40.])
-def test_handeye_promotion_accepts_updated_square_limit(approve,tmp_path,square_px):
-    data=handeye()
-    for frame in data['criteria']['capture_frames']:frame['square_px']=square_px
-    source=tmp_path/'square25.json';source.write_text(json.dumps(data))
-    result=approve.approve_handeye('d455',source,scene_verified=True)
-    assert result['entry']
-
-
-def test_handeye_current_user_tolerance_is_shared_with_approval(approve,tmp_path):
-    data=handeye()
-    data['criteria']['median_rel_angle_deg']=23.91
-    data['criteria']['holdout'].update(median_mm=11.7811,p95_mm=15.0657,max_mm=15.3025)
-    source=tmp_path/'relaxed_handeye.json';source.write_text(json.dumps(data))
-    assert approve.approve_handeye('d455',source,scene_verified=True)['entry']
-
-
-def test_handeye_pose_diversity_still_rejects_below_twenty_degrees(approve,tmp_path):
-    data=handeye();data['criteria']['median_rel_angle_deg']=19.9
-    source=tmp_path/'low_diversity.json';source.write_text(json.dumps(data))
-    with pytest.raises(approve.ApproveError,match='相对转角不足'):
-        approve.approve_handeye('d455',source,scene_verified=True)

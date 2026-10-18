@@ -20,9 +20,6 @@ import uuid
 
 import numpy as np
 
-# User accepted coarse calibration; this is a fit-residual criterion, not physical accuracy.
-DEFAULT_GATES = dict(min_samples=6, max_rms_mm=5., max_residual_mm=10., max_condition=100.)
-
 
 def finite_array(value, shape, name):
     raw = np.asarray(value, dtype=object)
@@ -68,8 +65,7 @@ def tcp_to_flange(position, quaternion, current_offset):
 
 
 def solve_pivot(flange_poses, preserved_rpy=(0., 0., 0.), *, min_samples=6,
-                max_rms_mm=DEFAULT_GATES['max_rms_mm'],
-                max_residual_mm=DEFAULT_GATES['max_residual_mm'], max_condition=100.):
+                max_rms_mm=2., max_residual_mm=5., max_condition=100.):
     """Fit all supplied observations. Never hide outliers or invent orientation."""
     rpy = finite_array(preserved_rpy, (3,), 'preserved_rpy')
     if type(min_samples) is not int or min_samples < 6:
@@ -200,8 +196,8 @@ def capture_live(ros_args, output=None):
             super().__init__('tcp_pivot_calibration')
             self.declare_parameter('pose_topic', '/feedback/tcp_pose')
             self.declare_parameter('result_save_path', str(Path(__file__).resolve().parents[3] / 'data/calibration/tcp'))
-            self.declare_parameter('max_rms_mm', DEFAULT_GATES['max_rms_mm'])
-            self.declare_parameter('max_residual_mm', DEFAULT_GATES['max_residual_mm'])
+            self.declare_parameter('max_rms_mm', 2.)
+            self.declare_parameter('max_residual_mm', 5.)
             self.declare_parameter('max_condition', 100.)
             self.rows, self.lock, self.sequence = deque(maxlen=400), threading.Lock(), 0
             self.create_subscription(PoseStamped, self.get_parameter('pose_topic').value, self.receive, 10)
@@ -299,8 +295,6 @@ def main(args=None):
     parser = argparse.ArgumentParser(description='固定点法TCP XYZ标定；不控制机械臂，不自动应用参数')
     parser.add_argument('--input', help='离线复算frames.json，不导入ROS、不连接设备')
     parser.add_argument('--output', help='候选JSON路径；默认保存到会话内')
-    parser.add_argument('--max-rms-mm', type=float, help='离线覆盖RMS门限(mm)；默认采用输入记录或当前5mm标准')
-    parser.add_argument('--max-residual-mm', type=float, help='离线覆盖最大单点残差门限(mm)；默认采用输入记录或当前10mm标准')
     options, ros_args = parser.parse_known_args(sys.argv[1:] if args is None else args)
     try:
         if options.input:
@@ -308,13 +302,9 @@ def main(args=None):
             source = Path(options.input).expanduser().resolve()
             payload = json.loads(source.read_text())
             target = Path(options.output).expanduser() if options.output else source.with_name('candidate.json')
-            gates = {key:value for key,value in (('max_rms_mm',options.max_rms_mm),
-                      ('max_residual_mm',options.max_residual_mm)) if value is not None}
-            result = save_solution(payload, source, target, **gates)
+            result = save_solution(payload, source, target)
             describe_result(result)
             return 0 if result['quality_status'] == 'passed' else 2
-        if options.max_rms_mm is not None or options.max_residual_mm is not None:
-            raise ValueError('--max-*-mm用于离线--input；现场采集请用ROS参数-p max_rms_mm:=...')
         return capture_live(ros_args, options.output)
     except (ValueError, KeyError, TypeError, OSError) as exc:
         print('TCP标定失败:', exc, file=sys.stderr); return 2

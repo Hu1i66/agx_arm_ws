@@ -171,9 +171,7 @@ def approve_handeye(camera: str, candidate: pathlib.Path, scene_verified: bool) 
              "holdout": data["criteria"]["holdout"], "tcp_offset": meta["tcp_offset"],
              "robot_pose_frame": meta["robot_pose_frame"],
              "transform_parent": meta["transform_parent"],
-             "transform_child": meta["transform_child"],
-             "acceptance": meta.get("acceptance"),
-             "validation_thresholds": data["criteria"].get("validation_thresholds")}
+             "transform_child": meta["transform_child"]}
     return _promote(camera, target, writer, audit,
                     {"active_file": filename, "status": "approved",
                      "status_note": "候选通过独立质量门禁，并由操作者完成现场坐标核查",

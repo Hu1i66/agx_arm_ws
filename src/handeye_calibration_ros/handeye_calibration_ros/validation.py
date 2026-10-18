@@ -6,6 +6,8 @@ try:
 except ImportError:
     from axxb import CONSISTENCY_MAX_DEG, MEDIAN_REL_ANGLE_MIN_DEG, MIN_USABLE_PAIRS, HOLDOUT_MAX_MM
 
+
+
 MIN_HANDEYE_SQUARE_PX = 25.0
 
 

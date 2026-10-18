@@ -187,25 +187,3 @@ def test_input_snapshot_preserves_nondefault_solver_gates(tmp_path):
     assert recomputed['thresholds'] == result['thresholds']
     assert recomputed['quality_status'] == result['quality_status']
     np.testing.assert_allclose(recomputed['tcp_offset'], result['tcp_offset'])
-
-
-def test_user_accepted_coarse_defaults_and_explicit_strict_override():
-    transforms=poses(noise=.002)[0]
-    coarse=tcp.solve_pivot(transforms)
-    strict=tcp.solve_pivot(transforms,max_rms_mm=2.,max_residual_mm=5.)
-    assert coarse['thresholds']==tcp.DEFAULT_GATES
-    assert coarse['quality_status']=='passed' and strict['quality_status']=='failed'
-    assert coarse['rms_mm']==strict['rms_mm']
-
-
-def test_offline_cli_overrides_recorded_strict_thresholds(tmp_path):
-    payload=session_payload()
-    for index,row in enumerate(payload['samples']):
-        row['position_m'][0]+=.004 if index%2 else -.004
-    payload['solver_options']=dict(min_samples=6,max_rms_mm=2.,max_residual_mm=5.,max_condition=100.)
-    source=tmp_path/'frames.json';target=tmp_path/'candidate.json'
-    source.write_text(json.dumps(payload))
-    assert tcp.main(['--input',str(source),'--output',str(target),'--max-rms-mm','5','--max-residual-mm','10'])==0
-    result=json.loads(target.read_text())
-    assert result['thresholds']==tcp.DEFAULT_GATES and result['sample_count']==15
-    assert tcp.solve_session(json.loads(Path(result['session_file']).read_text()))['quality_status']=='passed'

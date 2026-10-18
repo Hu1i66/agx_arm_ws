@@ -57,15 +57,14 @@ def load_candidate(path, *, allow_unqualified=False, waiver_reason=''):
     elif candidate.get('tcp_offset') is not None:
         raise ValueError('failed候选含非空TCP，格式不一致')
     strict = cal.solve_session(payload, **STRICT_GATES)
-    accepted = cal.solve_session(payload, **cal.DEFAULT_GATES)
-    qualified = source['quality_status'] == 'passed' and accepted['quality_status'] == 'passed'
+    qualified = strict['quality_status'] == 'passed'
     waiver = None
-    chosen = accepted['tcp_offset'] if qualified else None
+    chosen = strict['tcp_offset']
     if not qualified:
         failures = {c['check'] for c in strict['quality_checks'] if not c['ok']}
         if (not allow_unqualified or len(waiver_reason.strip()) < 5
                 or not failures.issubset({'rms_mm', 'max_residual_mm'})):
-            raise ValueError('候选未按当前粗标定标准通过（RMS≤5mm、max≤10mm）；仅残差不合格可经明确--allow-unqualified及--waiver-reason用于验证')
+            raise ValueError('候选未通过原质量门；仅残差不合格可经明确--allow-unqualified及--waiver-reason用于验证')
         old = cal.finite_array(payload['current_tcp_offset'], (6,), '旧TCP')
         poses = [cal.tcp_to_flange(r['position_m'], r['quaternion_xyzw'], old) for r in payload['samples']]
         a = np.vstack([np.hstack([t[:3, :3], -np.eye(3)]) for t in poses])
@@ -82,7 +81,6 @@ def load_candidate(path, *, allow_unqualified=False, waiver_reason=''):
     return dict(candidate_file=str(path), candidate_sha256=hashlib.sha256(raw).hexdigest(),
                 input_file=str(snapshot), input_sha256=hashlib.sha256(data).hexdigest(),
                 source_quality_status=candidate['quality_status'], qualified=qualified,
-                acceptance_gates=dict(cal.DEFAULT_GATES), strict_quality_status=strict['quality_status'], strict_gates=dict(STRICT_GATES),
                 quality_waiver=waiver, tcp_offset=chosen, original_metrics=dict(
                     sample_count=strict['sample_count'], rank=strict['rank'],
                     condition=strict['condition_number'], rms_mm=strict['rms_mm'],
@@ -126,33 +124,6 @@ def group_sweeps(targets, steps):
         stroke=dict(rows[-1],step=len(strokes)+1,waypoints=[r['pose'] for r in rows])
         strokes.append(stroke)
     return strokes
-
-
-def group_round(targets,start_pose,amplitude):
-    return dict(step=1,axis='/'.join(dict.fromkeys(t['axis'] for t in targets)),angle_deg=0.,amplitude_deg=float(amplitude),
-                reference_pose=list(start_pose),pose=list(start_pose),waypoints=[t['pose'] for t in targets])
-
-
-def retime_round(positions,limits,speed,duration,workspace=None):
-    import subprocess
-    if not math.isfinite(speed) or not .005<=speed<=.5: raise ValueError('整轮模式speed须0.005..0.5')
-    if not math.isfinite(duration) or not 0<duration<=18: raise ValueError('整轮轨迹须在18秒内，为20秒运动阶段留余量')
-    q=[cal.finite_array(row,(6,),'整轮关节') for row in positions]
-    root=Path(workspace) if workspace else Path(__file__).resolve().parents[3]
-    binary=root/'install/tcp_trajectory_tools/lib/tcp_trajectory_tools/tcp_time_parameterize'
-    if not binary.is_file(): raise ValueError('请先在本worktree构建tcp_trajectory_tools，缺少: '+str(binary))
-    payload=dict(positions=[row.tolist() for row in q],velocity=[limits[n]['velocity'] for n in JOINTS],
-                 acceleration=[limits[n]['acceleration'] for n in JOINTS],speed=speed,duration_s=duration)
-    result=subprocess.run([str(binary)],input=json.dumps(payload,allow_nan=False),text=True,capture_output=True,timeout=15)
-    if result.returncode: raise ValueError('20秒方案不可行，保留幅度并拒绝执行: '+result.stderr.strip()[-600:])
-    response=json.loads(result.stdout);points=response['points']
-    if not 2<=len(points)<=2000: raise ValueError('整轮采样点数量异常')
-    scaled={n:dict(b,velocity=b['velocity']*speed,acceleration=b['acceleration']*speed) for n,b in limits.items()}
-    check_trajectory(JOINTS,points,scaled)
-    if abs(points[-1]['time_s']-duration)>1e-6 or not np.allclose(points[0]['positions'],q[0],atol=1e-7,rtol=0) or not np.allclose(points[-1]['positions'],q[-1],atol=1e-7,rtol=0):
-        raise ValueError('时间参数化改变了起终点或时长')
-    if max(abs(x) for x in points[0]['velocities']+points[-1]['velocities'])>1e-7: raise ValueError('整轮起终点不为零速')
-    return points
 
 
 def cubic_segment(left,right):
@@ -312,8 +283,7 @@ def execute_prepared(plans, backend, stop, report):
             backend.guard(plan)
             if stop.is_set(): raise InterruptedError('派发前收到中断')
             target=plan.get('target',{})
-            label=f"±{target['amplitude_deg']}deg整轮" if 'amplitude_deg' in target else f"{target.get('angle_deg','')}deg"
-            print(f"开始执行 {len(report['executed_steps'])+1}/{len(plans)}: {target.get('axis','')} {label}",flush=True)
+            print(f"开始执行 {len(report['executed_steps'])+1}/{len(plans)}: {target.get('axis','')} {target.get('angle_deg','')}deg",flush=True)
             row = backend.execute(plan, stop)
             report['executed_steps'].append(row)
             print(f"已完成 {len(report['executed_steps'])}/{len(plans)}",flush=True)
@@ -358,9 +328,6 @@ def main(args=None):
     parser.add_argument('--steps', type=int, default=5)
     parser.add_argument('--axes', nargs='+', default=['x','y'])
     parser.add_argument('--cycles', type=int, default=1)
-    parser.add_argument('--continuous-round',action='store_true',help='全程单轨迹，无分段停顿，保留指定幅度')
-    parser.add_argument('--motion-seconds',type=float,default=18.,help='整轮模式轨迹秒数，最大18；运动阶段20秒超时')
-    parser.add_argument('--arm-workspace',help='运行中T1的工作空间；仅只读核对该树的进程记录')
     parser.add_argument('--sweep',action='store_true',help='每条摆动边合并为一程，三次插值连续经过中间点')
     parser.add_argument('--speed', type=float, default=.03)
     parser.add_argument('--position-tolerance-mm', type=float, default=5.)
@@ -388,25 +355,18 @@ def main(args=None):
             cal.save_json(output,report); print('人工物理观测已记录:',output); return 0
         if not math.isfinite(options.position_tolerance_mm) or not 1 <= options.position_tolerance_mm <= 10:
             raise ValueError('内部位置跟踪容差仅允许1..10mm')
-        speed_max=.5 if options.continuous_round else .1
-        if not math.isfinite(options.speed) or not .005 <= options.speed <= speed_max:
-            raise ValueError('speed超出当前模式允许范围')
-        if options.continuous_round:
-            if options.cycles!=1 or not math.isfinite(options.motion_seconds) or not 0<options.motion_seconds<=18:
-                raise ValueError('整轮模式仅1轮，motion-seconds须(0,18]')
-            options.sweep=True
+        if not math.isfinite(options.speed) or not .005 <= options.speed <= .1:
+            raise ValueError('speed仅允许0.005..0.1')
         assessment = load_candidate(options.candidate, allow_unqualified=options.allow_unqualified,
                                     waiver_reason=options.waiver_reason) if options.candidate else None
         report['candidate_assessment']=assessment
         report['settings']=dict(angle_deg=options.angle_deg,steps=options.steps,axes=options.axes,
-                                cycles=options.cycles,sweep=options.sweep,continuous_round=options.continuous_round,
-                                motion_seconds=options.motion_seconds if options.continuous_round else None,speed=options.speed,position_tolerance_mm=options.position_tolerance_mm)
+                                cycles=options.cycles,sweep=options.sweep,speed=options.speed,position_tolerance_mm=options.position_tolerance_mm)
         if options.mode == 'math':
             report['start_source']='offline_demo_non_feedback'
             report['targets']=make_targets(options.start_pose, angle_deg=options.angle_deg,steps=options.steps,
                                             axes=options.axes,cycles=options.cycles)
-            if options.continuous_round: report['targets']=[group_round(report['targets'],options.start_pose,options.angle_deg)]
-            elif options.sweep: report['targets']=group_sweeps(report['targets'],options.steps)
+            if options.sweep: report['targets']=group_sweeps(report['targets'],options.steps)
             offset=assessment['tcp_offset'] if assessment else [.02,-.01,.12,.2,-.3,.4]
             report['math_flange_targets']=[flange_target(t['pose'],offset).tolist() for t in report['targets']]
             report['execution_status']='math_only_no_motion'
@@ -424,15 +384,9 @@ def main(args=None):
             backend=create_ros_backend(assessment,options,stop,report)
             start=backend.preflight()
             report['start_source']='fresh_real_feedback'; report['start']=start
-            planning_pose=backend.compute_fk(start['joints']) if options.continuous_round else start['pose']
-            if options.continuous_round:
-                report['planning_reference']=dict(source='FK_of_fresh_actual_joint_feedback',model_pose=planning_pose,sdk_feedback_reference=start['pose'])
-            targets=make_targets(planning_pose,angle_deg=options.angle_deg,steps=options.steps,
+            targets=make_targets(start['pose'],angle_deg=options.angle_deg,steps=options.steps,
                                   axes=options.axes,cycles=options.cycles)
-            if options.continuous_round:
-                targets=[group_round(targets,planning_pose,options.angle_deg)]
-                targets[0]['feedback_reference_pose']=start['pose']
-            elif options.sweep: targets=group_sweeps(targets,options.steps)
+            if options.sweep: targets=group_sweeps(targets,options.steps)
             report['targets']=targets
             seed=start['joints']
             for target in targets:

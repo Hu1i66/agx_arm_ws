@@ -13,7 +13,6 @@
   <depend>rcl_interfaces</depend>
   <depend>sensor_msgs</depend>
   <exec_depend>moveit_msgs</exec_depend>
-  <exec_depend>tcp_trajectory_tools</exec_depend>
   <exec_depend>trajectory_msgs</exec_depend>
   <exec_depend>action_msgs</exec_depend>
   <exec_depend>agx_arm_msgs</exec_depend>
