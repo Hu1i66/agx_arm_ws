@@ -1,0 +1,24 @@
+{
+    "actual_feedback_rad": [
+    ],
+    "device_pixel_ratio": 1.5999908447265625,
+    "goal_rad": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+    ],
+    "interactive_end_effectors": 1,
+    "logical_height": 1080,
+    "logical_width": 1920,
+    "rviz_state_rad": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+    ]
+}

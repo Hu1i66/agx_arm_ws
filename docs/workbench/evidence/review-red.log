@@ -1,0 +1,109 @@
+FFFFFF                                                                   [100%]
+=================================== FAILURES ===================================
+___ test_emergency_publishes_before_broken_belt_and_stops_owned_verification ___
+
+    def test_emergency_publishes_before_broken_belt_and_stops_owned_verification():
+        obj,calls=fake_service()
+        try:Workbench.dispatch(obj,'motion.send',dict(cmd='emergency_stop'))
+        except RuntimeError:pass
+>       assert calls[0][0:2]==('send','/emergency_stop')
+E       AssertionError: assert ('belt', 'stop') == ('send', '/emergency_stop')
+E         At index 0 diff: 'belt' != 'send'
+E         Full diff:
+E         - ('send', '/emergency_stop')
+E         + ('belt', 'stop')
+
+tests/test_workbench_review_regressions.py:19: AssertionError
+___________ test_only_matching_cycle_result_and_static_failure_pause ___________
+
+    def test_only_matching_cycle_result_and_static_failure_pause():
+        t,c=tasks();t.inflight='new';t.continuous=True;t.pause=False
+>       t.result({'cycle_id':'','cycle_success':1});assert t.inflight=='new'
+E       AssertionError: assert None == 'new'
+E        +  where None = <workbench.tasks.Tasks object at 0x716520d2bac0>.inflight
+
+tests/test_workbench_review_regressions.py:27: AssertionError
+______________ test_failed_track_does_not_hide_new_vision_session ______________
+
+    def test_failed_track_does_not_hide_new_vision_session():
+        t,c=tasks();t.detection('d455',{'motion_session':'old'});t.failed.add(1)
+        t.detection('d455',{'motion_session':'new'})
+>       assert not t.failed
+E       assert not {1}
+E        +  where {1} = <workbench.tasks.Tasks object at 0x716520d47520>.failed
+
+tests/test_workbench_review_regressions.py:34: AssertionError
+___ test_unacknowledged_or_disappeared_receiver_does_not_leave_belt_running ____
+
+    def test_unacknowledged_or_disappeared_receiver_does_not_leave_belt_running():
+        t,c=tasks();t.pause=False;t.continuous=True;t.inflight='sent';t.sent_at=time.monotonic()-5;t.acknowledged=False;t.receiver_alive=lambda:False
+>       t.tick();assert t.pause and t.inflight is None and 'stop' in c
+E       assert (False)
+E        +  where False = <workbench.tasks.Tasks object at 0x716520d2ab00>.pause
+
+tests/test_workbench_review_regressions.py:38: AssertionError
+________________ test_owned_verification_emergency_reuses_stop _________________
+
+tmp_path = PosixPath('/tmp/pytest-of-lxf/pytest-10/test_owned_verification_emerge0')
+
+    def test_owned_verification_emergency_reuses_stop(tmp_path):
+        c=Calibration(tmp_path);calls=[]
+        for kind in ('tcp','verify-tcp','verify-handeye'):
+            c.sessions[kind]={'kind':kind,'proc':types.SimpleNamespace(stop=lambda k=kind:calls.append(k))}
+>       c.stop_motion_verifications();assert calls==['verify-tcp']
+E       AttributeError: 'Calibration' object has no attribute 'stop_motion_verifications'
+
+tests/test_workbench_review_regressions.py:44: AttributeError
+_____________ test_dabai_onsite_tcp_parent_and_independent_restore _____________
+
+tmp_path = PosixPath('/tmp/pytest-of-lxf/pytest-10/test_dabai_onsite_tcp_parent_a0')
+
+    def test_dabai_onsite_tcp_parent_and_independent_restore(tmp_path):
+        folder=tmp_path/'config/calibration';folder.mkdir(parents=True)
+        manifest={'cameras':{'dabai':{'mode':'eye_in_hand','parent':'link6','child':'dabai_color_optical_frame','active_file':'dabai_eye_in_hand.json'}}}
+        (folder/'manifest.json').write_text(json.dumps(manifest))
+        he={'position':[0,0,.04],'orientation':[0,0,0,1],'metadata':{'camera_id':'dabai','mode':'eye_in_hand','robot_pose_frame':'tcp_link','transform_parent':'tcp_link','transform_child':'dabai_color_optical_frame','units':'m','quaternion_order':'xyzw','tcp_offset':[0,0,.15,0,0,0]}}
+        path=tmp_path/'dabai.json';path.write_text(json.dumps(he));c=Calibration(tmp_path)
+>       r=c.apply_calibration('handeye','dabai',path);assert (folder/'dabai_eye_in_hand.json').read_bytes()==path.read_bytes()
+
+tests/test_workbench_review_regressions.py:52: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <workbench.calibration.Calibration object at 0x716520d2a200>
+kind = 'handeye', camera_id = 'dabai'
+source_path = PosixPath('/tmp/pytest-of-lxf/pytest-10/test_dabai_onsite_tcp_parent_a0/dabai.json')
+
+    def apply_calibration(self,kind,camera_id,source_path):
+        if kind=='tcp':camera_id='d455' # one public TCP, independent of camera selector
+        source=pathlib.Path(source_path).expanduser().resolve();raw=source.read_bytes();data=yaml.safe_load(raw)
+        if not isinstance(data,dict):raise ValueError('标定文件必须为对象')
+        def finite(values,n):
+            if not isinstance(values,list) or len(values)!=n or not all(isinstance(v,(int,float)) and math.isfinite(v) for v in values):raise ValueError('标定数值不完整')
+        meta=data.get('metadata',data.get('candidate',{})) or {}
+        if camera_id not in ('d455','dabai'):raise ValueError('未知相机')
+        if meta.get('units',data.get('units','m'))!='m':raise ValueError('标定长度单位须为 m')
+        if meta.get('camera_id',camera_id)!=camera_id and kind!='tcp':raise ValueError('候选所属相机与选择不一致')
+        if kind=='intrinsics':
+            finite(data['camera_matrix']['data'],9)
+            distortion=data['distortion_coefficients']['data'];finite(distortion,len(distortion))
+            if len(distortion) not in (4,5,8,12,14):raise ValueError('不支持的畸变系数数量')
+            if data.get('image_width',0)<=0 or data.get('image_height',0)<=0:raise ValueError('内参须记录图像宽高')
+            if data['camera_matrix']['data'][6:]!=[0,0,1]:raise ValueError('内参矩阵最后一行须为 [0,0,1]')
+            if data['camera_matrix']['data'][0]<=0 or data['camera_matrix']['data'][4]<=0:raise ValueError('内参焦距必须大于零')
+            target=self.root/f'config/calibration/{camera_id}/intrinsics.yaml';affected=[('detector','dual')]
+        elif kind=='handeye':
+            finite(data['position'],3);finite(data['orientation'],4)
+            expected={'mode':'eye_to_hand' if camera_id=='d455' else 'eye_in_hand','transform_parent':'base_link' if camera_id=='d455' else 'link6','transform_child':'camera_color_optical_frame' if camera_id=='d455' else 'dabai_color_optical_frame','quaternion_order':'xyzw'}
+            for key,wanted in expected.items():
+>               if meta.get(key,data.get(key,wanted))!=wanted:raise ValueError('标定坐标约定不一致: '+key)
+E               ValueError: 标定坐标约定不一致: transform_parent
+
+workbench/calibration.py:107: ValueError
+=========================== short test summary info ============================
+FAILED tests/test_workbench_review_regressions.py::test_emergency_publishes_before_broken_belt_and_stops_owned_verification
+FAILED tests/test_workbench_review_regressions.py::test_only_matching_cycle_result_and_static_failure_pause
+FAILED tests/test_workbench_review_regressions.py::test_failed_track_does_not_hide_new_vision_session
+FAILED tests/test_workbench_review_regressions.py::test_unacknowledged_or_disappeared_receiver_does_not_leave_belt_running
+FAILED tests/test_workbench_review_regressions.py::test_owned_verification_emergency_reuses_stop
+FAILED tests/test_workbench_review_regressions.py::test_dabai_onsite_tcp_parent_and_independent_restore
+6 failed in 0.12s

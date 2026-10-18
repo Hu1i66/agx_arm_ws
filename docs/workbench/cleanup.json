@@ -1,0 +1,3352 @@
+[
+  {
+    "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan",
+    "bytes": 15161195,
+    "mb": 14.459,
+    "result": "moved_to_trash",
+    "error": "",
+    "members": [
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/page-3.log",
+        "bytes": 15635
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/task-9-brief.md",
+        "bytes": 789
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/final-1920.log",
+        "bytes": 15742
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/lifecycle-gdb.log",
+        "bytes": 574
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/native-model.log",
+        "bytes": 16911
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/backend_after_fix",
+        "bytes": 147440
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/task-6-brief.md",
+        "bytes": 943
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/page-5.log",
+        "bytes": 15635
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/page-5.png",
+        "bytes": 301688
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/desktop-0.png.json",
+        "bytes": 344
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/model-feedback.png",
+        "bytes": 498365
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/final-page-4.png",
+        "bytes": 275553
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/build-final.log",
+        "bytes": 103
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/connection-fixed.png",
+        "bytes": 389741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/build-ui.log",
+        "bytes": 12052
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/desktop-1.png",
+        "bytes": 464165
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/debug-stable.log",
+        "bytes": 15634
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/main-final.png",
+        "bytes": 424659
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/polish-main.log",
+        "bytes": 15632
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/plan-path",
+        "bytes": 58
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/page-2.png",
+        "bytes": 393370
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/polish-main.png",
+        "bytes": 465462
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/native.log",
+        "bytes": 11219
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/main-fixed.png",
+        "bytes": 327176
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/page-0.png",
+        "bytes": 441288
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/main-stable-final.log",
+        "bytes": 17241
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/targeted-current.log",
+        "bytes": 340
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/gui-final-main.log",
+        "bytes": 15745
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/connection-1920.png",
+        "bytes": 396798
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/moc_backend.cpp",
+        "bytes": 5618
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/ui-connected.png",
+        "bytes": 1106970
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/debug-exit.png",
+        "bytes": 459454
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/lifecycle-before.log",
+        "bytes": 8252
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/connection-fixed.png.json",
+        "bytes": 308
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/targeted-final.log",
+        "bytes": 340
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/final-page-1.png.json",
+        "bytes": 308
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/task-4-brief.md",
+        "bytes": 1176
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/debug-stable.png",
+        "bytes": 432745
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/backend_before_fix",
+        "bytes": 147320
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/native-model.png",
+        "bytes": 322362
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/page-3.png",
+        "bytes": 346248
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/gdb-shutdown.png.json",
+        "bytes": 308
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/build-task2.log",
+        "bytes": 103
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/tests-all-related.log",
+        "bytes": 1322
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/gdb-shutdown.log",
+        "bytes": 25355
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/native-gdb.log",
+        "bytes": 11890
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/main-fixed.png.json",
+        "bytes": 308
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/gui-final-debug.log",
+        "bytes": 20539
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/page-1.png",
+        "bytes": 310575
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/asan-hang.log",
+        "bytes": 265
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/progress.md",
+        "bytes": 6835
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/final-1920.png",
+        "bytes": 370600
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/final-page-5.png.json",
+        "bytes": 308
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/action-diff-context.txt",
+        "bytes": 15783
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/page-0.log",
+        "bytes": 15635
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/task-8-brief.md",
+        "bytes": 1658
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/review-package.md",
+        "bytes": 1182
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/tests-checkpoint.log",
+        "bytes": 260
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/build-integrated.log",
+        "bytes": 362
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/final-page-5.png",
+        "bytes": 307713
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/task-3-brief.md",
+        "bytes": 1660
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/desktop-0.png",
+        "bytes": 464162
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/task-2-brief.md",
+        "bytes": 1164
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/task-11-brief.md",
+        "bytes": 1153
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/task-1-brief.md",
+        "bytes": 1305
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/main-final.png.json",
+        "bytes": 308
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/page-2.log",
+        "bytes": 15635
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/task-10-brief.md",
+        "bytes": 1279
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/main-nohidden.log",
+        "bytes": 15745
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/connection-1920-current.log",
+        "bytes": 16202
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/build-current.log",
+        "bytes": 103
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/main-stable-final.png.json",
+        "bytes": 308
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/final-page-2.png.json",
+        "bytes": 308
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/model-feedback.png.log",
+        "bytes": 19844
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/final-page-1.log",
+        "bytes": 20539
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/tests-relevant.log",
+        "bytes": 260
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/desktop-1.png.json",
+        "bytes": 344
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/main-stable-final.png",
+        "bytes": 464162
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/model-feedback.png.json",
+        "bytes": 433
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/page-4.log",
+        "bytes": 15634
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/gdb-shutdown.png",
+        "bytes": 464162
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/final-page-3.log",
+        "bytes": 15744
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/review-red.log",
+        "bytes": 7462
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/lifecycle-after.log",
+        "bytes": 0
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/rviz-reference.log",
+        "bytes": 330
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/page-1.log",
+        "bytes": 15635
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/task-5-brief.md",
+        "bytes": 1411
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/main-nohidden.png",
+        "bytes": 464162
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/final-page-2.png",
+        "bytes": 431738
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/page-4.png",
+        "bytes": 266547
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/state-red.log",
+        "bytes": 266
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/ui-connected.log",
+        "bytes": 17584
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/state-regressions",
+        "bytes": 38744
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/final-page-4.png.json",
+        "bytes": 308
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/final-page-3.png.json",
+        "bytes": 308
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/connection-fixed.log",
+        "bytes": 15745
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/ui-main.log",
+        "bytes": 18649
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/ui-main.png",
+        "bytes": 435381
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/asan-direct.log",
+        "bytes": 19853
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/final-1920.png.json",
+        "bytes": 326
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/build-polish.log",
+        "bytes": 133
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/main-fixed.log",
+        "bytes": 17605
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/final-page-2.log",
+        "bytes": 15745
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/asan-main.log",
+        "bytes": 1062
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/native.png",
+        "bytes": 44577
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/final-page-5.log",
+        "bytes": 15742
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/main-final.log",
+        "bytes": 17752
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/final-page-3.png",
+        "bytes": 315774
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/gui-final-1920.log",
+        "bytes": 15741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/backend_before_fix.cpp",
+        "bytes": 1701
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/task-7-brief.md",
+        "bytes": 991
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/main-nohidden.png.json",
+        "bytes": 308
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/build-asan.log",
+        "bytes": 103
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/build-ik.log",
+        "bytes": 674
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/final-page-4.log",
+        "bytes": 15742
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/exit-current.log",
+        "bytes": 265
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/connection-1920-current.png",
+        "bytes": 403199
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/connection-1920.log",
+        "bytes": 15635
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/debug-exit.log",
+        "bytes": 20441
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/final-page-1.png",
+        "bytes": 446231
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_guard_adds_timed_and_vali0/candidate.json",
+        "bytes": 2013
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_guard_adds_timed_and_vali0/solve_input_908197cb0fb94fe381fdca3c6ae13753.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_invalid_candidate_rejecte3/candidate.json",
+        "bytes": 1569
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_invalid_candidate_rejecte3/solve_input_6ee6037d08494b27ae26a40f30b5b218.json",
+        "bytes": 3751
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_capture_fresh_pixels_and_0/2026-10-19_03-44-10_38b560.zip",
+        "bytes": 882
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_capture_fresh_pixels_and_0/2026-10-19_03-44-10_38b560/session.json",
+        "bytes": 332
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_capture_fresh_pixels_and_0/2026-10-19_03-44-10_38b560/d455/000001_1.000000000.png",
+        "bytes": 83
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_capture_fresh_pixels_and_0/2026-10-19_03-44-10_38b560/dabai/000002_2.000000000.png",
+        "bytes": 83
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_placement_snapshot_mappin0/placements.json.previous",
+        "bytes": 1625
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_placement_snapshot_mappin0/placements.json",
+        "bytes": 1622
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_input_mutation_detected_a0/candidate.json",
+        "bytes": 2013
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_input_mutation_detected_a0/solve_input_7baf4311fca04b878cda51f725977726.json",
+        "bytes": 3742
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_plan_mode_never_calls_exe0/solve_input_17c8ad1640b142f8b636b83eb5f47fac.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_plan_mode_never_calls_exe0/plan.json",
+        "bytes": 29612
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_plan_mode_never_calls_exe0/candidate.json",
+        "bytes": 2013
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_failed_default_cli_refuse0/rejected.json",
+        "bytes": 662
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_failed_default_cli_refuse0/solve_input_3271804092644213ac877c0cf1ca99ca.json",
+        "bytes": 3751
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_failed_default_cli_refuse0/candidate.json",
+        "bytes": 1866
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_invalid_candidate_rejecte2/solve_input_c9a4c8944ead4bc0a67cd3603983b560.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_invalid_candidate_rejecte2/candidate.json",
+        "bytes": 1624
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_warning_current_instance_0/workbench-20261019-034410.jsonl",
+        "bytes": 110
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_warning_current_instance_0/export-1792352650798508800.log",
+        "bytes": 60
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_startup_offset_reads_pyth0/cmdline",
+        "bytes": 220
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_startup_offset_reads_pyth0/params.yaml",
+        "bytes": 90
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_parameter_change_after_gu0/solve_input_a712bc71232d47bdabc61f0c24ab9e8b.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_parameter_change_after_gu0/candidate.json",
+        "bytes": 2013
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_late_acceptance_cancel_ow0/solve_input_d16e7bd416a740aa99ea71fa64cb4502.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_late_acceptance_cancel_ow0/candidate.json",
+        "bytes": 2013
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_pty_lines_and_output0/interactive.py",
+        "bytes": 71
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_valid_candidate_recompute0/solve_input_af8a0d58e4164a0db23f1ced563ae6f2.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_valid_candidate_recompute0/candidate.json",
+        "bytes": 2013
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_persistent_start_shift_is0/candidate.json",
+        "bytes": 2013
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_persistent_start_shift_is0/solve_input_02d8cdc20813455590666c7b80e23bd6.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_apply_preserves_quality_a0/candidate.json",
+        "bytes": 121
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_apply_preserves_quality_a0/config/calibration/manifest.json",
+        "bytes": 752
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_apply_preserves_quality_a0/config/calibration/d455_eye_to_hand.json",
+        "bytes": 121
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_apply_preserves_quality_a0/config/calibration/workbench_backup/2026-10-19_03-44-10_68844f62/manifest.json",
+        "bytes": 108
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_apply_preserves_quality_a0/config/calibration/workbench_backup/2026-10-19_03-44-10_68844f62/selection.json",
+        "bytes": 482
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_invalid_candidate_rejecte0/solve_input_d43e65fcb3874b5591a82eb98061b74a.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_invalid_candidate_rejecte0/candidate.json",
+        "bytes": 1688
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_invalid_candidate_rejecte1/solve_input_b31ffe7ded3b4b71954a4e8706bb8fa9.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_invalid_candidate_rejecte1/candidate.json",
+        "bytes": 1688
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_small_start_shift_revalid0/candidate.json",
+        "bytes": 2013
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_small_start_shift_revalid0/solve_input_3765e2e3468d4cbf9961fb8aa7a3ef4b.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_failed_requires_explicit_0/solve_input_79bf56175ef84a559cf5407f049c1ca9.json",
+        "bytes": 3751
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-integrate/test_failed_requires_explicit_0/candidate.json",
+        "bytes": 1866
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-invalid2/test_capture_fresh_pixels_and_0/2026-10-19_04-12-53_201eb4.zip",
+        "bytes": 882
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-invalid2/test_capture_fresh_pixels_and_0/2026-10-19_04-12-53_201eb4/session.json",
+        "bytes": 332
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-invalid2/test_capture_fresh_pixels_and_0/2026-10-19_04-12-53_201eb4/d455/000001_1.000000000.png",
+        "bytes": 83
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-invalid2/test_capture_fresh_pixels_and_0/2026-10-19_04-12-53_201eb4/dabai/000002_2.000000000.png",
+        "bytes": 83
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-invalid2/test_placement_snapshot_mappin0/placements.json.previous",
+        "bytes": 1625
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-invalid2/test_placement_snapshot_mappin0/placements.json",
+        "bytes": 1622
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-invalid2/test_capture_request_waits_for0/2026-10-19_04-12-53_04509b/session.json",
+        "bytes": 190
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-invalid2/test_capture_request_waits_for0/2026-10-19_04-12-53_04509b/d455/000001_2.000000000.png",
+        "bytes": 79
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-invalid2/test_warning_current_instance_0/export-1792354373368481079.log",
+        "bytes": 61
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-invalid2/test_warning_current_instance_0/workbench-20261019-041253.jsonl",
+        "bytes": 110
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-invalid2/test_invalid_external_edit_kee0/placements.json",
+        "bytes": 8
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-be/test_capture_fresh_pixels_and_0/2026-10-19_04-07-42_9a9a96.zip",
+        "bytes": 882
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-be/test_capture_fresh_pixels_and_0/2026-10-19_04-07-42_9a9a96/session.json",
+        "bytes": 332
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-be/test_capture_fresh_pixels_and_0/2026-10-19_04-07-42_9a9a96/d455/000001_1.000000000.png",
+        "bytes": 83
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-be/test_capture_fresh_pixels_and_0/2026-10-19_04-07-42_9a9a96/dabai/000002_2.000000000.png",
+        "bytes": 83
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-be/test_placement_snapshot_mappin0/placements.json.previous",
+        "bytes": 1625
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-be/test_placement_snapshot_mappin0/placements.json",
+        "bytes": 1622
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-be/test_capture_request_waits_for0/2026-10-19_04-07-42_f3d334/session.json",
+        "bytes": 190
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-be/test_capture_request_waits_for0/2026-10-19_04-07-42_f3d334/d455/000001_2.000000000.png",
+        "bytes": 79
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-be/test_warning_current_instance_0/export-1792354062128499040.log",
+        "bytes": 61
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-be/test_warning_current_instance_0/workbench-20261019-040742.jsonl",
+        "bytes": 110
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-be/test_pty_lines_and_output0/interactive.py",
+        "bytes": 71
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-be/test_apply_preserves_quality_a0/candidate.json",
+        "bytes": 121
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-be/test_apply_preserves_quality_a0/config/calibration/manifest.json",
+        "bytes": 745
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-be/test_apply_preserves_quality_a0/config/calibration/d455_eye_to_hand.json",
+        "bytes": 121
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-be/test_apply_preserves_quality_a0/config/calibration/workbench_backup/2026-10-19_04-07-42_80e99ceb/manifest.json",
+        "bytes": 108
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-be/test_apply_preserves_quality_a0/config/calibration/workbench_backup/2026-10-19_04-07-42_80e99ceb/selection.json",
+        "bytes": 475
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_guard_adds_timed_and_vali0/solve_input_b8954f94a5954a2fa2095fad94fc6f2a.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_guard_adds_timed_and_vali0/candidate.json",
+        "bytes": 2005
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_candidate_keeps_immutable0/frames.json",
+        "bytes": 4116
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_candidate_keeps_immutable0/solve_input_7e29a778847f440a90ae6a76461918a0.json",
+        "bytes": 4524
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_candidate_keeps_immutable0/candidate.json",
+        "bytes": 2105
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_handeye_label_cannot_bypa5/bad.json",
+        "bytes": 2541
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_handeye_label_cannot_bypa5/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_handeye_label_cannot_bypa5/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_passed_label_cannot_bypas2/relaxed.json",
+        "bytes": 2540
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_passed_label_cannot_bypas2/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_passed_label_cannot_bypas2/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_invalid_candidate_rejecte3/candidate.json",
+        "bytes": 1561
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_invalid_candidate_rejecte3/solve_input_df03787284764a35a2b4b77ae4a451e5.json",
+        "bytes": 3751
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_passed_label_cannot_bypas1/relaxed.json",
+        "bytes": 2540
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_passed_label_cannot_bypas1/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_passed_label_cannot_bypas1/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_input_mutation_detected_a0/solve_input_a653bb9e6ffe48a3a18900575f36f300.json",
+        "bytes": 3742
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_input_mutation_detected_a0/candidate.json",
+        "bytes": 2005
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_handeye_label_cannot_bypa4/bad.json",
+        "bytes": 2494
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_handeye_label_cannot_bypa4/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_handeye_label_cannot_bypa4/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_plan_mode_never_calls_exe0/plan.json",
+        "bytes": 29600
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_plan_mode_never_calls_exe0/candidate.json",
+        "bytes": 2005
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_plan_mode_never_calls_exe0/solve_input_de67e7dedee04c939a22b6a6ebaabb7d.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_failed_default_cli_refuse0/rejected.json",
+        "bytes": 658
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_failed_default_cli_refuse0/solve_input_33980ac36fe24eb28aa0439a56c44862.json",
+        "bytes": 3751
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_failed_default_cli_refuse0/candidate.json",
+        "bytes": 1858
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_handeye_label_cannot_bypa2/bad.json",
+        "bytes": 2541
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_handeye_label_cannot_bypa2/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_handeye_label_cannot_bypa2/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_invalid_candidate_rejecte2/solve_input_60f4a26068dd41f3aa8d519ecbc72eba.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_invalid_candidate_rejecte2/candidate.json",
+        "bytes": 1616
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_intrinsics_label_cannot_b2/bad.yaml",
+        "bytes": 706
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_intrinsics_label_cannot_b2/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_intrinsics_label_cannot_b2/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_intrinsics_label_cannot_b4/bad.yaml",
+        "bytes": 705
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_intrinsics_label_cannot_b4/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_intrinsics_label_cannot_b4/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_approval_backups_unique_e0/dabai.yaml",
+        "bytes": 707
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_approval_backups_unique_e0/d455.yaml",
+        "bytes": 707
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_approval_backups_unique_e0/config/calibration/manifest.json",
+        "bytes": 12491
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_approval_backups_unique_e0/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_approval_backups_unique_e0/config/calibration/.promotion.lock",
+        "bytes": 0
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_approval_backups_unique_e0/config/calibration/d455/intrinsics.yaml",
+        "bytes": 751
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_approval_backups_unique_e0/config/calibration/approved_backup/same-second_6e2c0f62e28e415a96c09fab5154730d/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_approval_backups_unique_e0/config/calibration/approved_backup/same-second_6e2c0f62e28e415a96c09fab5154730d/intrinsics.yaml",
+        "bytes": 8
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_approval_backups_unique_e0/config/calibration/approved_backup/same-second_ceed02e6a7eb4443b5d444356e741ec2/manifest.json",
+        "bytes": 11461
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_approval_backups_unique_e0/config/calibration/approved_backup/same-second_ceed02e6a7eb4443b5d444356e741ec2/intrinsics.yaml",
+        "bytes": 9
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_approval_backups_unique_e0/config/calibration/dabai/intrinsics.yaml",
+        "bytes": 751
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_startup_offset_reads_pyth0/cmdline",
+        "bytes": 216
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_startup_offset_reads_pyth0/params.yaml",
+        "bytes": 90
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_parameter_change_after_gu0/candidate.json",
+        "bytes": 2005
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_parameter_change_after_gu0/solve_input_28b9c15fafb64d4caf0e296a4ec1f976.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_intrinsics_label_cannot_b3/bad.yaml",
+        "bytes": 682
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_intrinsics_label_cannot_b3/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_intrinsics_label_cannot_b3/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_handeye_label_cannot_bypa6/bad.json",
+        "bytes": 2512
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_handeye_label_cannot_bypa6/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_handeye_label_cannot_bypa6/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_offline_recomputes_raw_tc0/solve_input_eabc553d70fd4f0d8ea6eb6a42f3a361.json",
+        "bytes": 4524
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_offline_recomputes_raw_tc0/frames.json",
+        "bytes": 2940
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_offline_recomputes_raw_tc0/candidate.json",
+        "bytes": 2105
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_late_acceptance_cancel_ow0/solve_input_4fad2ad506c84f62a2fd03ff64a5f12f.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_late_acceptance_cancel_ow0/candidate.json",
+        "bytes": 2005
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_intrinsics_label_cannot_b0/bad.yaml",
+        "bytes": 707
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_intrinsics_label_cannot_b0/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_intrinsics_label_cannot_b0/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_intrinsics_label_cannot_b5/bad.yaml",
+        "bytes": 706
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_intrinsics_label_cannot_b5/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_intrinsics_label_cannot_b5/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_valid_candidate_recompute0/solve_input_34089552eda54206bcf80e7f8550c8f2.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_valid_candidate_recompute0/candidate.json",
+        "bytes": 2005
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_passed_label_cannot_bypas3/relaxed.json",
+        "bytes": 2540
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_passed_label_cannot_bypas3/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_passed_label_cannot_bypas3/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_handeye_label_cannot_bypa1/bad.json",
+        "bytes": 2540
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_handeye_label_cannot_bypa1/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_handeye_label_cannot_bypa1/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_intrinsics_label_cannot_b1/bad.yaml",
+        "bytes": 707
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_intrinsics_label_cannot_b1/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_intrinsics_label_cannot_b1/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_valid_handeye_promotes_an0/valid.json",
+        "bytes": 2535
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_valid_handeye_promotes_an0/config/calibration/manifest.json",
+        "bytes": 11799
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_valid_handeye_promotes_an0/config/calibration/dabai_eye_in_hand.json",
+        "bytes": 237
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_valid_handeye_promotes_an0/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_valid_handeye_promotes_an0/config/calibration/.promotion.lock",
+        "bytes": 0
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_valid_handeye_promotes_an0/config/calibration/approved_backup/2026-10-19_03-21-59_9c650aaeb9f04c35bee0306387a7d47e/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_input_snapshot_preserves_0/solve_input_053f4b15acab4bfba0c7a4ec413f4f01.json",
+        "bytes": 4523
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_input_snapshot_preserves_0/candidate.json",
+        "bytes": 2104
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_passed_label_cannot_bypas0/relaxed.json",
+        "bytes": 2540
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_passed_label_cannot_bypas0/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_passed_label_cannot_bypas0/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_persistent_start_shift_is0/solve_input_3b39d61ce4b34fb7a84f4977057cff99.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_persistent_start_shift_is0/candidate.json",
+        "bytes": 2005
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_invalid_candidate_rejecte0/solve_input_fc79c58e5be2449d8a1958f9f502a09a.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_invalid_candidate_rejecte0/candidate.json",
+        "bytes": 1680
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/cal0/driver.py",
+        "bytes": 16380
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/cal0/bad_intrinsics.yaml",
+        "bytes": 31
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/cal0/ws/config/calibration/manifest.json",
+        "bytes": 13892
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/cal0/ws/config/calibration/dabai_eye_in_hand.json",
+        "bytes": 308
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/cal0/ws/config/calibration/d455_eye_to_hand.json",
+        "bytes": 312
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/cal0/ws/config/calibration/.promotion.lock",
+        "bytes": 0
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/cal0/ws/config/calibration/d455/intrinsics.yaml",
+        "bytes": 1784
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/cal0/ws/config/calibration/approved_backup/2026-10-19_03-21-58_a040601711b74883a20c27ec419c8c6a/manifest.json",
+        "bytes": 11389
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/cal0/ws/config/calibration/approved_backup/2026-10-19_03-21-57_a349bc795e9d42d6bb109423e8a3dec5/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/cal0/ws/config/calibration/approved_backup/2026-10-19_03-21-58_66809c0c703e43c985a9448a09261e4f/manifest.json",
+        "bytes": 12621
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/cal0/session/he_dabai.json",
+        "bytes": 2639
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/cal0/session/he_bad.json",
+        "bytes": 2648
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/cal0/session/plain.yaml",
+        "bytes": 199
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/cal0/session/candidate_fail.yaml",
+        "bytes": 1757
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/cal0/session/he_candidate.json",
+        "bytes": 2648
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/cal0/session/candidate.yaml",
+        "bytes": 1750
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_handeye_label_cannot_bypa0/bad.json",
+        "bytes": 2540
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_handeye_label_cannot_bypa0/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_handeye_label_cannot_bypa0/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_handeye_label_cannot_bypa3/bad.json",
+        "bytes": 856
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_handeye_label_cannot_bypa3/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_handeye_label_cannot_bypa3/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_invalid_candidate_rejecte1/candidate.json",
+        "bytes": 1680
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_invalid_candidate_rejecte1/solve_input_bae82bc30b504916893827df63e39f98.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_small_start_shift_revalid0/solve_input_5a08265f20b14dad88dd55981cb0f41c.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_small_start_shift_revalid0/candidate.json",
+        "bytes": 2005
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_failed_requires_explicit_0/solve_input_8778fe2e31c64520bf0cb42dcc8b2443.json",
+        "bytes": 3751
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-task1/test_failed_requires_explicit_0/candidate.json",
+        "bytes": 1858
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-next2/test_capture_fresh_pixels_and_0/2026-10-19_04-04-08_7a3d71.zip",
+        "bytes": 882
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-next2/test_capture_fresh_pixels_and_0/2026-10-19_04-04-08_7a3d71/session.json",
+        "bytes": 332
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-next2/test_capture_fresh_pixels_and_0/2026-10-19_04-04-08_7a3d71/d455/000001_1.000000000.png",
+        "bytes": 83
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-next2/test_capture_fresh_pixels_and_0/2026-10-19_04-04-08_7a3d71/dabai/000002_2.000000000.png",
+        "bytes": 83
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-next2/test_placement_snapshot_mappin0/placements.json.previous",
+        "bytes": 1625
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-next2/test_placement_snapshot_mappin0/placements.json",
+        "bytes": 1622
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-next2/test_capture_request_waits_for0/2026-10-19_04-04-08_28e1ad/session.json",
+        "bytes": 190
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-next2/test_capture_request_waits_for0/2026-10-19_04-04-08_28e1ad/d455/000001_2.000000000.png",
+        "bytes": 79
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-next2/test_warning_current_instance_0/export-1792353848925761229.log",
+        "bytes": 60
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-next2/test_warning_current_instance_0/workbench-20261019-040408.jsonl",
+        "bytes": 109
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_guard_adds_timed_and_vali0/solve_input_09d53dfa2bb54970bb1864d040d5ac77.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_guard_adds_timed_and_vali0/candidate.json",
+        "bytes": 2015
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_ensure_camera_tf_external0/.runtime/locks/camera_tf_d455.transition.lock",
+        "bytes": 0
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_candidate_keeps_immutable0/frames.json",
+        "bytes": 4116
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_candidate_keeps_immutable0/solve_input_6773a29e0eea42e2ba8ce6b4993a7066.json",
+        "bytes": 4524
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_candidate_keeps_immutable0/candidate.json",
+        "bytes": 2115
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_handeye_label_cannot_bypa5/bad.json",
+        "bytes": 2541
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_handeye_label_cannot_bypa5/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_handeye_label_cannot_bypa5/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_passed_label_cannot_bypas2/relaxed.json",
+        "bytes": 2540
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_passed_label_cannot_bypas2/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_passed_label_cannot_bypas2/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_invalid_candidate_rejecte3/candidate.json",
+        "bytes": 1571
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_invalid_candidate_rejecte3/solve_input_e0c38697f3434d528806bb3ff99c477d.json",
+        "bytes": 3751
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_capture_fresh_pixels_and_0/2026-10-19_04-08-02_87eee0.zip",
+        "bytes": 882
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_capture_fresh_pixels_and_0/2026-10-19_04-08-02_87eee0/session.json",
+        "bytes": 332
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_capture_fresh_pixels_and_0/2026-10-19_04-08-02_87eee0/d455/000001_1.000000000.png",
+        "bytes": 83
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_capture_fresh_pixels_and_0/2026-10-19_04-08-02_87eee0/dabai/000002_2.000000000.png",
+        "bytes": 83
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_passed_label_cannot_bypas1/relaxed.json",
+        "bytes": 2540
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_passed_label_cannot_bypas1/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_passed_label_cannot_bypas1/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_placement_snapshot_mappin0/placements.json.previous",
+        "bytes": 1625
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_placement_snapshot_mappin0/placements.json",
+        "bytes": 1622
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_input_mutation_detected_a0/candidate.json",
+        "bytes": 2015
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_input_mutation_detected_a0/solve_input_e02115ea2de9460ba8b963595f58ca7f.json",
+        "bytes": 3742
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/vis0/driver.py",
+        "bytes": 4853
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_ensure_camera_external_co0/.runtime/locks/camera_d455.transition.lock",
+        "bytes": 0
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_handeye_label_cannot_bypa4/bad.json",
+        "bytes": 2494
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_handeye_label_cannot_bypa4/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_handeye_label_cannot_bypa4/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_plan_mode_never_calls_exe0/solve_input_2bdd0e0955e7405792653af5d99bf0b8.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_plan_mode_never_calls_exe0/plan.json",
+        "bytes": 29615
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_plan_mode_never_calls_exe0/candidate.json",
+        "bytes": 2015
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_failed_default_cli_refuse0/rejected.json",
+        "bytes": 663
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_failed_default_cli_refuse0/solve_input_8ec452cb470f4a30b9ee1ca2b8462ace.json",
+        "bytes": 3751
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_failed_default_cli_refuse0/candidate.json",
+        "bytes": 1868
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_ensure_detector_mode_conf0/.runtime/registry.json",
+        "bytes": 2
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_ensure_detector_mode_conf0/.runtime/locks/detector_d455.transition.lock",
+        "bytes": 0
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_ensure_detector_mode_conf0/.runtime/locks/registry.lock",
+        "bytes": 0
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_handeye_label_cannot_bypa2/bad.json",
+        "bytes": 2541
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_handeye_label_cannot_bypa2/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_handeye_label_cannot_bypa2/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_invalid_candidate_rejecte2/solve_input_ea6a94b7b89d4f5b95f06c8b01d86d56.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_invalid_candidate_rejecte2/candidate.json",
+        "bytes": 1626
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_dry_run_has_no_side_effec0/config/runtime.json",
+        "bytes": 4375
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_dry_run_has_no_side_effec0/config/calibration/manifest.json",
+        "bytes": 148
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_dry_run_has_no_side_effec0/config/calibration/tcp.json",
+        "bytes": 94
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_dry_run_has_no_side_effec0/config/calibration/d455_eye_to_hand.json",
+        "bytes": 52
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_capture_request_waits_for0/2026-10-19_04-08-02_4d14cf/session.json",
+        "bytes": 190
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_capture_request_waits_for0/2026-10-19_04-08-02_4d14cf/d455/000001_2.000000000.png",
+        "bytes": 79
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_ready_graspnet_interface_0/g.log",
+        "bytes": 25
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_ready_graspnet_interface_0/graspnet.log",
+        "bytes": 82
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_intrinsics_label_cannot_b2/bad.yaml",
+        "bytes": 706
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_intrinsics_label_cannot_b2/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_intrinsics_label_cannot_b2/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_intrinsics_label_cannot_b4/bad.yaml",
+        "bytes": 705
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_intrinsics_label_cannot_b4/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_intrinsics_label_cannot_b4/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_approval_backups_unique_e0/dabai.yaml",
+        "bytes": 707
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_approval_backups_unique_e0/d455.yaml",
+        "bytes": 707
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_approval_backups_unique_e0/config/calibration/manifest.json",
+        "bytes": 12501
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_approval_backups_unique_e0/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_approval_backups_unique_e0/config/calibration/.promotion.lock",
+        "bytes": 0
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_approval_backups_unique_e0/config/calibration/d455/intrinsics.yaml",
+        "bytes": 751
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_approval_backups_unique_e0/config/calibration/approved_backup/same-second_610a8ef76e4844a6a9655ac6f635fb4a/manifest.json",
+        "bytes": 11466
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_approval_backups_unique_e0/config/calibration/approved_backup/same-second_610a8ef76e4844a6a9655ac6f635fb4a/intrinsics.yaml",
+        "bytes": 9
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_approval_backups_unique_e0/config/calibration/approved_backup/same-second_e1159cfc97b6442f96920d89ac7355f3/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_approval_backups_unique_e0/config/calibration/approved_backup/same-second_e1159cfc97b6442f96920d89ac7355f3/intrinsics.yaml",
+        "bytes": 8
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_approval_backups_unique_e0/config/calibration/dabai/intrinsics.yaml",
+        "bytes": 751
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_warning_current_instance_0/export-1792354082527124667.log",
+        "bytes": 61
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_warning_current_instance_0/workbench-20261019-040802.jsonl",
+        "bytes": 110
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_startup_offset_reads_pyth0/cmdline",
+        "bytes": 221
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_startup_offset_reads_pyth0/params.yaml",
+        "bytes": 90
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_parameter_change_after_gu0/candidate.json",
+        "bytes": 2015
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_parameter_change_after_gu0/solve_input_52f539d528ef42d98937fd2ffff45b4c.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_intrinsics_label_cannot_b3/bad.yaml",
+        "bytes": 682
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_intrinsics_label_cannot_b3/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_intrinsics_label_cannot_b3/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_handeye_label_cannot_bypa6/bad.json",
+        "bytes": 2512
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_handeye_label_cannot_bypa6/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_handeye_label_cannot_bypa6/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_offline_recomputes_raw_tc0/solve_input_9f44694f681d464c829fe636d2067cc1.json",
+        "bytes": 4524
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_offline_recomputes_raw_tc0/frames.json",
+        "bytes": 2940
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_offline_recomputes_raw_tc0/candidate.json",
+        "bytes": 2115
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_late_acceptance_cancel_ow0/solve_input_c985b80bacd94ee48fcf407ce2a2ed4b.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_late_acceptance_cancel_ow0/candidate.json",
+        "bytes": 2015
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_intrinsics_label_cannot_b0/bad.yaml",
+        "bytes": 707
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_intrinsics_label_cannot_b0/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_intrinsics_label_cannot_b0/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_pty_lines_and_output0/interactive.py",
+        "bytes": 71
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_intrinsics_label_cannot_b5/bad.yaml",
+        "bytes": 706
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_intrinsics_label_cannot_b5/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_intrinsics_label_cannot_b5/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_valid_candidate_recompute0/candidate.json",
+        "bytes": 2015
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_valid_candidate_recompute0/solve_input_4fe9128bdbd94b4aa21cd27ca1ae2e9a.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_passed_label_cannot_bypas3/relaxed.json",
+        "bytes": 2540
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_passed_label_cannot_bypas3/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_passed_label_cannot_bypas3/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_handeye_label_cannot_bypa1/bad.json",
+        "bytes": 2540
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_handeye_label_cannot_bypa1/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_handeye_label_cannot_bypa1/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_intrinsics_label_cannot_b1/bad.yaml",
+        "bytes": 707
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_intrinsics_label_cannot_b1/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_intrinsics_label_cannot_b1/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_valid_handeye_promotes_an0/valid.json",
+        "bytes": 2535
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_valid_handeye_promotes_an0/config/calibration/manifest.json",
+        "bytes": 11809
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_valid_handeye_promotes_an0/config/calibration/dabai_eye_in_hand.json",
+        "bytes": 237
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_valid_handeye_promotes_an0/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_valid_handeye_promotes_an0/config/calibration/.promotion.lock",
+        "bytes": 0
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_valid_handeye_promotes_an0/config/calibration/approved_backup/2026-10-19_04-08-05_e93be23d137447358211183a4a8a494d/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_input_snapshot_preserves_0/candidate.json",
+        "bytes": 2114
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_input_snapshot_preserves_0/solve_input_e10409d1db214045881349057c8f56d3.json",
+        "bytes": 4523
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_ensure_reuses_existing_re0/.runtime/registry.json",
+        "bytes": 2
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_ensure_reuses_existing_re0/.runtime/locks/registry.lock",
+        "bytes": 0
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_ensure_reuses_existing_re0/.runtime/locks/camera_d455.transition.lock",
+        "bytes": 0
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_passed_label_cannot_bypas0/relaxed.json",
+        "bytes": 2540
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_passed_label_cannot_bypas0/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_passed_label_cannot_bypas0/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_ensure_detector_external_0/.runtime/locks/detector_d455.transition.lock",
+        "bytes": 0
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_persistent_start_shift_is0/solve_input_332f39a5f2c94b5497e2b0be6db90559.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_persistent_start_shift_is0/candidate.json",
+        "bytes": 2015
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_apply_preserves_quality_a0/candidate.json",
+        "bytes": 121
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_apply_preserves_quality_a0/config/calibration/manifest.json",
+        "bytes": 753
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_apply_preserves_quality_a0/config/calibration/d455_eye_to_hand.json",
+        "bytes": 121
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_apply_preserves_quality_a0/config/calibration/workbench_backup/2026-10-19_04-08-02_aad6c1e7/manifest.json",
+        "bytes": 108
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_apply_preserves_quality_a0/config/calibration/workbench_backup/2026-10-19_04-08-02_aad6c1e7/selection.json",
+        "bytes": 483
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_invalid_candidate_rejecte0/candidate.json",
+        "bytes": 1690
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_invalid_candidate_rejecte0/solve_input_39711b72bb76437ba65012be1307f7c8.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_handeye_label_cannot_bypa0/bad.json",
+        "bytes": 2540
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_handeye_label_cannot_bypa0/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_handeye_label_cannot_bypa0/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_handeye_label_cannot_bypa3/bad.json",
+        "bytes": 856
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_handeye_label_cannot_bypa3/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_handeye_label_cannot_bypa3/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_invalid_candidate_rejecte1/solve_input_ab62099918334172aace8111f8e7673d.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_invalid_candidate_rejecte1/candidate.json",
+        "bytes": 1690
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_small_start_shift_revalid0/candidate.json",
+        "bytes": 2015
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_small_start_shift_revalid0/solve_input_eef6db77343b4ee48187890b5f596461.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_failed_requires_explicit_0/solve_input_f4b31584451f4cdcaf9d9022163fbff8.json",
+        "bytes": 3751
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-checkpoint/test_failed_requires_explicit_0/candidate.json",
+        "bytes": 1868
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_guard_adds_timed_and_vali0/solve_input_8dbdb4d578c240efbd0672ddbe31d64a.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_guard_adds_timed_and_vali0/candidate.json",
+        "bytes": 2017
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_ensure_camera_tf_external0/.runtime/locks/camera_tf_d455.transition.lock",
+        "bytes": 0
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_candidate_keeps_immutable0/frames.json",
+        "bytes": 4116
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_candidate_keeps_immutable0/candidate.json",
+        "bytes": 2117
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_candidate_keeps_immutable0/solve_input_258e246c3d7d425094569fafceb3b8b1.json",
+        "bytes": 4524
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_handeye_label_cannot_bypa5/bad.json",
+        "bytes": 2541
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_handeye_label_cannot_bypa5/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_handeye_label_cannot_bypa5/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_passed_label_cannot_bypas2/relaxed.json",
+        "bytes": 2540
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_passed_label_cannot_bypas2/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_passed_label_cannot_bypas2/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_invalid_candidate_rejecte3/candidate.json",
+        "bytes": 1573
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_invalid_candidate_rejecte3/solve_input_707f9f8556ff4732872719a0ea0a9a89.json",
+        "bytes": 3751
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_capture_fresh_pixels_and_0/2026-10-19_04-24-01_e25105.zip",
+        "bytes": 882
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_capture_fresh_pixels_and_0/2026-10-19_04-24-01_e25105/session.json",
+        "bytes": 332
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_capture_fresh_pixels_and_0/2026-10-19_04-24-01_e25105/d455/000001_1.000000000.png",
+        "bytes": 83
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_capture_fresh_pixels_and_0/2026-10-19_04-24-01_e25105/dabai/000002_2.000000000.png",
+        "bytes": 83
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_passed_label_cannot_bypas1/relaxed.json",
+        "bytes": 2540
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_passed_label_cannot_bypas1/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_passed_label_cannot_bypas1/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_placement_snapshot_mappin0/placements.json.previous",
+        "bytes": 1625
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_placement_snapshot_mappin0/placements.json",
+        "bytes": 1622
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_input_mutation_detected_a0/solve_input_4b5c61332f0c479cba9290db0af9c53d.json",
+        "bytes": 3742
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_input_mutation_detected_a0/candidate.json",
+        "bytes": 2017
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/vis0/driver.py",
+        "bytes": 4853
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_ensure_camera_external_co0/.runtime/locks/camera_d455.transition.lock",
+        "bytes": 0
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_handeye_label_cannot_bypa4/bad.json",
+        "bytes": 2494
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_handeye_label_cannot_bypa4/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_handeye_label_cannot_bypa4/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_plan_mode_never_calls_exe0/plan.json",
+        "bytes": 29618
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_plan_mode_never_calls_exe0/candidate.json",
+        "bytes": 2017
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_plan_mode_never_calls_exe0/solve_input_1f114ab3e8d44e5abcecc1517bbe697b.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_failed_default_cli_refuse0/rejected.json",
+        "bytes": 664
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_failed_default_cli_refuse0/solve_input_c83f0b94f43243448559cf5e059f1fb7.json",
+        "bytes": 3751
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_failed_default_cli_refuse0/candidate.json",
+        "bytes": 1870
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_ensure_detector_mode_conf0/.runtime/registry.json",
+        "bytes": 2
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_ensure_detector_mode_conf0/.runtime/locks/detector_d455.transition.lock",
+        "bytes": 0
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_ensure_detector_mode_conf0/.runtime/locks/registry.lock",
+        "bytes": 0
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_handeye_label_cannot_bypa2/bad.json",
+        "bytes": 2541
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_handeye_label_cannot_bypa2/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_handeye_label_cannot_bypa2/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_invalid_candidate_rejecte2/solve_input_86d0e43a2b5945c1a21938c635939890.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_invalid_candidate_rejecte2/candidate.json",
+        "bytes": 1628
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_dry_run_has_no_side_effec0/config/runtime.json",
+        "bytes": 4375
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_dry_run_has_no_side_effec0/config/calibration/manifest.json",
+        "bytes": 148
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_dry_run_has_no_side_effec0/config/calibration/tcp.json",
+        "bytes": 94
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_dry_run_has_no_side_effec0/config/calibration/d455_eye_to_hand.json",
+        "bytes": 52
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_capture_request_waits_for0/2026-10-19_04-24-01_621366/session.json",
+        "bytes": 190
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_capture_request_waits_for0/2026-10-19_04-24-01_621366/d455/000001_2.000000000.png",
+        "bytes": 79
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_ready_graspnet_interface_0/g.log",
+        "bytes": 25
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_ready_graspnet_interface_0/graspnet.log",
+        "bytes": 82
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_intrinsics_label_cannot_b2/bad.yaml",
+        "bytes": 706
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_intrinsics_label_cannot_b2/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_intrinsics_label_cannot_b2/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_intrinsics_label_cannot_b4/bad.yaml",
+        "bytes": 705
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_intrinsics_label_cannot_b4/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_intrinsics_label_cannot_b4/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_wrapper_preserves_argv_ex0/wrapper.py",
+        "bytes": 1464
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_wrapper_preserves_argv_ex0/canonical.py",
+        "bytes": 97
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_approval_backups_unique_e0/dabai.yaml",
+        "bytes": 707
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_approval_backups_unique_e0/d455.yaml",
+        "bytes": 707
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_approval_backups_unique_e0/config/calibration/manifest.json",
+        "bytes": 12503
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_approval_backups_unique_e0/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_approval_backups_unique_e0/config/calibration/.promotion.lock",
+        "bytes": 0
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_approval_backups_unique_e0/config/calibration/d455/intrinsics.yaml",
+        "bytes": 751
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_approval_backups_unique_e0/config/calibration/approved_backup/same-second_16891b765c8f48c48069890d3ef8f5f0/manifest.json",
+        "bytes": 11467
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_approval_backups_unique_e0/config/calibration/approved_backup/same-second_16891b765c8f48c48069890d3ef8f5f0/intrinsics.yaml",
+        "bytes": 9
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_approval_backups_unique_e0/config/calibration/approved_backup/same-second_ad484e69ebf24fb6836014048f0b659f/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_approval_backups_unique_e0/config/calibration/approved_backup/same-second_ad484e69ebf24fb6836014048f0b659f/intrinsics.yaml",
+        "bytes": 8
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_approval_backups_unique_e0/config/calibration/dabai/intrinsics.yaml",
+        "bytes": 751
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_warning_current_instance_0/workbench-20261019-042401.jsonl",
+        "bytes": 110
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_warning_current_instance_0/export-1792355041186265728.log",
+        "bytes": 61
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_startup_offset_reads_pyth0/cmdline",
+        "bytes": 222
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_startup_offset_reads_pyth0/params.yaml",
+        "bytes": 90
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_parameter_change_after_gu0/solve_input_19bcc899012147978b52a0966eb90604.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_parameter_change_after_gu0/candidate.json",
+        "bytes": 2017
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_intrinsics_label_cannot_b3/bad.yaml",
+        "bytes": 682
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_intrinsics_label_cannot_b3/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_intrinsics_label_cannot_b3/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_handeye_label_cannot_bypa6/bad.json",
+        "bytes": 2512
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_handeye_label_cannot_bypa6/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_handeye_label_cannot_bypa6/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_offline_recomputes_raw_tc0/solve_input_37b31000d9214112b09824dc680545f2.json",
+        "bytes": 4524
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_offline_recomputes_raw_tc0/frames.json",
+        "bytes": 2940
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_offline_recomputes_raw_tc0/candidate.json",
+        "bytes": 2117
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_late_acceptance_cancel_ow0/solve_input_4ecf8162d9a94550adc39711346f68ec.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_late_acceptance_cancel_ow0/candidate.json",
+        "bytes": 2017
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_intrinsics_label_cannot_b0/bad.yaml",
+        "bytes": 707
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_intrinsics_label_cannot_b0/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_intrinsics_label_cannot_b0/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_pty_lines_and_output0/interactive.py",
+        "bytes": 71
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_intrinsics_label_cannot_b5/bad.yaml",
+        "bytes": 706
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_intrinsics_label_cannot_b5/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_intrinsics_label_cannot_b5/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_valid_candidate_recompute0/solve_input_b63b441687f049ef9c6a2446473842ae.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_valid_candidate_recompute0/candidate.json",
+        "bytes": 2017
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_passed_label_cannot_bypas3/relaxed.json",
+        "bytes": 2540
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_passed_label_cannot_bypas3/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_passed_label_cannot_bypas3/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_handeye_label_cannot_bypa1/bad.json",
+        "bytes": 2540
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_handeye_label_cannot_bypa1/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_handeye_label_cannot_bypa1/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_intrinsics_label_cannot_b1/bad.yaml",
+        "bytes": 707
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_intrinsics_label_cannot_b1/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_intrinsics_label_cannot_b1/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_invalid_external_edit_kee0/placements.json",
+        "bytes": 8
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_valid_handeye_promotes_an0/valid.json",
+        "bytes": 2535
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_valid_handeye_promotes_an0/config/calibration/manifest.json",
+        "bytes": 11811
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_valid_handeye_promotes_an0/config/calibration/dabai_eye_in_hand.json",
+        "bytes": 237
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_valid_handeye_promotes_an0/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_valid_handeye_promotes_an0/config/calibration/.promotion.lock",
+        "bytes": 0
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_valid_handeye_promotes_an0/config/calibration/approved_backup/2026-10-19_04-24-04_58ec7ab673a1476d8089671b65f4e7bc/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_input_snapshot_preserves_0/solve_input_8c08c4b0ecde4e6bacfb21a2efdcfb88.json",
+        "bytes": 4523
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_input_snapshot_preserves_0/candidate.json",
+        "bytes": 2116
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_ensure_reuses_existing_re0/.runtime/registry.json",
+        "bytes": 2
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_ensure_reuses_existing_re0/.runtime/locks/registry.lock",
+        "bytes": 0
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_ensure_reuses_existing_re0/.runtime/locks/camera_d455.transition.lock",
+        "bytes": 0
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_passed_label_cannot_bypas0/relaxed.json",
+        "bytes": 2540
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_passed_label_cannot_bypas0/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_passed_label_cannot_bypas0/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_ensure_detector_external_0/.runtime/locks/detector_d455.transition.lock",
+        "bytes": 0
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_persistent_start_shift_is0/candidate.json",
+        "bytes": 2017
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_persistent_start_shift_is0/solve_input_0214f83373da4f5d887b981ff247a8c5.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_apply_preserves_quality_a0/candidate.json",
+        "bytes": 121
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_apply_preserves_quality_a0/config/calibration/manifest.json",
+        "bytes": 754
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_apply_preserves_quality_a0/config/calibration/d455_eye_to_hand.json",
+        "bytes": 121
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_apply_preserves_quality_a0/config/calibration/workbench_backup/2026-10-19_04-24-01_ba210475/manifest.json",
+        "bytes": 108
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_apply_preserves_quality_a0/config/calibration/workbench_backup/2026-10-19_04-24-01_ba210475/selection.json",
+        "bytes": 484
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_invalid_candidate_rejecte0/candidate.json",
+        "bytes": 1692
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_invalid_candidate_rejecte0/solve_input_32d41faea8d3495a8b8a18abbe44c11c.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_wrapper_missing_canonical0/w.py",
+        "bytes": 1464
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_handeye_label_cannot_bypa0/bad.json",
+        "bytes": 2540
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_handeye_label_cannot_bypa0/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_handeye_label_cannot_bypa0/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_handeye_label_cannot_bypa3/bad.json",
+        "bytes": 856
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_handeye_label_cannot_bypa3/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_handeye_label_cannot_bypa3/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_invalid_candidate_rejecte1/solve_input_6ccea306b5df463eae01b57af95c7e90.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_invalid_candidate_rejecte1/candidate.json",
+        "bytes": 1692
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_small_start_shift_revalid0/candidate.json",
+        "bytes": 2017
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_small_start_shift_revalid0/solve_input_4c9483e5cfb4414e8c4e859340adb794.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_failed_requires_explicit_0/solve_input_440778ebb8634651a963c1e1291eee4a.json",
+        "bytes": 3751
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-all-related/test_failed_requires_explicit_0/candidate.json",
+        "bytes": 1870
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_guard_adds_timed_and_vali0/solve_input_fcfe4024e72d4255a40429d4a8d5f65f.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_guard_adds_timed_and_vali0/candidate.json",
+        "bytes": 2011
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_ensure_camera_tf_external0/.runtime/locks/camera_tf_d455.transition.lock",
+        "bytes": 0
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_candidate_keeps_immutable0/solve_input_b14a084b1edf46bf921fa029625450f1.json",
+        "bytes": 4524
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_candidate_keeps_immutable0/frames.json",
+        "bytes": 4116
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_candidate_keeps_immutable0/candidate.json",
+        "bytes": 2111
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_handeye_label_cannot_bypa5/bad.json",
+        "bytes": 2541
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_handeye_label_cannot_bypa5/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_handeye_label_cannot_bypa5/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_passed_label_cannot_bypas2/relaxed.json",
+        "bytes": 2540
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_passed_label_cannot_bypas2/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_passed_label_cannot_bypas2/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_invalid_candidate_rejecte3/candidate.json",
+        "bytes": 1567
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_invalid_candidate_rejecte3/solve_input_355b5dde7c004ce58ba54100f8574b1b.json",
+        "bytes": 3751
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_capture_fresh_pixels_and_0/2026-10-19_04-15-29_2fab56.zip",
+        "bytes": 882
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_capture_fresh_pixels_and_0/2026-10-19_04-15-29_2fab56/session.json",
+        "bytes": 332
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_capture_fresh_pixels_and_0/2026-10-19_04-15-29_2fab56/d455/000001_1.000000000.png",
+        "bytes": 83
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_capture_fresh_pixels_and_0/2026-10-19_04-15-29_2fab56/dabai/000002_2.000000000.png",
+        "bytes": 83
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_passed_label_cannot_bypas1/relaxed.json",
+        "bytes": 2540
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_passed_label_cannot_bypas1/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_passed_label_cannot_bypas1/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_placement_snapshot_mappin0/placements.json.previous",
+        "bytes": 1625
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_placement_snapshot_mappin0/placements.json",
+        "bytes": 1622
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_input_mutation_detected_a0/candidate.json",
+        "bytes": 2011
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_input_mutation_detected_a0/solve_input_6d0608d570014b04bfd91cdf58ab08ca.json",
+        "bytes": 3742
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/vis0/driver.py",
+        "bytes": 4853
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_ensure_camera_external_co0/.runtime/locks/camera_d455.transition.lock",
+        "bytes": 0
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_handeye_label_cannot_bypa4/bad.json",
+        "bytes": 2494
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_handeye_label_cannot_bypa4/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_handeye_label_cannot_bypa4/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_plan_mode_never_calls_exe0/plan.json",
+        "bytes": 29609
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_plan_mode_never_calls_exe0/solve_input_666c582ddefe41ff8f8ac1bad04b7404.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_plan_mode_never_calls_exe0/candidate.json",
+        "bytes": 2011
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_failed_default_cli_refuse0/rejected.json",
+        "bytes": 661
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_failed_default_cli_refuse0/solve_input_11ea342fcec449d0b3d2d4d93dfa6231.json",
+        "bytes": 3751
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_failed_default_cli_refuse0/candidate.json",
+        "bytes": 1864
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_ensure_detector_mode_conf0/.runtime/registry.json",
+        "bytes": 2
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_ensure_detector_mode_conf0/.runtime/locks/detector_d455.transition.lock",
+        "bytes": 0
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_ensure_detector_mode_conf0/.runtime/locks/registry.lock",
+        "bytes": 0
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_handeye_label_cannot_bypa2/bad.json",
+        "bytes": 2541
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_handeye_label_cannot_bypa2/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_handeye_label_cannot_bypa2/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_invalid_candidate_rejecte2/candidate.json",
+        "bytes": 1622
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_invalid_candidate_rejecte2/solve_input_be4a39d4cdbc4b43b70dd2d81b95068b.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_dry_run_has_no_side_effec0/config/runtime.json",
+        "bytes": 4375
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_dry_run_has_no_side_effec0/config/calibration/manifest.json",
+        "bytes": 148
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_dry_run_has_no_side_effec0/config/calibration/tcp.json",
+        "bytes": 94
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_dry_run_has_no_side_effec0/config/calibration/d455_eye_to_hand.json",
+        "bytes": 52
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_capture_request_waits_for0/2026-10-19_04-15-29_accf53/session.json",
+        "bytes": 190
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_capture_request_waits_for0/2026-10-19_04-15-29_accf53/d455/000001_2.000000000.png",
+        "bytes": 79
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_ready_graspnet_interface_0/g.log",
+        "bytes": 25
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_ready_graspnet_interface_0/graspnet.log",
+        "bytes": 82
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_intrinsics_label_cannot_b2/bad.yaml",
+        "bytes": 706
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_intrinsics_label_cannot_b2/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_intrinsics_label_cannot_b2/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_intrinsics_label_cannot_b4/bad.yaml",
+        "bytes": 705
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_intrinsics_label_cannot_b4/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_intrinsics_label_cannot_b4/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_approval_backups_unique_e0/dabai.yaml",
+        "bytes": 707
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_approval_backups_unique_e0/d455.yaml",
+        "bytes": 707
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_approval_backups_unique_e0/config/calibration/manifest.json",
+        "bytes": 12497
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_approval_backups_unique_e0/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_approval_backups_unique_e0/config/calibration/.promotion.lock",
+        "bytes": 0
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_approval_backups_unique_e0/config/calibration/d455/intrinsics.yaml",
+        "bytes": 751
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_approval_backups_unique_e0/config/calibration/approved_backup/same-second_dd9453500e994129b62a23c7dbe7a97f/manifest.json",
+        "bytes": 11464
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_approval_backups_unique_e0/config/calibration/approved_backup/same-second_dd9453500e994129b62a23c7dbe7a97f/intrinsics.yaml",
+        "bytes": 9
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_approval_backups_unique_e0/config/calibration/approved_backup/same-second_518b8462403d4a7e85ae6e188b3d56fb/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_approval_backups_unique_e0/config/calibration/approved_backup/same-second_518b8462403d4a7e85ae6e188b3d56fb/intrinsics.yaml",
+        "bytes": 8
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_approval_backups_unique_e0/config/calibration/dabai/intrinsics.yaml",
+        "bytes": 751
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_warning_current_instance_0/workbench-20261019-041529.jsonl",
+        "bytes": 110
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_warning_current_instance_0/export-1792354529615101480.log",
+        "bytes": 61
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_startup_offset_reads_pyth0/cmdline",
+        "bytes": 219
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_startup_offset_reads_pyth0/params.yaml",
+        "bytes": 90
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_parameter_change_after_gu0/candidate.json",
+        "bytes": 2011
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_parameter_change_after_gu0/solve_input_a83fea22aaef437d902450d30aebcedb.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_intrinsics_label_cannot_b3/bad.yaml",
+        "bytes": 682
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_intrinsics_label_cannot_b3/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_intrinsics_label_cannot_b3/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_handeye_label_cannot_bypa6/bad.json",
+        "bytes": 2512
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_handeye_label_cannot_bypa6/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_handeye_label_cannot_bypa6/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_offline_recomputes_raw_tc0/frames.json",
+        "bytes": 2940
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_offline_recomputes_raw_tc0/candidate.json",
+        "bytes": 2111
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_offline_recomputes_raw_tc0/solve_input_c7afe83357134520927c7beaf4233e83.json",
+        "bytes": 4524
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_late_acceptance_cancel_ow0/solve_input_5949bb131d914a5391c94f1ee7ad5fcd.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_late_acceptance_cancel_ow0/candidate.json",
+        "bytes": 2011
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_intrinsics_label_cannot_b0/bad.yaml",
+        "bytes": 707
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_intrinsics_label_cannot_b0/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_intrinsics_label_cannot_b0/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_pty_lines_and_output0/interactive.py",
+        "bytes": 71
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_intrinsics_label_cannot_b5/bad.yaml",
+        "bytes": 706
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_intrinsics_label_cannot_b5/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_intrinsics_label_cannot_b5/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_valid_candidate_recompute0/candidate.json",
+        "bytes": 2011
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_valid_candidate_recompute0/solve_input_8f7c5716e924439cb2c26caee4acdfac.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_passed_label_cannot_bypas3/relaxed.json",
+        "bytes": 2540
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_passed_label_cannot_bypas3/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_passed_label_cannot_bypas3/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_handeye_label_cannot_bypa1/bad.json",
+        "bytes": 2540
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_handeye_label_cannot_bypa1/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_handeye_label_cannot_bypa1/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_intrinsics_label_cannot_b1/bad.yaml",
+        "bytes": 707
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_intrinsics_label_cannot_b1/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_intrinsics_label_cannot_b1/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_invalid_external_edit_kee0/placements.json",
+        "bytes": 8
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_valid_handeye_promotes_an0/valid.json",
+        "bytes": 2535
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_valid_handeye_promotes_an0/config/calibration/manifest.json",
+        "bytes": 11805
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_valid_handeye_promotes_an0/config/calibration/dabai_eye_in_hand.json",
+        "bytes": 237
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_valid_handeye_promotes_an0/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_valid_handeye_promotes_an0/config/calibration/.promotion.lock",
+        "bytes": 0
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_valid_handeye_promotes_an0/config/calibration/approved_backup/2026-10-19_04-15-33_d2f752c41a0e49caa0b7721217f4a8e1/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_input_snapshot_preserves_0/solve_input_dbff5abb69e34ace99a8a5bb75dbdcfc.json",
+        "bytes": 4523
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_input_snapshot_preserves_0/candidate.json",
+        "bytes": 2110
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_ensure_reuses_existing_re0/.runtime/registry.json",
+        "bytes": 2
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_ensure_reuses_existing_re0/.runtime/locks/registry.lock",
+        "bytes": 0
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_ensure_reuses_existing_re0/.runtime/locks/camera_d455.transition.lock",
+        "bytes": 0
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_passed_label_cannot_bypas0/relaxed.json",
+        "bytes": 2540
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_passed_label_cannot_bypas0/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_passed_label_cannot_bypas0/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_ensure_detector_external_0/.runtime/locks/detector_d455.transition.lock",
+        "bytes": 0
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_persistent_start_shift_is0/solve_input_d785f559c7c04a6ab7aafa7178f92219.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_persistent_start_shift_is0/candidate.json",
+        "bytes": 2011
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_apply_preserves_quality_a0/candidate.json",
+        "bytes": 121
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_apply_preserves_quality_a0/config/calibration/manifest.json",
+        "bytes": 750
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_apply_preserves_quality_a0/config/calibration/d455_eye_to_hand.json",
+        "bytes": 121
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_apply_preserves_quality_a0/config/calibration/workbench_backup/2026-10-19_04-15-29_096daa02/manifest.json",
+        "bytes": 108
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_apply_preserves_quality_a0/config/calibration/workbench_backup/2026-10-19_04-15-29_096daa02/selection.json",
+        "bytes": 480
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_invalid_candidate_rejecte0/solve_input_343a886fe79d490499584c10f7d36d13.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_invalid_candidate_rejecte0/candidate.json",
+        "bytes": 1686
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_handeye_label_cannot_bypa0/bad.json",
+        "bytes": 2540
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_handeye_label_cannot_bypa0/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_handeye_label_cannot_bypa0/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_handeye_label_cannot_bypa3/bad.json",
+        "bytes": 856
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_handeye_label_cannot_bypa3/config/calibration/manifest.json",
+        "bytes": 10472
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_handeye_label_cannot_bypa3/config/calibration/d455_eye_to_hand.json",
+        "bytes": 388
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_invalid_candidate_rejecte1/solve_input_f41f31e5181a4c00a5849da100d7b4b5.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_invalid_candidate_rejecte1/candidate.json",
+        "bytes": 1686
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_small_start_shift_revalid0/solve_input_722f9e97a79d4c6b8bc3bb30cd8b16b9.json",
+        "bytes": 3741
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_small_start_shift_revalid0/candidate.json",
+        "bytes": 2011
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_failed_requires_explicit_0/solve_input_ab5bf0c871de423aba4513fa849cd536.json",
+        "bytes": 3751
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-relevant/test_failed_requires_explicit_0/candidate.json",
+        "bytes": 1864
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-invalid/test_capture_fresh_pixels_and_0/2026-10-19_04-12-26_caeadf.zip",
+        "bytes": 882
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-invalid/test_capture_fresh_pixels_and_0/2026-10-19_04-12-26_caeadf/session.json",
+        "bytes": 332
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-invalid/test_capture_fresh_pixels_and_0/2026-10-19_04-12-26_caeadf/d455/000001_1.000000000.png",
+        "bytes": 83
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-invalid/test_capture_fresh_pixels_and_0/2026-10-19_04-12-26_caeadf/dabai/000002_2.000000000.png",
+        "bytes": 83
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-invalid/test_placement_snapshot_mappin0/placements.json.previous",
+        "bytes": 1625
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-invalid/test_placement_snapshot_mappin0/placements.json",
+        "bytes": 1622
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-invalid/test_capture_request_waits_for0/2026-10-19_04-12-26_46110d/session.json",
+        "bytes": 190
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-invalid/test_capture_request_waits_for0/2026-10-19_04-12-26_46110d/d455/000001_2.000000000.png",
+        "bytes": 79
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-invalid/test_warning_current_instance_0/export-1792354346250921922.log",
+        "bytes": 61
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-invalid/test_warning_current_instance_0/workbench-20261019-041226.jsonl",
+        "bytes": 109
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-invalid/test_invalid_external_edit_kee0/placements.json",
+        "bytes": 8
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-next/test_capture_fresh_pixels_and_0/2026-10-19_04-03-42_87d60c.zip",
+        "bytes": 882
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-next/test_capture_fresh_pixels_and_0/2026-10-19_04-03-42_87d60c/session.json",
+        "bytes": 332
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-next/test_capture_fresh_pixels_and_0/2026-10-19_04-03-42_87d60c/d455/000001_1.000000000.png",
+        "bytes": 83
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-next/test_capture_fresh_pixels_and_0/2026-10-19_04-03-42_87d60c/dabai/000002_2.000000000.png",
+        "bytes": 83
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-next/test_placement_snapshot_mappin0/placements.json.previous",
+        "bytes": 1625
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-next/test_placement_snapshot_mappin0/placements.json",
+        "bytes": 1622
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-next/test_warning_current_instance_0/export-1792353822449221504.log",
+        "bytes": 60
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-next/test_warning_current_instance_0/workbench-20261019-040342.jsonl",
+        "bytes": 110
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-data/test_capture_fresh_pixels_and_0/2026-10-19_03-36-27_3a0a17.zip",
+        "bytes": 882
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-data/test_capture_fresh_pixels_and_0/2026-10-19_03-36-27_3a0a17/session.json",
+        "bytes": 332
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-data/test_capture_fresh_pixels_and_0/2026-10-19_03-36-27_3a0a17/d455/000001_1.000000000.png",
+        "bytes": 83
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-data/test_capture_fresh_pixels_and_0/2026-10-19_03-36-27_3a0a17/dabai/000002_2.000000000.png",
+        "bytes": 83
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-data/test_placement_snapshot_mappin0/placements.json.previous",
+        "bytes": 1625
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-data/test_placement_snapshot_mappin0/placements.json",
+        "bytes": 1622
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-data/test_warning_current_instance_0/export-1792352187081735266.log",
+        "bytes": 60
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-data/test_warning_current_instance_0/workbench-20261019-033627.jsonl",
+        "bytes": 110
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-wb/test_capture_fresh_pixels_and_0/2026-10-19_03-43-47_0c64d1.zip",
+        "bytes": 882
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-wb/test_capture_fresh_pixels_and_0/2026-10-19_03-43-47_0c64d1/session.json",
+        "bytes": 332
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-wb/test_capture_fresh_pixels_and_0/2026-10-19_03-43-47_0c64d1/d455/000001_1.000000000.png",
+        "bytes": 83
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-wb/test_capture_fresh_pixels_and_0/2026-10-19_03-43-47_0c64d1/dabai/000002_2.000000000.png",
+        "bytes": 83
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-wb/test_placement_snapshot_mappin0/placements.json.previous",
+        "bytes": 1625
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-wb/test_placement_snapshot_mappin0/placements.json",
+        "bytes": 1622
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-wb/test_warning_current_instance_0/workbench-20261019-034347.jsonl",
+        "bytes": 110
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-wb/test_warning_current_instance_0/export-1792352627509321526.log",
+        "bytes": 60
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-wb/test_pty_lines_and_output0/interactive.py",
+        "bytes": 71
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-wb/test_apply_preserves_quality_a0/candidate.json",
+        "bytes": 121
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-wb/test_apply_preserves_quality_a0/config/calibration/manifest.json",
+        "bytes": 745
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-wb/test_apply_preserves_quality_a0/config/calibration/d455_eye_to_hand.json",
+        "bytes": 121
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-wb/test_apply_preserves_quality_a0/config/calibration/workbench_backup/2026-10-19_03-43-47_de1f0577/manifest.json",
+        "bytes": 108
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-wb/test_apply_preserves_quality_a0/config/calibration/workbench_backup/2026-10-19_03-43-47_de1f0577/selection.json",
+        "bytes": 475
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-invalid3/test_capture_fresh_pixels_and_0/2026-10-19_04-13-01_cb9a28.zip",
+        "bytes": 882
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-invalid3/test_capture_fresh_pixels_and_0/2026-10-19_04-13-01_cb9a28/session.json",
+        "bytes": 332
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-invalid3/test_capture_fresh_pixels_and_0/2026-10-19_04-13-01_cb9a28/d455/000001_1.000000000.png",
+        "bytes": 83
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-invalid3/test_capture_fresh_pixels_and_0/2026-10-19_04-13-01_cb9a28/dabai/000002_2.000000000.png",
+        "bytes": 83
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-invalid3/test_placement_snapshot_mappin0/placements.json.previous",
+        "bytes": 1625
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-invalid3/test_placement_snapshot_mappin0/placements.json",
+        "bytes": 1622
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-invalid3/test_capture_request_waits_for0/2026-10-19_04-13-01_8597e7/session.json",
+        "bytes": 190
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-invalid3/test_capture_request_waits_for0/2026-10-19_04-13-01_8597e7/d455/000001_2.000000000.png",
+        "bytes": 79
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-invalid3/test_warning_current_instance_0/export-1792354381884947335.log",
+        "bytes": 61
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-invalid3/test_warning_current_instance_0/workbench-20261019-041301.jsonl",
+        "bytes": 110
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-invalid3/test_invalid_external_edit_kee0/placements.json",
+        "bytes": 8
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-calibration/test_pty_lines_and_output0/interactive.py",
+        "bytes": 71
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-calibration/test_apply_preserves_quality_a0/candidate.json",
+        "bytes": 121
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-calibration/test_apply_preserves_quality_a0/config/calibration/manifest.json",
+        "bytes": 753
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-calibration/test_apply_preserves_quality_a0/config/calibration/d455_eye_to_hand.json",
+        "bytes": 121
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-calibration/test_apply_preserves_quality_a0/config/calibration/workbench_backup/2026-10-19_03-40-03_8f18612a/manifest.json",
+        "bytes": 108
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-calibration/test_apply_preserves_quality_a0/config/calibration/workbench_backup/2026-10-19_03-40-03_8f18612a/selection.json",
+        "bytes": 483
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-control/test_capture_fresh_pixels_and_0/2026-10-19_03-43-09_443b3a.zip",
+        "bytes": 882
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-control/test_capture_fresh_pixels_and_0/2026-10-19_03-43-09_443b3a/session.json",
+        "bytes": 332
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-control/test_capture_fresh_pixels_and_0/2026-10-19_03-43-09_443b3a/d455/000001_1.000000000.png",
+        "bytes": 83
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-control/test_capture_fresh_pixels_and_0/2026-10-19_03-43-09_443b3a/dabai/000002_2.000000000.png",
+        "bytes": 83
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-control/test_placement_snapshot_mappin0/placements.json.previous",
+        "bytes": 1625
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-control/test_placement_snapshot_mappin0/placements.json",
+        "bytes": 1622
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-control/test_warning_current_instance_0/workbench-20261019-034309.jsonl",
+        "bytes": 110
+      },
+      {
+        "path": ".superpowers/sdd/2026-10-19-piper-workbench-plan/pytest-control/test_warning_current_instance_0/export-1792352589395822599.log",
+        "bytes": 60
+      }
+    ]
+  },
+  {
+    "path": "workbench/__pycache__",
+    "bytes": 76710,
+    "mb": 0.073,
+    "result": "moved_to_trash",
+    "error": "",
+    "members": [
+      {
+        "path": "workbench/__pycache__/logs.cpython-310.pyc",
+        "bytes": 4193
+      },
+      {
+        "path": "workbench/__pycache__/action_control.cpython-310.pyc",
+        "bytes": 2825
+      },
+      {
+        "path": "workbench/__pycache__/placement.cpython-310.pyc",
+        "bytes": 2951
+      },
+      {
+        "path": "workbench/__pycache__/ros_adapter.cpython-310.pyc",
+        "bytes": 10869
+      },
+      {
+        "path": "workbench/__pycache__/settings.cpython-310.pyc",
+        "bytes": 2482
+      },
+      {
+        "path": "workbench/__pycache__/tasks.cpython-310.pyc",
+        "bytes": 7918
+      },
+      {
+        "path": "workbench/__pycache__/calibration.cpython-310.pyc",
+        "bytes": 13889
+      },
+      {
+        "path": "workbench/__pycache__/service.cpython-310.pyc",
+        "bytes": 19824
+      },
+      {
+        "path": "workbench/__pycache__/components.cpython-310.pyc",
+        "bytes": 6065
+      },
+      {
+        "path": "workbench/__pycache__/capture.cpython-310.pyc",
+        "bytes": 5508
+      },
+      {
+        "path": "workbench/__pycache__/__init__.cpython-310.pyc",
+        "bytes": 186
+      }
+    ]
+  },
+  {
+    "path": ".runtime/lifecycle-test",
+    "bytes": 0,
+    "mb": 0.0,
+    "result": "moved_to_trash",
+    "error": "",
+    "members": []
+  },
+  {
+    "path": ".runtime/workbench.sock",
+    "bytes": 0,
+    "mb": 0.0,
+    "result": "moved_to_trash",
+    "error": "",
+    "members": []
+  }
+]

@@ -1,0 +1,128 @@
+[INFO] [launch]: All log files can be found below /home/lxf/.ros/log/2026-10-19-07-45-19-921216-lxf-ubantu-921175
+[INFO] [launch]: Default logging verbosity is set to INFO
+WARNING:root:[33;21mCannot infer SRDF from `/home/lxf/.codex/worktrees/f142/agx_arm_ws/install/agx_arm_moveit/share/agx_arm_moveit`. -- using config/agx_arm.srdf[0m
+[INFO] [piper_workbench-1]: process started with pid [921226]
+[piper_workbench-1] Warning: class_loader.impl: SEVERE WARNING!!! A namespace collision has occurred with plugin factory for class rviz_default_plugins::displays::InteractiveMarkerDisplay. New factory will OVERWRITE existing one. This situation occurs when libraries containing plugins are directly linked against an executable (the one running right now generating this message). Please separate plugins out into their own library or just don't link against the library and use either class_loader::ClassLoader/MultiLibraryClassLoader to open.
+[piper_workbench-1]          at line 253 in /opt/ros/humble/include/class_loader/class_loader/class_loader_core.hpp
+[piper_workbench-1] [rviz_rendering:debug] Available Renderers(1): OpenGL Rendering Subsystem, at ./src/rviz_rendering/render_system.cpp:301
+[piper_workbench-1] [rviz_rendering:info] Stereo is NOT SUPPORTED, at ./src/rviz_rendering/render_system.cpp:543
+[piper_workbench-1] [rviz_rendering:info] OpenGl version: 4.6 (GLSL 4.6), at ./src/rviz_rendering/render_system.cpp:284
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_common/icons/plus.png, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_common/icons/minus.png, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_rendering:info] Stereo is NOT SUPPORTED, at ./src/rviz_rendering/render_system.cpp:543
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_default_plugins/icons/classes/TF.svg, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Error retrieving file [file:///opt/ros/humble/share/rviz_default_plugins/icons/classes/TF.svg]: Couldn't open file /opt/ros/humble/share/rviz_default_plugins/icons/classes/TF.svg, at ./src/rviz_common/load_resource.cpp:55
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_default_plugins/icons/classes/TF.png, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_common/icons/classes/Identity.svg, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Error retrieving file [file:///opt/ros/humble/share/rviz_common/icons/classes/Identity.svg]: Couldn't open file /opt/ros/humble/share/rviz_common/icons/classes/Identity.svg, at ./src/rviz_common/load_resource.cpp:55
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_common/icons/classes/Identity.png, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Error retrieving file [file:///opt/ros/humble/share/rviz_common/icons/classes/Identity.png]: Couldn't open file /opt/ros/humble/share/rviz_common/icons/classes/Identity.png, at ./src/rviz_common/load_resource.cpp:55
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_common/icons/default_class_icon.png, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_common/icons/options.png, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_common/icons/ok.png, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_common/icons/warning.png, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_common/icons/error.png, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_default_plugins/icons/classes/Orbit.svg, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Error retrieving file [file:///opt/ros/humble/share/rviz_default_plugins/icons/classes/Orbit.svg]: Couldn't open file /opt/ros/humble/share/rviz_default_plugins/icons/classes/Orbit.svg, at ./src/rviz_common/load_resource.cpp:55
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_default_plugins/icons/classes/Orbit.png, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Error retrieving file [file:///opt/ros/humble/share/rviz_default_plugins/icons/classes/Orbit.png]: Couldn't open file /opt/ros/humble/share/rviz_default_plugins/icons/classes/Orbit.png, at ./src/rviz_common/load_resource.cpp:55
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_common/icons/rotate.svg, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_common/icons/cursor.svg, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_common/icons/rotate_cam.svg, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_common/icons/move2d.svg, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_common/icons/move_z.svg, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_common/icons/zoom.svg, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_common/icons/crosshair.svg, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://nav2_rviz_plugins/icons/classes/GoalTool.svg, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Error retrieving file [file:///opt/ros/humble/share/nav2_rviz_plugins/icons/classes/GoalTool.svg]: Couldn't open file /opt/ros/humble/share/nav2_rviz_plugins/icons/classes/GoalTool.svg, at ./src/rviz_common/load_resource.cpp:55
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://nav2_rviz_plugins/icons/classes/GoalTool.png, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Error retrieving file [file:///opt/ros/humble/share/nav2_rviz_plugins/icons/classes/GoalTool.png]: Couldn't open file /opt/ros/humble/share/nav2_rviz_plugins/icons/classes/GoalTool.png, at ./src/rviz_common/load_resource.cpp:55
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_default_plugins/icons/classes/FocusCamera.svg, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_default_plugins/icons/classes/Interact.svg, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Error retrieving file [file:///opt/ros/humble/share/rviz_default_plugins/icons/classes/Interact.svg]: Couldn't open file /opt/ros/humble/share/rviz_default_plugins/icons/classes/Interact.svg, at ./src/rviz_common/load_resource.cpp:55
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_default_plugins/icons/classes/Interact.png, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_default_plugins/icons/classes/Measure.svg, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_default_plugins/icons/classes/MoveCamera.svg, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Error retrieving file [file:///opt/ros/humble/share/rviz_default_plugins/icons/classes/MoveCamera.svg]: Couldn't open file /opt/ros/humble/share/rviz_default_plugins/icons/classes/MoveCamera.svg, at ./src/rviz_common/load_resource.cpp:55
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_default_plugins/icons/classes/MoveCamera.png, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_default_plugins/icons/classes/PublishPoint.svg, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_default_plugins/icons/classes/Select.svg, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Error retrieving file [file:///opt/ros/humble/share/rviz_default_plugins/icons/classes/Select.svg]: Couldn't open file /opt/ros/humble/share/rviz_default_plugins/icons/classes/Select.svg, at ./src/rviz_common/load_resource.cpp:55
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_default_plugins/icons/classes/Select.png, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_default_plugins/icons/classes/SetGoal.svg, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Error retrieving file [file:///opt/ros/humble/share/rviz_default_plugins/icons/classes/SetGoal.svg]: Couldn't open file /opt/ros/humble/share/rviz_default_plugins/icons/classes/SetGoal.svg, at ./src/rviz_common/load_resource.cpp:55
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_default_plugins/icons/classes/SetGoal.png, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_default_plugins/icons/classes/SetInitialPose.svg, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Error retrieving file [file:///opt/ros/humble/share/rviz_default_plugins/icons/classes/SetInitialPose.svg]: Couldn't open file /opt/ros/humble/share/rviz_default_plugins/icons/classes/SetInitialPose.svg, at ./src/rviz_common/load_resource.cpp:55
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_default_plugins/icons/classes/SetInitialPose.png, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_visual_tools/icons/classes/KeyTool.svg, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [ERROR] [1792367123.721683086] [moveit_ros_visualization.motion_planning_frame]: Action server: /recognize_objects not available
+[piper_workbench-1] [INFO] [1792367123.740020979] [moveit_ros_visualization.motion_planning_frame]: MoveGroup namespace changed: / -> . Reloading params.
+[piper_workbench-1] [INFO] [1792367123.845396891] [moveit_rdf_loader.rdf_loader]: Loaded robot model in 0.0162042 seconds
+[piper_workbench-1] [INFO] [1792367123.845434502] [moveit_robot_model.robot_model]: Loading robot model 'agx_arm'...
+[piper_workbench-1] [INFO] [1792367123.845440844] [moveit_robot_model.robot_model]: No root/virtual joint specified in SRDF. Assuming fixed joint
+[piper_workbench-1] [WARN] [1792367124.025343559] [moveit_robot_model.robot_model]: Link conveyor_structure has visual geometry but no collision geometry. Collision geometry will be left empty. Fix your URDF file by explicitly specifying collision geometry.
+[piper_workbench-1] [INFO] [1792367124.029128096] [moveit_kinematics_base.kinematics_base]: IK Using joint link1 -2.61799 2.61799
+[piper_workbench-1] [INFO] [1792367124.029139377] [moveit_kinematics_base.kinematics_base]: IK Using joint link2 0 3.14159
+[piper_workbench-1] [INFO] [1792367124.029143885] [moveit_kinematics_base.kinematics_base]: IK Using joint link3 -2.96706 0
+[piper_workbench-1] [INFO] [1792367124.029150307] [moveit_kinematics_base.kinematics_base]: IK Using joint link4 -1.74533 1.74533
+[piper_workbench-1] [INFO] [1792367124.029153784] [moveit_kinematics_base.kinematics_base]: IK Using joint link5 -1.22173 1.22173
+[piper_workbench-1] [INFO] [1792367124.029156970] [moveit_kinematics_base.kinematics_base]: IK Using joint link6 -2.0944 2.0944
+[piper_workbench-1] [INFO] [1792367124.029163943] [moveit_kinematics_base.kinematics_base]: Using solve type Speed
+[piper_workbench-1] [INFO] [1792367124.484766173] [moveit_ros.planning_scene_monitor.planning_scene_monitor]: Starting planning scene monitor
+[piper_workbench-1] [INFO] [1792367124.485261424] [moveit_ros.planning_scene_monitor.planning_scene_monitor]: Listening to '/monitored_planning_scene'
+[piper_workbench-1] [INFO] [1792367124.891427342] [interactive_marker_display_101863041567408]: Connected on namespace: /rviz_moveit_motion_planning_display/robot_interaction_interactive_marker_topic
+[piper_workbench-1] [INFO] [1792367124.940708502] [interactive_marker_display_101863041567408]: Sending request for interactive markers
+[piper_workbench-1] [INFO] [1792367124.951669584] [moveit_ros.current_state_monitor]: Listening to joint states on topic '/feedback/joint_states'
+[piper_workbench-1] [INFO] [1792367124.951994976] [moveit_ros.planning_scene_monitor.planning_scene_monitor]: Listening to '/attached_collision_object' for attached collision objects
+[piper_workbench-1] [INFO] [1792367124.973143624] [interactive_marker_display_101863041567408]: Service response received for initialization
+[piper_workbench-1] [rviz_common:debug] Error retrieving file [file:///opt/ros/humble/share/rviz_visual_tools/icons/classes/KeyTool.svg]: Couldn't open file /opt/ros/humble/share/rviz_visual_tools/icons/classes/KeyTool.svg, at ./src/rviz_common/load_resource.cpp:55
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_visual_tools/icons/classes/KeyTool.png, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Error retrieving file [file:///opt/ros/humble/share/rviz_visual_tools/icons/classes/KeyTool.png]: Couldn't open file /opt/ros/humble/share/rviz_visual_tools/icons/classes/KeyTool.png, at ./src/rviz_common/load_resource.cpp:55
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_default_plugins/icons/classes/Grid.svg, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Error retrieving file [file:///opt/ros/humble/share/rviz_default_plugins/icons/classes/Grid.svg]: Couldn't open file /opt/ros/humble/share/rviz_default_plugins/icons/classes/Grid.svg, at ./src/rviz_common/load_resource.cpp:55
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_default_plugins/icons/classes/Grid.png, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_common/icons/close.png, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_default_plugins/icons/classes/RobotLink.png, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_default_plugins/icons/classes/RobotLinkNoGeom.png, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_default_plugins/icons/classes/RobotJoint.png, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_common/icons/ok.png, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_common/icons/warning.png, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_common/icons/error.png, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_common/icons/ok.png, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_common/icons/warning.png, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [rviz_common:debug] Load pixmap at package://rviz_common/icons/error.png, at ./src/rviz_common/load_resource.cpp:71
+[piper_workbench-1] [INFO] [1792367129.898932050] [moveit_ros.planning_scene_monitor.planning_scene_monitor]: Failed to call service get_planning_scene, have you launched move_group or called psm.providePlanningSceneService()?
+[piper_workbench-1] [ERROR] [1792367129.901523854] [interactive_marker_display_101863041567408]: Resetting due to transform error: [tf2::LookupException]: "base_link" passed to lookupTransform argument target_frame does not exist. 
+[piper_workbench-1] [INFO] [1792367129.932791371] [interactive_marker_display_101863041567408]: Sending request for interactive markers
+[piper_workbench-1] [INFO] [1792367129.965381835] [interactive_marker_display_101863041567408]: Service response received for initialization
+[piper_workbench-1] [INFO] [1792367130.028716292] [interactive_marker_display_101863041567408]: Sending request for interactive markers
+[piper_workbench-1] [INFO] [1792367130.061078407] [interactive_marker_display_101863041567408]: Service response received for initialization
+[piper_workbench-1] [INFO] [1792367130.124856778] [interactive_marker_display_101863041567408]: Sending request for interactive markers
+[piper_workbench-1] [INFO] [1792367130.157022444] [interactive_marker_display_101863041567408]: Service response received for initialization
+[piper_workbench-1] [INFO] [1792367130.221088677] [interactive_marker_display_101863041567408]: Sending request for interactive markers
+[piper_workbench-1] [INFO] [1792367130.253264031] [interactive_marker_display_101863041567408]: Service response received for initialization
+[piper_workbench-1] [INFO] [1792367130.317559154] [interactive_marker_display_101863041567408]: Sending request for interactive markers
+[piper_workbench-1] [INFO] [1792367130.349612408] [interactive_marker_display_101863041567408]: Service response received for initialization
+[piper_workbench-1] [INFO] [1792367130.413550329] [interactive_marker_display_101863041567408]: Sending request for interactive markers
+[piper_workbench-1] [INFO] [1792367130.444732205] [interactive_marker_display_101863041567408]: Service response received for initialization
+[piper_workbench-1] [INFO] [1792367130.508823625] [interactive_marker_display_101863041567408]: Sending request for interactive markers
+[piper_workbench-1] [INFO] [1792367130.541695579] [interactive_marker_display_101863041567408]: Service response received for initialization
+[piper_workbench-1] [INFO] [1792367130.604950055] [interactive_marker_display_101863041567408]: Sending request for interactive markers
+[piper_workbench-1] [INFO] [1792367130.636853848] [interactive_marker_display_101863041567408]: Service response received for initialization
+[piper_workbench-1] [INFO] [1792367130.818106764] [interactive_marker_display_101863041567408]: Sending request for interactive markers
+[piper_workbench-1] [INFO] [1792367130.851673374] [interactive_marker_display_101863041567408]: Service response received for initialization
+[piper_workbench-1] [INFO] [1792367130.917689343] [interactive_marker_display_101863041567408]: Sending request for interactive markers
+[piper_workbench-1] [INFO] [1792367130.949238439] [interactive_marker_display_101863041567408]: Service response received for initialization
+[piper_workbench-1] [INFO] [1792367131.013540295] [interactive_marker_display_101863041567408]: Sending request for interactive markers
+[piper_workbench-1] [INFO] [1792367131.044946853] [interactive_marker_display_101863041567408]: Service response received for initialization
+[piper_workbench-1] [INFO] [1792367131.109561086] [interactive_marker_display_101863041567408]: Sending request for interactive markers
+[piper_workbench-1] [INFO] [1792367131.141163463] [interactive_marker_display_101863041567408]: Service response received for initialization
+[piper_workbench-1] [INFO] [1792367131.204955350] [interactive_marker_display_101863041567408]: Sending request for interactive markers
+[piper_workbench-1] [INFO] [1792367131.236851759] [interactive_marker_display_101863041567408]: Service response received for initialization
+[piper_workbench-1] [INFO] [1792367131.301277318] [interactive_marker_display_101863041567408]: Sending request for interactive markers
+[piper_workbench-1] [INFO] [1792367131.332733870] [interactive_marker_display_101863041567408]: Service response received for initialization
+[piper_workbench-1] [INFO] [1792367131.397351600] [interactive_marker_display_101863041567408]: Sending request for interactive markers
+[piper_workbench-1] [INFO] [1792367131.428797632] [interactive_marker_display_101863041567408]: Service response received for initialization
+[piper_workbench-1] [INFO] [1792367131.612071388] [moveit_ros.planning_scene_monitor.planning_scene_monitor]: Stopping planning scene monitor
+[INFO] [piper_workbench-1]: process has finished cleanly [pid 921226]
