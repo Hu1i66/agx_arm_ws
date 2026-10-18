@@ -546,13 +546,19 @@ def preflight(*, camera: str = "d455", mode: str = "fruit",
     for key in rc.RESOURCE_KEYS:
         if key == "orbbec_setup" and camera != "dabai":
             continue
+        if key.startswith("graspnet_"):
+            # GraspNet 已退出主抓取流程，缺资源不再算 preflight 失败。
+            report.setdefault("optional", []).append(
+                {"item": f"资源 {key}", "path": str(rc.resolve_resource(key))})
+            continue
         _need(rc.resolve_resource(key), f"资源 {key}", "config")
     _need(ws / "launch" / "eye_to_hand_camera_tf.launch.py", "TF launch", f"camera_tf:{camera}")
     _need(ws / "vision" / "realsense_yolo_node.py", "水果检测脚本", f"detector:{camera}")
     _need(ws / "vision" / "blue_block_detector.py", "蓝方块脚本", f"detector:{camera}")
     _need(ws / "config" / "vision" / "fruit.yaml", "水果参数", f"detector:{camera}")
     _need(ws / "config" / "vision" / "blue_block.yaml", "蓝方块参数", f"detector:{camera}")
-    _need(ws / "graspnet_service_node.py", "GraspNet 脚本", "graspnet")
+    report.setdefault("optional", []).append(
+        {"item": "GraspNet 脚本(按需)", "path": str(ws / "graspnet_service_node.py")})
     _need(ws / "auto_sorting_action.py", "分拣动作脚本", "action")
     _need(ws / "sorting_gui_client.py", "GUI 脚本", "gui")
     if camera == "dabai":
@@ -618,7 +624,7 @@ def preflight(*, camera: str = "d455", mode: str = "fruit",
     if live:
         live_report = {}
         for comp, cam in (("camera", camera), ("camera_tf", camera),
-                          ("detector", camera), ("graspnet", camera)):
+                          ("detector", camera)):
             try:
                 manager = _manager()
                 record = manager.get_record(component_key(comp, camera=cam, mode=mode))

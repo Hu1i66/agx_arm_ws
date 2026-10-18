@@ -50,7 +50,7 @@ if os.path.exists(_cmeel_path):
     if _cmeel_path in sys.path:
         sys.path.remove(_cmeel_path)
     sys.path.insert(0, _cmeel_path)
-_ws_root = '/home/lxf/agx_arm_ws'
+_ws_root = os.path.dirname(os.path.abspath(__file__))
 if _ws_root not in sys.path:
     sys.path.insert(0, _ws_root)
 
@@ -58,9 +58,6 @@ import numpy as np
 import traceback
 from typing import Tuple, Optional
 
-# ── 动态抓取: 传送带状态订阅 + 速度预测 ──
-# 依赖上方 sys.path 注入 (_ws_root) 定位 workspace 根目录的 velocity_predictor.py
-from velocity_predictor import VelocityPredictor
 
 # ---- Pinocchio IKSolver (内嵌副本, 独立节点 pinocchio_ik_node.py 已移除) ----
 
@@ -339,7 +336,11 @@ class MoveItActionClient(Node):
         # ── 动态抓取: 订阅传送带状态 (速度/方向/物体检测) ──
         self._belt_speed = 0.0
         self._belt_direction = 1
-        self._predictor = VelocityPredictor()
+        self._dynamic_tracker = None
+        self._dynamic_actual_joints = None
+        self._dynamic_actual_at = -100.
+        self._dynamic_feedback_sub = self.create_subscription(
+            JointState, "/feedback/joint_states", self._dynamic_feedback_cb, 10)
         self._dynamic_calib = None
         self._conveyor_status_sub = self.create_subscription(
             String, '/conveyor_status', self._conveyor_status_cb, 10)
@@ -389,6 +390,7 @@ class MoveItActionClient(Node):
     def _gripper_status_cb(self, msg):
         """缓存夹爪状态反馈 (width, force, 安全标志)."""
         self._latest_gripper_status = msg
+        self._dynamic_gripper_at = time.monotonic()
 
     def _emergency_cb(self, msg):
         """急停/返回待机位/复位回调 — 设置中断标志位, 分拣序列中检查点检测."""
@@ -495,27 +497,36 @@ class MoveItActionClient(Node):
             if d.get('type') == 'conveyor_status':
                 self._belt_speed = float(d.get('speed', 0.0))
                 self._belt_direction = int(d.get('motor_direction', 1))
-                self._predictor.set_belt_speed(self._belt_speed)
+                self._belt_status_at = time.monotonic()-max(0., float(d.get('status_age_s', 0.)))
+                self._belt_connected = bool(d.get('connected', True))
+                self._belt_running = bool(d.get('motor_running', True))
+                self._belt_commanded_running = d.get('commanded_running')
         except Exception:
             pass
 
     def _load_dynamic_calib(self):
-        """加载传送带方向标定 conveyor_calib.json, 初始化预测器方向."""
+        """加载传送带方向标定；不应用历史速度比例。"""
         import os
-        path = '/home/lxf/agx_arm_ws/conveyor_calib.json'
+        path = runtime_config.resolve_resource('conveyor_calib')
         if not os.path.exists(path):
-            self.get_logger().warn(f"⚠️ 未找到传送带标定文件 {path}, 动态抓取将退化为静态抓取")
+            self.get_logger().warn(f"未找到传送带方向文件 {path}，动态抓取暂不可用；静止抓取不受影响")
             return
         try:
             with open(path, 'r') as f:
                 calib = json.load(f)
             self._dynamic_calib = calib
-            self._predictor.set_direction(float(calib['dx']), float(calib['dy']))
             self.get_logger().info(
                 f"✅ 传送带方向标定已加载: d̂=({calib['dx']:.4f},{calib['dy']:.4f}) "
                 f"angle={calib.get('angle_rad', 0.0):.3f}rad")
         except Exception as e:
             self.get_logger().warn(f"⚠️ 传送带标定加载失败: {e}")
+
+    def _dynamic_settings(self):
+        """动态抓取参数（缓存），与 dynamic_grasp_runtime 读同一份配置。"""
+        if getattr(self, '_dyn_cfg_cache', None) is None:
+            root = runtime_config.workspace_root()
+            self._dyn_cfg_cache = json.loads((root/'config/dynamic_grasp.json').read_text())
+        return self._dyn_cfg_cache
 
     def _detection_cb(self, msg):
         """缓存 YOLO 检测结果，唤醒等待线程。"""
@@ -523,6 +534,8 @@ class MoveItActionClient(Node):
             data = json.loads(msg.data)
             if data.get('camera','d455') != getattr(self,'_active_camera','d455'):return
             self._latest_detection = data
+            if self._dynamic_tracker is not None:
+                self._dynamic_tracker.observe(data)
             self._detection_event.set()
         except Exception:
             pass
@@ -569,43 +582,18 @@ class MoveItActionClient(Node):
         self.get_logger().warn(f"⏰ 重试: {timeout_s}s 内未获取到 {target_name} 新坐标")
         return None
 
-    def _dynamic_find_object(self, objects, target_name):
-        """从检测列表中找到目标物体(名称匹配), 返回该物体的 dict."""
-        target_key = (target_name or '').split(' (')[0].strip().lower()
-        for obj in objects or []:
-            # realsense_yolo_node 发布的键是 object_name (无 'name'), 兼容两者
-            name = (obj.get('object_name', '') or obj.get('name', '') or '').lower().strip()
-            if target_key and (target_key in name or name in target_key):
-                return obj
-        return None
-
-    def _dynamic_current_xy(self, target_name, max_age_s=2.0):
-        """返回目标物体最新基坐标系位置 (x, y) 与测量时刻 (秒).
-
-        测量时刻 t_meas 用检测帧时刻 (图像时刻) 而非接收时刻, 供 VelocityPredictor
-        延迟补偿. realsense_yolo_node 每物体发布 rgb_stamp_s (浮点 epoch 秒),
-        顶层 header_stamp 亦为浮点 epoch; 两者皆缺时才回退接收时刻.
-        返回 (x, y, t_meas) 或 None.
-        """
-        det = self._latest_detection
-        if not det or not det.get('detected'):
-            return None
-        obj = self._dynamic_find_object(det.get('objects', []), target_name)
-        if obj is None:
-            return None
-        bp = obj.get('base_position_m')
-        if not bp or 'x' not in bp or 'y' not in bp:
-            return None
-        t_meas = time.time()
-        hs = obj.get('rgb_stamp_s')
-        if hs is None or not isinstance(hs, (int, float)):
-            # 回退: 顶层 header_stamp (浮点 epoch 秒, YOLO 检测时刻)
-            hs = det.get('header_stamp')
-        if isinstance(hs, (int, float)) and float(hs) > 0:
-            t_meas = float(hs)
-        if time.time() - t_meas > max_age_s:
-            return None
-        return (float(bp['x']), float(bp['y']), t_meas)
+    def _dynamic_feedback_cb(self, msg):
+        stamp = msg.header.stamp.sec+msg.header.stamp.nanosec*1e-9
+        if stamp > 0 and stamp <= getattr(self, '_dynamic_actual_stamp', 0.):
+            return  # SDK旧状态重复发布不能刷新真实反馈新鲜度。
+        values = dict(zip(msg.name, msg.position))
+        names = [f'joint{i}' for i in range(1, 7)]
+        if all(name in values for name in names):
+            joints = np.array([values[name] for name in names], dtype=float)
+            if np.isfinite(joints).all():
+                self._dynamic_actual_joints = joints.tolist()
+                self._dynamic_actual_at = time.monotonic()
+                self._dynamic_actual_stamp = stamp
 
     def _init_ik_solver(self):
         """初始化内嵌 Pinocchio IK 求解器（无需 ROS2 topic 通信）"""
@@ -958,6 +946,7 @@ class MoveItActionClient(Node):
 
     def _joint_waypoints_valid(self, joint_waypoints, start_joints=None, report_failure=True):
         """复用原有插值碰撞检查；仅计算，不发送运动。"""
+        self._last_state_validity_failure = None
         joint_names = ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6']
         if not self._valid_state_client.wait_for_service(timeout_sec=2.):return False
         current=self.current_joints or {}
@@ -975,6 +964,10 @@ class MoveItActionClient(Node):
                 future=self._valid_state_client.call_async(request)
                 rclpy.spin_until_future_complete(self,future,timeout_sec=2.)
                 if not future.done() or future.exception() or not future.result().valid:
+                    response = future.result() if future.done() and not future.exception() else None
+                    self._last_state_validity_failure = dict(reason='状态检查未通过/超时',
+                        contacts=[] if response is None else [dict(a=c.contact_body_1, b=c.contact_body_2, depth_m=c.depth)
+                                                              for c in response.contacts])
                     if report_failure:
                         self.get_logger().error('直接关节轨迹碰撞/限位检查失败，未派发')
                     return False
@@ -1632,7 +1625,8 @@ class MoveItActionClient(Node):
             return False
         return self.execute_multiwaypoint_joint_trajectory(waypoints, desc, per_point_dur=per_point_dur)
 
-    def _plan_tool_axis_approach(self, target, seed, preferred_orientation, automatic, extra_depth=None):
+    def _plan_tool_axis_approach(self, target, seed, preferred_orientation, automatic, extra_depth=None,
+                                 path_filter=None, diagnostics=None, pregrasp_m=0.06, depth_ladder=False):
         """优先小倾角、少转J6；接近线沿工具+Z，抓后仍走原搬运流程。"""
         from scipy.spatial.transform import Rotation
         extra_depth = (0.02 if automatic else 0.0) if extra_depth is None else extra_depth
@@ -1661,7 +1655,17 @@ class MoveItActionClient(Node):
         else:
             q = preferred_orientation
             groups = [(None, [q, [q[1], -q[0], q[3], -q[2]]])]
-        for tilt, orientations in groups:
+        # 动态优先在同一小倾角内退让深入量，避免为已碰台面的2cm方案扫描所有姿态。
+        depths = [extra_depth]
+        if (path_filter is not None or depth_ladder) and automatic:
+            while depths[-1] > 0.:
+                depths.append(max(0., round(depths[-1]-.005, 6)))
+
+        def record(stage, tilt, depth, pose, detail=None):
+            if diagnostics is not None:
+                diagnostics.append(dict(stage=stage, tilt_deg=tilt, depth_m=depth, pose=pose, detail=detail))
+
+        for tilt, orientations, candidate_depth in [(t, o, d) for t, o in groups for d in depths]:
             if self._emergency_flag:
                 return None
             candidates = []
@@ -1669,30 +1673,42 @@ class MoveItActionClient(Node):
                 if self._emergency_flag:
                     return None
                 axis = Rotation.from_quat(orientation).as_matrix()[:, 2]
-                start = end - 0.06 * axis
+                start = end - pregrasp_m * axis
                 pre_pose = dict(zip(('x', 'y', 'z'), start.tolist()))
                 joints = self._fixed_tcp_ik(pre_pose, orientation, seed)
                 if joints is None:
+                    record('预抓取IK失败', tilt, candidate_depth, pre_pose)
                     continue
                 # 预抓取点不变；额外深度只沿工具轴加一次，并在移动前核查。
-                grasp_end = end + extra_depth * axis
+                grasp_end = end + candidate_depth * axis
                 grasp_target = dict(target, **dict(zip(('x', 'y', 'z'), grasp_end.tolist())))
                 path = self._fixed_tcp_waypoints(start, grasp_target, orientation, joints)
                 if path is None:
+                    record('工具轴路径IK失败', tilt, candidate_depth, pre_pose)
                     continue
                 score = abs(joints[5] - seed[5]) + 0.1 * np.linalg.norm(np.asarray(joints) - seed)
                 candidates.append((score, pre_pose, orientation.tolist() if hasattr(orientation, 'tolist') else list(orientation), joints, path))
             for _, pre_pose, orientation, joints, path in sorted(candidates, key=lambda item: item[0]):
-                if self._joint_waypoints_valid(path, start_joints=joints, report_failure=False):
-                    self.last_grasp_extra_depth = extra_depth
-                    self.last_grasp_axis_mode = '短轴夹持' if short_axis is not None else '径向夹持'
-                    return pre_pose, orientation, joints, tilt
-        if automatic and extra_depth > 0.0 and not self._emergency_flag:
+                if not self._joint_waypoints_valid(path, start_joints=joints, report_failure=False):
+                    record('静态路径状态检查失败', tilt, candidate_depth, pre_pose,
+                           getattr(self, '_last_state_validity_failure', None))
+                    continue
+                if path_filter is not None and not path_filter(pre_pose, orientation, joints, candidate_depth):
+                    record('完整移动路径预解失败', tilt, candidate_depth, pre_pose)
+                    continue
+                self.last_grasp_extra_depth = candidate_depth
+                self.last_grasp_axis_mode = '短轴夹持' if short_axis is not None else '径向夹持'
+                record('通过', tilt, candidate_depth, pre_pose)
+                return pre_pose, orientation, joints, tilt
+        if (automatic and path_filter is None and not depth_ladder
+                and extra_depth > 0.0 and not self._emergency_flag):
             next_depth = max(0.0, round(extra_depth - 0.005, 6))
             self.get_logger().warning(
                 f'{self._active_camera}额外深入{extra_depth * 100:.1f}cm的路径未通过，'
                 f'改试额外深入{next_depth * 100:.1f}cm')
-            return self._plan_tool_axis_approach(target, seed, preferred_orientation, True, extra_depth=next_depth)
+            return self._plan_tool_axis_approach(target, seed, preferred_orientation, True,
+                extra_depth=next_depth, path_filter=path_filter, diagnostics=diagnostics,
+                pregrasp_m=pregrasp_m)
         return None
 
     def move_arm_pose(self, pose_dict, desc, continuous=False, planning_mode='normal',
@@ -2046,19 +2062,6 @@ class MoveItActionClient(Node):
                 
         self.get_logger().error("❌ 所有规划策略全部失败！")
         return False
-
-    def _dynamic_disable_conveyor_collision(self):
-        """动态抓取: 临时禁用传送带碰撞体与机械臂的碰撞检测 (供斜线下降).
-
-        复用既有 _set_conveyor_collision_allowed: 通过 /get_planning_scene 合并当前 ACM,
-        以真实碰撞体名称 (belt_deck/rail_ny/... 共 12 个) 作为矩阵键,
-        只修改传送带相关条目并保留夹爪自碰撞对. 调用前需 sleep 0.15s 供 move_group 处理."""
-        self.get_logger().info("标定模式保留传送带碰撞检查")
-
-    def _dynamic_restore_conveyor_collision(self):
-        """动态抓取: 恢复传送带碰撞检测 (回 P_HOVER 后调用)."""
-        self._set_conveyor_collision_allowed(allowed=False)
-        self.get_logger().info("🧩 动态抓取: 已恢复传送带碰撞检测")
 
     def _try_gripper_action(self, joint_names, positions, timeout_sec=1.0):
         if not self._gripper_action_client.wait_for_server(timeout_sec=timeout_sec):
@@ -2931,35 +2934,7 @@ def main():
     # conveyor.scene中传送带顶面z=0；低于安全下限时拒绝，不移动目标坐标。
     MIN_GRASP_Z = 0.004  # conveyor.scene的belt_deck顶面z=0，保留4mm几何安全间隙
 
-    # ── 动态抓取 (sort_dynamic) ──
-    # P_HOVER: 抓取区上方悬停位 (base 系, link6 末端位置, 待用户标定后替换示例值)
-    # 要求: 位于抓取区正上方、安全高度、远离传送带碰撞体
-    P_HOVER_POSE = {'x': 0.45, 'y': 0.0, 'z': 0.32}      # 示例值, 需标定
-    P_HOVER_ORIENTATION = [0.0, 0.0, -1.0, 0.0]          # 简化示例, 需按末端实际姿态标定
-    # 动态抓取前瞻名义耗时 (秒): 移到影子点 / 下降 / 抬起 的名义用时,
-    # 用于计算目标前瞻量 (物体位移 = 速度 × 名义耗时). 空跑测试后细调.
-    # 影子点前瞻基准 (秒): 用于首 cycle 悬停飞达耗时没测到时的默认值.
-    # 预判式抓取 (改进): 影子点前瞻 = 悬停飞达实际耗时 (自适应 _hover_cost_s),
-    # 让机械臂"先到物体前方等候", 而非旧 SHADOW_LEAD_S=1.0 < 实际飞达~1.5s
-    # 导致到位时物体已越过影子点 → 只能下降横向追(动作傻).
-    SHADOW_LEAD_S = 1.5
-    DESCENT_NOMINAL_S = 0.6
-    LIFT_LEAD_S = 0.3
-    # 下降前瞻补偿 (秒): 叠加到下降各航点的预测到位时刻.
-    # ⚠️ 标定旋钮: 仍落后→增大, 超前(夹爪抢到物体前面)→减小, 步长 0.05s.
-    # 日志14 定量: 抓取点明显比物体快 (夹爪戳到物体前侧).
-    #   下降已改用 arm_controller 直发, 轨迹严格按 1.5s 时间表执行 (无底层追赶滞后);
-    #   IK 求解也已提速 (<0.1s). 旧 DESC_LEAD_S=1.1 是为"日志8 机械臂落后 3cm"场景补偿,
-    #   在当前架构下已多余: 第6段预测 t_arrive=t_launch+1.5+1.1, 而轨迹第6段实际在
-    #   t_send+1.5(≈t_launch+1.7) 到达 → 抓取点比物体超前 1.1s×0.0214≈2.4cm → 戳到前侧.
-    #   正确值应只覆盖"t_launch→轨迹真正开始执行"的延迟 (6段IK求解~0.2s+下发), 取 0.2.
-    DESC_LEAD_S = 0.0  # 移除历史经验时延；实际运动预测仍按时间戳计算
-    # 动态抓取最低下降高度 (base 系, 米); 与静态 MIN_GRASP_Z 含义相同, 兜底防碰
-    DYNAMIC_MIN_GRASP_Z = 0.004
-    # 动态抓取可达性预检阈值 (base 系径向距离 R=√(x²+y²), 米).
-    # 影子对齐/下降目标点若 R 超过该值, 判定为工作空间外 (Piper 悬停高度下满伸约 0.85m,
-    # 保持直下手腕姿态有效可达约 0.55m), 直接回退, 避免白等 IK 时间预算 / MoveIt 全失败.
-    # 也可顺带过滤视觉检测异常点 (如现场日志 x=0.867 远超实际皮带范围).
+    # 动态流程读取 config/dynamic_grasp.json；静止抓取常量不变。
     DYNAMIC_R_MAX = 0.55
 
     def compute_gripper_targets(object_diameter_m):
@@ -2976,271 +2951,48 @@ def main():
             close_target = max(0.022, open_target - 0.028)
         return open_target, close_target
 
-    def _run_dynamic_grasp(self, pick_id, object_diameter_m, start_pose,
-                           compute_gripper_targets, _continuation=False):
-        """动态抓取核心序列: 影子对齐 → 斜线随动下降 → 夹取 → 抬起 → 放置.
-
-        Args:
-            pick_id: 物体名称 (如 "apple (detected)")
-            object_diameter_m: 物体直径 (m), 用于夹爪开度
-            start_pose: {'x','y','z'} 命令下发时的检测位置 (备用)
-            _continuation: True=连续续抓模式 (放置后不回待机位, 碰撞保持禁用,
-                          供循环下一次直接续抓); False=单次模式 (完成后回待机位).
-        Returns:
-            bool: 本次动态抓取是否成功
-        """
-        if not self._dynamic_calib:
-            self.get_logger().warn("⚠️ 无传送带标定, 动态抓取不可用")
-            return False
-
-        v = self._belt_speed
-        if v <= 0.0:
-            self.get_logger().warn("⚠️ 传送带速度不可用(v<=0), 动态抓取不可用")
-            return False
-
-        # ── 1. 读取目标最新位置 (含延迟补偿的测量时刻) ──
-        xy = self._dynamic_current_xy(pick_id)
-        if xy is None:
-            self.get_logger().warn("⚠️ 动态抓取: 未获取到目标最新位置, 回退静态")
-            return False
-        x_now, y_now, t_meas = xy
-
-        # ── 夹取高度：使用检测输出的物体中心TCP高度 ──
-        det = self._latest_detection
-        obj = self._dynamic_find_object(det.get('objects', []), pick_id)
-        surface_z = float(obj.get('base_position_m', {}).get('z', 0.0)) if obj else float(start_pose.get('z', 0.0))
-        clamping_z = surface_z
-        if clamping_z < DYNAMIC_MIN_GRASP_Z:
-            self.get_logger().error('动态TCP目标低于台面安全下限')
-            return False
-        grasp_z = clamping_z
-
-        # ── 2. 影子点计算 (合并进追踪轨迹起点, 不再单独慢速 move_arm_pose) ──
-        # ── 重要架构重构 (全链路实时逐点追踪) ──
-        # 根因 (最新日志 6250 轮定量): 独立影子对齐用 move_arm_pose 走 Pinocchio IK→move_arm_joint,
-        # IK 超时 ~2.55s + 执行 ~1.56s ≈ 4.1s, 期间物体 0.0278m/s 前移 ~11cm, 而影子点仅前瞻 1.0s≈2.8cm
-        # → 机械臂到位时已落后 ~7cm, 且此落后发生在"下降之前", 改下降段 DESCENT_TOTAL/DELTA 无法补偿.
-        # 解法: 删除独立影子对齐, 影子点作为追踪轨迹的第0帧起点, 从机械臂当前姿态直接逐点下探,
-        # 全程 warm-start 连续 IK + 一次 FollowJointTrajectory 下发 → 总延迟 4.1s 降至 ~1.6s.
-        t_shadow = time.time()
-        self._predictor.add_measurement(t_meas, x_now, y_now)
-        # 预判式抓取: 影子点前移到"机械臂飞行悬停到位时刻"物体的位置, 让机械臂先到物体
-        # 前方等候, 物体随后驶到 → 下降垂直下探即抓, 动作自然不追.
-        # 前瞻 = 悬停飞达实际耗时 (上一 cycle 自测 _hover_cost_s), 首 cycle 用 SHADOW_LEAD_S.
-        hover_lead = getattr(self, '_hover_cost_s', None)
-        hover_lead = float(hover_lead) if hover_lead else SHADOW_LEAD_S
-        sx, sy = self._predictor.predict(t_meas, x_now, y_now, t_shadow + hover_lead)
-        z_shadow = P_HOVER_POSE['z']
-        # 可达性预检 (RC-1): 影子点径向距离超限 → 不可达, 直接回退, 不白等规划
-        if math.hypot(sx, sy) > DYNAMIC_R_MAX:
-            self.get_logger().warn(
-                f"⚠️ 动态: 影子点 R=√(sx²+sy²)={math.hypot(sx, sy):.3f} > {DYNAMIC_R_MAX}m, "
-                f"超出工作空间, 回退静态")
-            return False
-        self.get_logger().info(
-            f"🎯 动态: 影子点=({sx:.3f},{sy:.3f},z={z_shadow:.3f}) 速度={v:.4f} m/s "
-            f"(作为追踪轨迹起点, 不再单独对齐)")
-
-        # ── 3. 下降: 连续性 IK → 一次性下发 arm_controller (验证可靠通道) ──
-        # 根治 (日志7 实测): 悬停/回待机走 arm_controller FollowJointTrajectory action
-        #     均成功执行 (日志7 第46/61行), 唯独流式下降走 /control/move_j 直发 CAN 通道
-        #     8步日志全打印但机械臂根本没下降. → 流式逐点频发 CAN 指令在下层互相覆盖/丢失,
-        #     执行通道不可靠; 问题在"执行层"不在"IK/轨迹规划层".
-        # 解法: 下降改走 arm_controller (与悬停同一可靠通道), 借助匀速物体速度模型把
-        #     每个航点 xy 预测到其到位时刻, 连续性 warm-start IK 逐点解出关节角,
-        #     一次性打包 JointTrajectory 下发, 不漏不覆盖, 机械臂必然真实执行下降.
-        self._dynamic_disable_conveyor_collision()
-        # 先到位悬停: 物体上方 (一次 move_arm_pose, 其后立即下降, 无长时间不动窗口)
-        ori_shadow = self._build_pick_orientation({'x': sx, 'y': sy})[0]
-        _hover_t0 = time.time()
-        hover_ok = self.move_arm_pose(
-            {'x': sx, 'y': sy, 'z': z_shadow}, "动态-到位悬停",
-            continuous=False, planning_mode='normal', preferred_orientation=ori_shadow)
-        # 自适应记录悬停飞达耗时, 供下一 cycle 影子点前瞻使用 (预判式抓取)
-        self._hover_cost_s = time.time() - _hover_t0
-        self.get_logger().info(
-            f"⏱️ 抵达悬停耗时={self._hover_cost_s:.2f}s (影子点前瞻基准, 下一 cycle 生效)")
-        if not hover_ok:
-            # 碰撞统一由上层回待机后恢复 (此处机械臂仍在高位, 但为一致性移除外层)
-            self.get_logger().warn("⚠️ 动态: 到位悬停失败, 回退静态")
-            return False
-        # 下降起点: 用最新测量作为速度预测锚点
-        xy0 = self._dynamic_current_xy(pick_id)
-        if xy0 is None:
-            # 碰撞统一由上层回待机后恢复
-            self.get_logger().warn("⚠️ 动态: 下降前获取物体位置失败, 回退静态")
-            return False
-        xa, ya, ta = xy0
-        self._predictor.add_measurement(ta, xa, ya)
-        self.get_logger().info(
-            f"📡 下降锚点=({xa:.3f},{ya:.3f}) t_meas={ta:.2f} "
-            f"(检测管线延迟 {time.time()-ta:.2f}s, 速度={v:.4f} m/s)")
-        warm_q = None
-        if self.current_joints:
-            warm_q = np.array([self.current_joints.get(f'joint{i}', 0.0) for i in range(1, 7)])
-        DESC_STEP = 0.25          # 每段耗时(s), 6段共1.5s 完成下降
-        DESC_N_STEPS = 6
-        t_launch = time.time()
-        joint_waypoints = []
-        gx, gy = sx, sy           # 末段抓取点, 供抬起/放置使用
-        for _k in range(1, DESC_N_STEPS + 1):
-            z_t = z_shadow + (grasp_z - z_shadow) * (_k / DESC_N_STEPS)
-            # 到位时刻 = 名义轨迹时刻 + DESC_LEAD_S (补偿执行/求解未建模延迟, 见常量说明)
-            t_arrive = t_launch + _k * DESC_STEP + DESC_LEAD_S
-            xt, yt = self._predictor.predict(ta, xa, ya, t_arrive)
-            ori_wp = self._build_pick_orientations_multi({'x': xt, 'y': yt})[0]
-            q, err = self._solve_single_ik(np.array([float(xt), float(yt), float(z_t)]), ori_wp, warm_q)
-            if q is None:
-                # 碰撞统一由上层回待机后恢复
-                self.get_logger().warn(f"⚠️ 下降: 第{_k}段 IK 无解, 回退静态")
-                return False
-            joint_waypoints.append(q)
-            warm_q = np.asarray(q, dtype=float)
-            gx, gy = float(xt), float(yt)
-            self.get_logger().info(
-                f"🎯 下降 第{_k}/{DESC_N_STEPS}段 -> ({gx:.3f},{gy:.3f},z={z_t:.3f}) err={err:.4f}")
-        descent_ok = self.execute_multiwaypoint_joint_trajectory(
-            joint_waypoints, "动态-下降", per_point_dur=DESC_STEP)
-        if not descent_ok:
-            # ⚠️ 不在低位恢复碰撞: 此时手指仍压入 belt_deck 碰撞体, 立即 restore 会让
-            # move_group 判起点碰撞 → 回待机 -2. 碰撞统一由上层回待机后恢复.
-            self.get_logger().warn("⚠️ 动态: 下降轨迹执行失败(未下降), 回退静态")
-            return False
-
-        # ⚠️⚠️ 空跑模式临时开关 (Task 7 Step 2): 只验证下降轨迹, 不夹取/不放料.
-        # 用后请删除本段, 恢复真实夹取流程. 对照相机画面检查下降目标点
-        # 是否落在物体实际到达位置附近 (误差 < 5cm), 无碰撞、无 -4 错误.
-        DRY_RUN = False  # ← 空跑: True=只下降不夹取; 正式测试时删除本段
-        if DRY_RUN:
-            self.get_logger().info("🏃 空跑模式: 下降完成, 跳过夹取, 直接回待机位")
-            # 结束位置: 回待机位 (JOINT_STANDBY, 关节空间) — P_HOVER_POSE 是未标定示例值,
-            # 回 (0.45,0,0.32) 会停在奇怪位置 (见日志2); 待机位最可靠且符合项目约定.
-            self.move_arm_joint(JOINT_STANDBY, "动态-空跑回待机位")
-            # 碰撞统一由上层回待机后恢复 (不在低位 restore, 见下降失败分支注释)
-            self.get_logger().info("✅ 空跑完成: 下降路径验证通过")
-            return True
-
-        # ── 4. 夹取: 完全闭合 (与静态抓取一致 GRIPPER_GRAB=0) ──
-        # 用户要求: 动态抓取夹爪也要完全闭合 (像静态一样), 不再按物体直径留缝.
-        # 完全闭合依赖夹爪结构/力矩自然贴合物体, 防止夹不紧/夹偏.
-        close_target = GRIPPER_GRAB
-        self._pre_grasp_width = self._latest_gripper_status.width if self._latest_gripper_status else None
-        grasp_ok = self.operate_gripper(close_target, "动态-闭合夹爪")
-        if not grasp_ok:
-            # 碰撞统一由上层回待机后恢复 (低位 restore 会致回待机 -2, 见下降失败分支注释)
-            self.get_logger().warn("⚠️ 动态: 夹爪闭合失败")
-            return False
-
-        # ── 5. 带前向分量抬起 (水平平移 + 抬升, 一次笛卡尔路径) ──
-        xy3 = self._dynamic_current_xy(pick_id)
-        lift_dx, lift_dy = 0.0, 0.0
-        if xy3 is not None:
-            x3, y3, t3 = xy3
-            self._predictor.add_measurement(t3, x3, y3)
-            lx, ly = self._predictor.predict(t3, x3, y3, time.time() + LIFT_LEAD_S)
-            lift_dx, lift_dy = lx - gx, ly - gy
-        lift_z = z_shadow + 0.05
-        # ── 抬起: IK 解关节 + arm_controller 直发 (绕开 move_group 起点碰撞判断) ──
-        # -2 根因 (最新日志): 抬升/放置走 move_arm_joint→move_group, 从"抓取后低位+夹爪闭合"
-        #   起点规划, move_group 判起点/路径与 belt_deck 接触 → INVALID_MOTION_PLAN(-2), 后续全卡.
-        #   下降用 execute_multiwaypoint_joint_trajectory(arm_controller 直发) 成功, 证明该通道可靠.
-        #   → 抬起同样走 arm_controller 直发; 碰撞本流程已禁用(代码层单独管理), move_group 的
-        #   碰撞检查已失效, 直发不新增风险, 却彻底绕开 -2. 抬到安全高度 lift_z 后再走放置.
-        lift_warm = None
-        if self.current_joints:
-            lift_warm = np.array([self.current_joints.get(f'joint{i}', 0.0) for i in range(1, 7)])
-        # 抬起求解 (快速 + 高成功率):
-        #  问题 (日志13): 过早遍历"多目标×多姿态×多种子"使 IK 3~6s, 夹爪闭合后 2-3s 无动作,
-        #  甚至超时失败. 这里压缩候选:
-        #   · 目标点只取抓取点正上方 (物体已夹持, 竖直抬起即可, 不横向前移);
-        #   · 姿态只取前 2 个候选;
-        #   · 通过"降低目标z + 放宽位置容差"的多级退让提高成功率 (低目标更易 IK).
-        #  总体时间预算 ~0.45s, 消除 2-3s 无动作延迟, 且几乎必然求解成功.
-        _px, _py = float(gx), float(gy)
-        # z 候选从高到低, 容差从严到宽: 优先安全高度, 降级为"较低但能离地", 再放宽位置误差.
-        _z_cands = (
-            (float(lift_z), 0.012),                                  # 目标安全高度, 严容差
-            (float(lift_z), 0.04),                                   # 同高度, 放宽姿态容差
-            (max(float(grasp_z) + 0.06, float(lift_z) - 0.10), 0.05) # 降高度, 更宽容差(离地即可)
-        )
-        _lift_oris = self._build_pick_orientations_multi({'x': _px, 'y': _py})[:2]
-        lift_q, lift_err = None, float('inf')
-        _lift_budget = 0.45          # 总求解时间预算 (s), 满足"夹爪闭合后 <500ms 开始抬起"需求
-        _lift_t0 = time.time()
-        for _zz, _acc in _z_cands:
-            if lift_q is not None or time.time() - _lift_t0 > _lift_budget:
-                break
-            for _ori in _lift_oris:
-                q, err = self._solve_single_ik(
-                    np.array([_px, _py, _zz]), _ori, lift_warm,
-                    time_budget=max(0.05, _lift_budget - (time.time() - _lift_t0)), err_accept=_acc)
-                if q is not None:
-                    lift_q, lift_err = q, err
-                    break
-        lift_ok = False
-        if lift_q is not None:
-            self.get_logger().info(f"✅ 抬起 IK 求解成功 err={lift_err:.4f} ({time.time()-_lift_t0:.2f}s), 直发 arm_controller")
-            # 抬起提速 (连贯性优化): 原 per_point_dur=1.0s 抬起偏慢、夹住后停顿长; 降到 0.5s, 更干脆.
-            lift_ok = self.execute_multiwaypoint_joint_trajectory(
-                [lift_q], "动态-抬起(直发arm_controller)", per_point_dur=0.5)
-        if not lift_ok:
-            self.get_logger().warn(f"⚠️ 动态: 抬起 IK 超时/无解 ({time.time()-_lift_t0:.2f}s), 直接走放置路径")
-
-        # ── 6. 放置 (统一走 arm_controller 直发, 避免 move_group 状态不同步 → -4) ──
-        # 日志11: 抬起用 arm_controller 直发后, move_group 的 robot state 未同步到抬起位,
-        # 走 move_arm_joint 的轨迹起点与真实位置不一致 → CONTROL_FAILED(-4), 随后仍释放
-        # 夹爪导致物体中途掉落. 故放置/回待机也改走 execute_multiwaypoint 直发, 全程单通道无切换.
-        # 抓取抬起后直接移动到放置目标点, 到达后开夹爪.
-        place_id = "放置点"
-        # JOINT_PLACE_TARGET/JOINT_STANDBY 是关节空间目标, 直接作为单航点直发
-        self.execute_multiwaypoint_joint_trajectory([JOINT_PLACE_TARGET], f"动态-移动到{place_id}", per_point_dur=1.2)
-        self.operate_gripper(GRIPPER_PLACE_OPEN, f"动态-{place_id}释放")
-        # ── 7. 返回 (区分续抓/结束) ──
-        if _continuation:
-            # 续抓模式: 不回待机位; 碰撞保持禁用, 供循环直接发起下一次续抓.
-            self.get_logger().info("✅ 动态抓取完成(续抓待命, 待下一次)")
-        else:
-            # 单次模式: 回待机位 (直发), 碰撞由调用方在回待机后统一恢复
-            self.execute_multiwaypoint_joint_trajectory([JOINT_STANDBY], "动态-回待机位", per_point_dur=1.2)
-            self.get_logger().info("✅ 动态抓取完成")
-        return True
-
-    # _run_dynamic_grasp 引用 main() 局部常量 (P_HOVER_POSE/SHADOW_LEAD_S/GRIPPER_PICK_Z_OFFSET/JOINT_PLACE_TARGET 等),
-    # 类方法无法访问 main() 局部作用域, 故定义为 main() 内闭包并绑定到 node 供命令分发调用.
+    def _run_dynamic_grasp(self, target):
+        from dynamic_grasp_runtime import DynamicGraspRunner
+        return DynamicGraspRunner(self, target, JOINT_PLACE_TARGET).run()
     node._run_dynamic_grasp = _run_dynamic_grasp
 
-    def _pick_next_target(self):
-        """连续续抓的目标选择: 从最新视觉检测中挑选一个"抓取工作区内可抓"的物体.
-
-        工作区 = 物体 base 坐标径向可达 (√(x²+y²) ≤ DYNAMIC_R_MAX) 认定可被本次构型拦截.
-        优先选径向距离最大者 (最靠下游, 最紧急, 先抓防出界). 无 → 返回 None 结束续抓.
-        Returns:
-            dict {name, base_position_m, diameter} 或 None. base 为对象本身 dict 引用.
-        """
-        det = self._latest_detection
-        if not det or not det.get('detected'):
+    def _pick_next_target(self, excluded=(), requested=None):
+        det = self._latest_detection or {}
+        if det.get('camera') != 'd455' or not det.get('motion_session'):
             return None
-        best, best_r = None, -1.0
-        for obj in det.get('objects', []) or []:
-            bp = obj.get('base_position_m')
-            if not bp or 'x' not in bp or 'y' not in bp:
+        cfg = self._dynamic_settings()
+        s_max = float(cfg['intercept_s_max_m'])
+        candidates = []
+        for obj in det.get('objects', []):
+            track_id = obj.get('track_id')
+            if track_id is None or track_id in excluded or (requested is not None and track_id != requested):
                 continue
-            x, y = float(bp['x']), float(bp['y'])
-            r = math.hypot(x, y)
-            if r > DYNAMIC_R_MAX:
-                continue  # 超出可达区, 暂不可拦
-            if r > best_r:
-                best_r, best = r, obj
-        if best is None:
-            return None
-        name = str(best.get('object_name', '') or best.get('name', '') or 'object').strip()
-        return {'name': name, 'base_position_m': best.get('base_position_m', {}),
-                'diameter': best.get('estimated_diameter_m') or best.get('size_m', {}).get('diameter')}
+            obs = obj.get('motion_observation') or {}
+            bp = obs.get('position_m')
+            if not bp or not all(k in bp for k in ('x', 'y', 'z')):
+                continue
+            stamp = obs.get('stamp_s', 0.)
+            age = self.get_clock().now().nanoseconds*1e-9-float(stamp)
+            if not 0 <= age <= 1. or math.hypot(float(bp['x']), float(bp['y'])) > DYNAMIC_R_MAX:
+                continue
+            calib = self._dynamic_calib or {}
+            from dynamic_grasp import conveyor_velocity
+            direction = conveyor_velocity(calib, 1., self._belt_direction)
+            downstream = float(bp['x'])*direction[0] + float(bp['y'])*direction[1]
+            # 只挑还没越过物理可抓上界的物体：固定选最下游那个会把拦截点推到工作区外。
+            if downstream > s_max:
+                continue
+            candidates.append((downstream, dict(name=obj.get('object_name', 'object'),
+                track_id=track_id, motion_session=det['motion_session'], base_position_m=bp,
+                diameter=obj.get('estimated_diameter_m'))))
+        return max(candidates, key=lambda item:item[0])[1] if candidates else None
     node._dynamic_pick_next_target = _pick_next_target
 
     # 动态连续续抓安全护栏: 一次 sort_dynamic 最多连续抓取个数, 到限即返回待机让位,
     # 给 GUI 停止/急停机会 (避免传送带持续供料时服务端无限抓取、GUI 无法打断).
     DYNAMIC_MAX_CONSECUTIVE = 6
+    # 单次 sort_dynamic 内连续失败上限: 失败只跳过本轮目标并等下一个物体, 超过上限才交回 GUI.
+    DYNAMIC_MAX_ATTEMPT_FAILS = 5
 
     loop_count = 0
     try:
@@ -3855,8 +3607,8 @@ def main():
             elif data.get("cmd") == "sort_dynamic":
                 # 动态抓取: 传送带持续运行, 服务端自主连续循环拦截移动物体 (统一放置到同一目标点).
                 # 依赖: conveyor_calib.json (方向标定) + /conveyor_status (STM32 速度)
-                # 流程: 检测工作区有物 → 抓放(续抓模式,不停待命) → 再检测... → 工作区无物
-                #       或达连续上限/单次失败 → 回待机 + 恢复碰撞, 结束本命令让 GUI 接管.
+                # 流程: 检测工作区有物 → 抓放 → 再检测；暂时无目标交回GUI等待，不退出动态模式。
+                # 达单批上限后GUI可继续派发；失败/中断不追加运动。
                 node.is_busy = True
                 status_msg.data = 'busy'
                 node.status_pub.publish(status_msg)
@@ -3864,26 +3616,52 @@ def main():
                 node.last_planning_strategy = ''
                 success_all = True
                 grab_count = 0
+                fail_count = 0
+                total_fails = 0
+                failed_tracks = []
+                attempted_tracks = set()
                 try:
-                    while rclpy.ok():
+                    while rclpy.ok() and not node._emergency_flag:
                         # 安全护栏: 达连续抓取上限即返回待机让位 (供 GUI 停止/急停).
                         if grab_count >= DYNAMIC_MAX_CONSECUTIVE:
                             node.get_logger().info(
                                 f"⏹️ 动态续抓达上限 {DYNAMIC_MAX_CONSECUTIVE}, 返回待机让位")
                             break
-                        # 检测工作区内是否有待抓物品 (无 → 结束续抓, 回待机)
-                        tgt = node._dynamic_pick_next_target(node)
+                        # 暂时无目标时交回GUI检测循环，动态模式继续等待，不报失败。
+                        rclpy.spin_once(node, timeout_sec=0.02)
+                        det = node._latest_detection or {}
+                        if data.get('motion_session') and data['motion_session'] != det.get('motion_session'):
+                            raise ValueError('视觉会话已变化，结束本次动态任务')
+                        # 一次失败后不再锁定 GUI 最初指定的目标: 该物体可能已经越过可达区,
+                        # 交给服务端在剩余候选里挑下一个 (通常是更靠上方的物体).
+                        tgt = node._dynamic_pick_next_target(node, attempted_tracks,
+                            data.get('target_track_id') if (grab_count == 0 and fail_count == 0) else None)
                         if tgt is None:
-                            node.get_logger().info("✅ 工作区无待抓物品, 结束续抓")
+                            # 空场时先回准备位(=上一轮待命关节)，下一个物体来了就不用从放置点长途起飞。
+                            ready = getattr(node, '_dynamic_ready_joints', None)
+                            if ready is not None:
+                                try:
+                                    node.move_arm_joint(list(ready), '动态抓取：回到准备位等待下一物体')
+                                except Exception as exc:
+                                    node.get_logger().warn(f'回到准备位失败: {exc}')
                             break
-                        pick_id = f"{tgt['name']} (detected)"
-                        ok = node._run_dynamic_grasp(
-                            node, pick_id, tgt.get('diameter'), tgt['base_position_m'],
-                            compute_gripper_targets, _continuation=True)
-                        grab_count += 1
-                        if not ok:
-                            success_all = False
-                            node.get_logger().warn("⚠️ 动态续抓: 本次抓取失败, 结束续抓")
+                        ok = node._run_dynamic_grasp(node, tgt)
+                        attempted_tracks.add(tgt['track_id'])
+                        if ok:
+                            grab_count += 1
+                            fail_count = 0
+                        else:
+                            # 本轮失败只放弃这个目标, 动态模式与传送带继续运行, 等下一个物体.
+                            fail_count += 1
+                            total_fails += 1
+                            failed_tracks.append(tgt['track_id'])
+                            reason = getattr(node, '_last_dynamic_error', '') or '本轮未成功'
+                            node.get_logger().warn(
+                                f"⚠️ 动态本轮失败（{fail_count}/{DYNAMIC_MAX_ATTEMPT_FAILS}）：{reason}；"
+                                f"已放弃该目标，继续等待下一物体")
+                        if fail_count >= DYNAMIC_MAX_ATTEMPT_FAILS:
+                            node.get_logger().warn(
+                                f"⏹️ 动态连续失败达上限 {DYNAMIC_MAX_ATTEMPT_FAILS}, 返回待机等待下一物体")
                             break
                         # 消化检测回调, 拉取最新视觉
                         rclpy.spin_once(node, timeout_sec=0.05)
@@ -3892,18 +3670,26 @@ def main():
                     import traceback; traceback.print_exc()
                     success_all = False
                 finally:
-                    # 统一收尾: 回待机(直发避 -4) + 张开夹爪 + 恢复碰撞.
-                    node.execute_multiwaypoint_joint_trajectory([JOINT_STANDBY], "动态-收尾回待机位", per_point_dur=1.2)
-                    node.operate_gripper(GRIPPER_OPEN, "动态-张开夹爪")
-                    node._dynamic_restore_conveyor_collision()
-                result = {'ok': success_all and grab_count > 0, 'cmd': 'sort_dynamic',
+                    # 动态失败/中断只取消，不追加回零、回待机或松爪；正常放置后也直接待命。
+                    node._dynamic_tracker = None
+                    if node._emergency_flag:
+                        success_all = False
+                # 单轮抓取失败不再让 GUI 退出动态模式: 只上报本轮未成功, 传送带保持运行.
+                result = {'ok': success_all,
+                          'attempt_failed': success_all and total_fails > 0,
+                          'failed_track_ids': failed_tracks,
+                          'waiting_for_target': success_all and grab_count == 0 and total_fails == 0,
+                          'cmd': 'sort_dynamic',
+                          'cycle_id': data.get('cycle_id'),
                           'msg': f'连续抓取 {grab_count} 个' if success_all and grab_count > 0
-                                  else ('动态抓取异常' if not success_all else '工作区无物')}
+                                  else ('动态抓取异常' if not success_all
+                                        else (f'本轮失败 {total_fails} 次, 继续等待下一物体'
+                                              if total_fails > 0 else '等待下一物体'))}
                 result_msg = String()
                 result_msg.data = json.dumps(result)
                 node.cycle_result_pub.publish(result_msg)
                 node.is_busy = False
-                status_msg.data = 'idle'
+                status_msg.data = 'idle' if result['ok'] else 'error'
                 node.status_pub.publish(status_msg)
                 loop_count += 1
 

@@ -15,6 +15,7 @@ from collections import deque
 import os
 import pathlib
 import sys
+import uuid
 
 # ── 共享配置：从主空间根定位 runtime_config（外参与权重统一来源）──
 # 明确失败优于静默回退：runtime_config / 活动外参缺失或非法时直接报错退出。
@@ -194,6 +195,7 @@ class CameraState:
 
     def __init__(self, name):
         self.name = name
+        self.motion_session = uuid.uuid4().hex
         self.enabled = False
         self.use_depth_camera = True
 
@@ -497,6 +499,7 @@ class ObjectDetector(Node):
             # 三维/深度平滑 track 清空: 下一帧体现完整补偿变化
             cam.tracks = {}
             cam.next_track_id = 0
+            cam.motion_session = uuid.uuid4().hex
             cam.depth_fallback_count = 0
             self.get_logger().info(
                 f"♻️ [{cam.name}] 热更新补偿已提交: "
@@ -1360,6 +1363,13 @@ class ObjectDetector(Node):
                     'base_coords': base_coords,
                     'conf': conf,
                 }
+                # 当前帧质心供动态抓取使用；静止抓取仍发布原来的 EMA 坐标。
+                motion_observation = None
+                if centroid_data is not None and rgb_stamp is not None:
+                    motion_observation = {
+                        'stamp_s': float(rgb_stamp),
+                        'position_m': dict(zip(('x', 'y', 'z'), map(float, centroid_data['centroid']))),
+                    }
                 track = self._find_matching_track(
                     cam, class_name, center_u, center_v, matched_track_ids)
                 if track is None:
@@ -1476,6 +1486,7 @@ class ObjectDetector(Node):
                     "depth_available": True,
                     "filtered": True,  # 标记本帧坐标已经过 EMA 滤波
                     "track_id": track.track_id,
+                    "motion_observation": motion_observation,
                 }
                 if centroid_data is not None:
                     obj_info['grasp_point_type'] = 'estimated_centroid'
@@ -1547,6 +1558,7 @@ class ObjectDetector(Node):
                 "method": (primary_info.get("depth_source", "unknown") if primary_info is not None else "unknown"),
                 "header_stamp": rgb_stamp,  # YOLO 检测时刻, 用于 grasp_pose_node 时间同步
                 "camera": cam.name,                    # 新增: 标识本帧来自哪一路相机
+                "motion_session": cam.motion_session,
                 "objects": objects_list,
                 "objects_count": len(objects_list),
             }

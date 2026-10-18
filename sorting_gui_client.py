@@ -68,13 +68,12 @@ def ros_process_worker(cmd_q, st_q, pose_q, img_q, det_q, conv_q, conv_status_q,
     # 取代原 CH340 继电器控制 (Modbus RTU 9600)
     from stm32_conveyor import STM32Conveyor
     _conv = STM32Conveyor()
-    _conv_ok = False
+    _conv_commanded_running = None  # 最近一次收到ACK的启停命令；不拿M1反向覆盖ACK。
     try:
         _conv.connect()
-        _conv_ok = True
         _log(f"STM32 传送带已连接: {_conv.port} @ {_conv.baudrate}")
     except Exception as e:
-        _log(f"STM32 传送带连接失败: {e} (将使用模拟模式)")
+        _log(f"STM32 传送带连接失败: {e} (后台稍后重连，不模拟成功)")
 
     # ⚠️ 父进程监控: GUI 崩溃/退出后, worker 必须自动释放串口,
     # 否则变成孤儿进程持续抢占 /dev/ttyUSB0 → 下次 GUI 显示速度 0。
@@ -118,39 +117,46 @@ def ros_process_worker(cmd_q, st_q, pose_q, img_q, det_q, conv_q, conv_status_q,
     threading.Thread(target=_parent_watchdog, daemon=True).start()
     # 传送带状态监控线程: 每 250ms 推送一次状态到 conv_status_q
     def _conv_monitor():
+        nonlocal _conv_commanded_running
+        retry_at = 0.
+        last_notice = -100.
         while not closing.is_set():
             try:
-                if _conv_ok:
-                    s = _conv.get_status()
-                    status_msg = {'type': 'conveyor_status',
-                                  'speed': s['speed'],
-                                  'object_detected': s['object_detected'],
-                                  'motor_running': s['motor_running'],
-                                  'motor_direction': int(s.get('motor_direction', 1)),
-                                  'connected': True}
+                if not _conv.is_connected:
+                    _conv_commanded_running = None
+                if not _conv.is_connected and time.monotonic() >= retry_at:
+                    retry_at = time.monotonic()+1.
                     try:
-                        conv_status_q.put_nowait({'type': 'status', 'speed': s['speed'],
-                                       'object_detected': s['object_detected'],
-                                       'motor_running': s['motor_running']})
-                    except Exception:
-                        pass
-                else:
-                    status_msg = {'type': 'conveyor_status', 'speed': 0.0,
-                                  'object_detected': False, 'motor_running': False,
-                                  'motor_direction': 1, 'connected': False}
-                    try:
-                        conv_status_q.put_nowait({'type': 'status', 'speed': 0.0,
-                                       'object_detected': False, 'motor_running': False})
-                    except Exception:
-                        pass
+                        _conv.connect()
+                        _log(f"STM32 串口连接恢复: {_conv.port}，未自动启动传送带")
+                    except Exception as exc:
+                        if time.monotonic()-last_notice >= 10.:
+                            _log(f"STM32 等待重连: {exc}")
+                            last_notice = time.monotonic()
+                if closing.is_set():
+                    _conv.disconnect()
+                    return
+                s = _conv.get_status()
+                status_msg = {'type': 'conveyor_status', 'speed': s['speed'],
+                              'object_detected': s['object_detected'],
+                              'motor_running': s['motor_running'],
+                              'motor_direction': int(s.get('motor_direction', 1)),
+                              'connected': bool(s['connected']),
+                              'commanded_running': _conv_commanded_running,
+                              'status_age_s': max(0., time.time()-s['last_status_time'])}
+                try:
+                    conv_status_q.put_nowait(dict(status_msg, type='status',
+                        last_error=s.get('last_error', ''), port=s.get('port', '')))
+                except Exception:
+                    pass
                 try:
                     sm = String(); sm.data = json.dumps(status_msg)
                     node._conv_status_pub.publish(sm)
                 except Exception:
                     pass
-            except Exception:
-                pass
-            time.sleep(0.1)
+            except Exception as exc:
+                _log(f"STM32 状态监控异常: {exc}")
+            closing.wait(0.25)
     threading.Thread(target=_conv_monitor, daemon=True).start()
 
     # ═════════ 模式切换 (水果 YOLO ↔ 蓝方块检测) ═════════
@@ -230,6 +236,7 @@ def ros_process_worker(cmd_q, st_q, pose_q, img_q, det_q, conv_q, conv_status_q,
             # 传送带实时状态发布 (auto_sorting_action.py sort_dynamic 订阅): 速度/物体/电机
             self._conv_status_pub = self.create_publisher(String, '/conveyor_status', 10)
             self.create_subscription(String, '/sorting_status', self._on_st, 10)
+            self.create_subscription(String, '/sorting/cycle_result', self._on_cycle_result, 10)
             self._tf_buf = tf2_ros.Buffer()
             self._tf_lis = tf2_ros.TransformListener(self._tf_buf, self)
             self.create_subscription(CompressedImage, '/yolo/annotated_image/compressed', self._on_yolo, 10)
@@ -245,6 +252,13 @@ def ros_process_worker(cmd_q, st_q, pose_q, img_q, det_q, conv_q, conv_status_q,
             if m.data in ('idle','busy'):
                 self._robot_busy=m.data=='busy'
             st_q.put(m.data)
+        def _on_cycle_result(self, m):
+            try:
+                result = json.loads(m.data)
+                if result.get('cmd') == 'sort_dynamic':
+                    st_q.put(json.dumps(dict(result, type='dynamic_cycle_result'), ensure_ascii=False))
+            except (ValueError, TypeError):
+                pass
         def _raw_camera(self,camera,msg):
             if not camera_state['switching'] and camera==camera_state['active']:self._on_raw(msg)
         def _on_yolo(self, m):
@@ -283,6 +297,7 @@ def ros_process_worker(cmd_q, st_q, pose_q, img_q, det_q, conv_q, conv_status_q,
                 _putq(pose_q, {'x':t.transform.translation.x,'y':t.transform.translation.y,'z':t.transform.translation.z})
             except: pass
         def _cmd_tick(self):
+            nonlocal _conv_commanded_running
             while not cmd_q.empty():
                 cmd = cmd_q.get()
                 if closing.is_set():
@@ -291,15 +306,16 @@ def ros_process_worker(cmd_q, st_q, pose_q, img_q, det_q, conv_q, conv_status_q,
                 if cmd.get("cmd") == "conveyor":
                     relay_action = cmd.get("relay_action", "off")
                     try:
-                        if _conv_ok:
+                        if _conv.is_connected:
                             if relay_action == "on":
                                 ok = _conv.start()
                             else:
                                 ok = _conv.stop()
-                            err = ""
+                            _conv_commanded_running = (relay_action == 'on') if ok else None
+                            err = "" if ok else (_conv.get_status().get('last_error') or 'STM32未确认命令（超时/ERR/BUSY）')
                         else:
                             ok = False
-                            err = "STM32 未连接"
+                            err = "STM32 未连接，后台正在重连"
                     except Exception as e:
                         ok = False
                         err = str(e)
@@ -639,6 +655,7 @@ def main():
             self._dynamic_abandon_ts = 0.0       # 上次放弃时间戳, 用于短忽略避免反复停带
             self._dynamic_abandon_cooldown = 2.5 # 放弃后冷却 (s): 期间不再因该区物体反复停带
             self._dynamic_busy = False
+            self._dynamic_failed_tracks = set()  # 本轮动态已失败的目标, 不原地反复重试
             self._dyn_trig_line_id = None        # 上游触发线 canvas 线对象
             self._dyn_trig_label_id = None       # 上游触发线 canvas 文本对象
             self._dyn_miss_line_id = None        # 漏抓放弃线 canvas 线对象
@@ -773,11 +790,16 @@ def main():
             self.pick_graspnet_btn=tk.Button(df,text=" GraspNet抓取 ->",command=self._pick_from_detection_graspnet,
                                              font=("Arial",12,"bold"),bg="#FF9800",fg="white",state=tk.DISABLED)
             self.pick_graspnet_btn.pack(fill=tk.X,pady=(0,2))
+            # GraspNet 已退出主流程: 默认隐藏入口, 需要时勾选并自行启动 T4。
+            self.graspnet_opt_in=tk.BooleanVar(value=False)
+            tk.Checkbutton(df,text="启用 GraspNet 6DoF (需先启动 T4)",
+                           variable=self.graspnet_opt_in,command=self._toggle_graspnet_opt,
+                           font=("Arial",9)).pack(anchor='w')
             # ── 蓝方块抓取按钮 (仅蓝方块模式可用, 蓝色 #33CAE8 与按钮模式色一致) ──
             self.pick_blue_block_btn=tk.Button(df,text=" 抓取蓝方块 ->",command=self._pick_blue_block,
                                                font=("Arial",12,"bold"),bg="#33CAE8",fg="white",state=tk.DISABLED)
             self.pick_blue_block_btn.pack(fill=tk.X,pady=(0,2))
-            tk.Label(df,text=" =单次检测 | =两阶段精定位(已禁用) | =GraspNet 6DoF主导 | =蓝方块(蓝方块模式专用)",
+            tk.Label(df,text=" =单次检测(默认) | =两阶段精定位(已禁用) | =GraspNet(需勾选) | =蓝方块(蓝方块模式专用)",
                      font=("Arial",8),fg="gray").pack()
 
         def _ui_queue(self):
@@ -999,7 +1021,9 @@ def main():
                         if not (self.auto_sort_running or self.dynamic_mode):
                             self.pick_btn.config(state=tk.NORMAL,bg="#4CAF50")
                             # 两阶段精定位在 eye-to-hand 下无效 (相机固定, 移动机械臂不改变视角), 永久禁用
-                            self.pick_graspnet_btn.config(state=tk.NORMAL,bg="#FF9800")
+                            self.pick_graspnet_btn.config(
+                                state=tk.NORMAL if self.graspnet_opt_in.get() else tk.DISABLED,
+                                bg="#FF9800" if self.graspnet_opt_in.get() else "gray")
                         self.det_obj.set(f"物体: {d.get('object_name','--')}")
                         self.det_conf.set(f"置信度: {d.get('confidence',0)*100:.2f}%")
                         self.det_meth.set(f"方法: {d.get('method','--')}")
@@ -1233,6 +1257,9 @@ def main():
 
         # ── GraspNet 6DoF 主导抓取 (待机位深度图 → GraspNet 位姿) ──
         def _pick_from_detection_graspnet(self):
+            if not getattr(self, 'graspnet_opt_in', None) or not self.graspnet_opt_in.get():
+                return messagebox.showinfo("GraspNet 未启用",
+                    "GraspNet 已退出默认抓取流程。\n如确需使用，请先勾选上方“启用 GraspNet 6DoF”并启动 T4。")
             if not self._visual_action_allowed():
                 return
             d=dict(self.latest_detection or {})
@@ -1836,10 +1863,7 @@ def main():
                     self._auto_sort_log(msg)
                 except Exception:
                     pass
-                try:
-                    self.status_var.set("当前服务器状态: " + msg)
-                except Exception:
-                    pass
+                self.conveyor_state_var.set(msg)
 
         # ── 传送带状态轮询 (速度、物体检测) ──
         # 由 ROS worker 后台线程每 250ms 推送一次状态到 conveyor_status_queue
@@ -1859,10 +1883,23 @@ def main():
                         speed = result.get('speed', 0.0)
                         obj = result.get('object_detected', False)
                         motor = result.get('motor_running', False)
-                        self._conveyor_speed_var.set(f"速度: {speed:.4f} m/s")
-                        obj_text = "有物体" if obj else "无物体"
+                        connected = bool(result.get('connected', False))
+                        fresh = connected and result.get('status_age_s', float('inf')) <= 1.5
+                        self._conveyor_speed_var.set(f"速度: {speed:.4f} m/s" if fresh else "速度: --（等待连接/状态帧）")
+                        obj_text = ("有物体" if obj else "无物体") if fresh else "--"
                         self._conveyor_obj_var.set(f"物体: {obj_text}")
-                        self._conveyor_obj_label.config(fg="green" if obj else "gray")
+                        self._conveyor_obj_label.config(fg="green" if fresh and obj else "gray")
+                        if not fresh:
+                            self.conveyor_state = None
+                            if not self._conveyor_busy:
+                                self.conveyor_state_var.set('传送带状态: 等待STM32反馈' if connected else '传送带状态: 未连接，正在重连')
+                                self.conveyor_state_label.config(fg='gray')
+                        elif not self._conveyor_busy:
+                            commanded = result.get('commanded_running')
+                            self.conveyor_state = bool(motor) if commanded is None else bool(commanded)
+                            text = ('运行中' if motor else '已停止') if commanded is None else ('启动已确认' if commanded else '停止已确认')
+                            self.conveyor_state_var.set('传送带状态: '+text)
+                            self.conveyor_state_label.config(fg='green' if self.conveyor_state else 'gray')
                         updated = True
                     elif result.get('type') == 'cmd_result':
                         # cmd_result 由 _conveyor_poll 处理，这里不会出现
@@ -1886,6 +1923,17 @@ def main():
                         d = json.loads(s)
                         if d.get("type") == "grasp_result":
                             self._on_grasp_result(d)
+                        elif (d.get('type') == 'dynamic_cycle_result' and self.dynamic_mode
+                              and d.get('cycle_id') == getattr(self, '_dynamic_cycle_id', None)):
+                            self._dynamic_busy = False
+                            if d.get('attempt_failed'):
+                                # 单轮失败只跳过该目标: 动态模式与传送带继续, 等下一个物体.
+                                for tid in d.get('failed_track_ids') or []:
+                                    self._dynamic_failed_tracks.add(tid)
+                                self._auto_sort_log(f"动态: {d.get('msg', '本轮未成功')}")
+                            elif not d.get('ok'):
+                                self._dynamic_state = 'STOPPING'
+                                self._auto_sort_log('动态抓取本轮失败：停止动态派发并停带，不自动静态兜底')
                     except: pass
                     continue
                 self.current_status = s
@@ -1925,12 +1973,13 @@ def main():
                 self.auto_sort_state_var.set(f"[{self.auto_sort_state}] {msg}")
             except: pass
 
-        def _pick_object_right_of_line(self, line_u=None, require_base=True):
+        def _pick_object_right_of_line(self, line_u=None, require_base=True, skip_tracks=None):
             """筛选 x2 ≥ 分界线 且有 base_position_m 的物体, 返回 center_u 最大的 (最右侧, 最远离分界线)。
 
             物体从左向右移动, 越过左侧分界线后进入抓取区 (分界线右侧).
             自动分拣用 self._auto_sort_line_u (默认), 动态模式用传入 line_u.
             require_base=False 时仅按像素分界线筛选 (不要求 base_position_m).
+            skip_tracks 跳过本轮动态已失败的 track, 让触发线可以选择后面的下一个物体.
             选 center_u 最大的 = 最右侧 = 最远离分界线的物体 (先抓最远的, 避免机械臂遮挡后续物体).
             """
             line_u = self._auto_sort_line_u if line_u is None else line_u
@@ -1939,6 +1988,8 @@ def main():
             objects = d.get('objects', []) or []
             candidates = []
             for obj in objects:
+                if skip_tracks and obj.get('track_id') in skip_tracks:
+                    continue
                 if require_base:
                     bp = obj.get('base_position_m')
                     if not bp or not all(k in bp for k in ('x','y','z')): continue
@@ -1966,6 +2017,7 @@ def main():
                 return
             self.dynamic_mode = True
             self._dynamic_state = 'RUNNING'
+            self._dynamic_failed_tracks.clear()
             self.dyn_start_btn.config(state=tk.DISABLED)
             self.dyn_stop_btn.config(state=tk.NORMAL)
             self._set_manual_buttons_state(tk.DISABLED)
@@ -2010,8 +2062,10 @@ def main():
                 if time.time() - self.last_dispatch_time < 1.0:
                     return True
                 if self.current_status == 'error':
-                    # 服务端报错: 记录日志后清除在途标记, 避免动态模式永久卡死
-                    self._auto_sort_log("在途分拣任务异常 (error), 已清除在途标记, 动态状态机继续运行")
+                    self._dynamic_state = 'STOPPING'
+                    self._dynamic_busy = False
+                    self._auto_sort_log('动态执行异常：结束派发并停带，等待人工处理')
+                    return True  # 本tick不进入下一次派发；下个tick处理STOPPING。
                 self._dynamic_busy = False  # 上次 sort_dynamic/sort 已结束 (busy→idle/error)
                 return False
             return True  # 状态未知: 继续等待服务端恢复
@@ -2098,7 +2152,8 @@ def main():
                             if not self._dynamic_busy and self.conveyor_state != True and not self._conveyor_busy:
                                 self._conveyor_set(True)
                             trig_obj = self._pick_object_right_of_line(
-                                line_u=self._dynamic_trigger_line_u, require_base=True)
+                                line_u=self._dynamic_trigger_line_u, require_base=True,
+                                skip_tracks=self._dynamic_failed_tracks)
                             if trig_obj is not None and self.conveyor_state == True:
                                 self._dynamic_state = 'RUNNING'
                                 self._auto_sort_log(f"动态: 目标 {trig_obj.get('object_name','?')} 进入跟踪区, 下发 sort_dynamic")
@@ -2125,6 +2180,8 @@ def main():
             if not bp or not all(k in bp for k in ('x','y','z')):
                 self._auto_sort_log("⚠️ 物体缺少 base_position_m, 跳过")
                 return
+            if (not static_mode and obj.get('track_id') in self._dynamic_failed_tracks):
+                return  # 已失败的目标不原地重试; 结果回调里已记录一次日志, 避免 200ms 刷屏
             try:
                 r = float(self.default_grasp_roll.get())
                 p = float(self.default_grasp_pitch.get())
@@ -2137,16 +2194,20 @@ def main():
             name = obj.get('object_name', '物体')
             # 优先用 D455 估计直径, fallback 预设尺寸
             dia = obj.get('estimated_diameter_m') or obj.get('size_m', {}).get('diameter')
-            cmd = {"cmd": "sort_graspnet" if static_mode else "sort_dynamic",
+            # 停带走静态质心抓取: GraspNet 依赖T4服务, 未启动时要等15s超时才跳过,
+            # 而质心+短轴这条路已经是现场验证可用的主路径。
+            cmd = {"cmd": "sort" if static_mode else "sort_dynamic",
                    "target_track_id": obj.get("track_id"),
                    "pick": pick,
                    "pick_name": f"{name} (auto-sort{'-retry' if retry else ''})",
                    "place_name": "放置点"}
-            method_tag = "single" if static_mode else "dynamic"
+            method_tag = "static" if static_mode else "dynamic"
             if dia: cmd["object_diameter_m"] = round(float(dia), 3)
             if not static_mode:
                 # 动态抓取命令带唯一 cycle_id, 便于服务端区分单次拦截任务
-                cmd["cycle_id"] = f"dyn-{int(time.time())}"
+                cmd["cycle_id"] = f"dyn-{uuid.uuid4().hex}"
+                self._dynamic_cycle_id = cmd['cycle_id']
+                cmd['motion_session'] = (self.latest_detection or {}).get('motion_session')
             # 仅在动态抓取模式下标记在途任务: 移到派发内部, 只有实际派发才置位,
             # 避免缺 base_position_m 提前 return 造成"已置位但未派发"的偶发耦合
             if self.dynamic_mode:
@@ -2159,12 +2220,23 @@ def main():
             """批量禁用/启用手动按钮。state: tk.NORMAL 或 tk.DISABLED。"""
             for btn in (getattr(self, 'conveyor_on_btn', None), getattr(self, 'conveyor_off_btn', None),
                         getattr(self, 'pick_btn', None), getattr(self, 'pick_two_btn', None),
-                        getattr(self, 'pick_graspnet_btn', None),
                         getattr(self, 'pick_blue_block_btn', None),
                         getattr(self, 'qrun', None)):
                 if btn is not None:
                     try: btn.config(state=state)
                     except: pass
+            self._toggle_graspnet_opt(state == tk.NORMAL)
+
+        def _toggle_graspnet_opt(self, allow=True):
+            """GraspNet 按钮只在显式勾选且检测到物体时可用。"""
+            button = getattr(self, 'pick_graspnet_btn', None)
+            if button is None:
+                return
+            enabled = bool(allow) and bool(self.graspnet_opt_in.get()) and bool(
+                self.latest_detection or {}).get('detected') and self.current_status != 'busy'
+            try: button.config(state=tk.NORMAL if enabled else tk.DISABLED,
+                               bg="#FF9800" if enabled else "gray")
+            except Exception: pass
 
         def _draw_dividing_line(self):
             """在相机画布上画黄色虚线。位置由 self._auto_sort_line_u 决定 (原图 640 宽 → canvas 400 宽等比映射)。"""

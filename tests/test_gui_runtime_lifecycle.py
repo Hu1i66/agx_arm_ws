@@ -159,6 +159,7 @@ def test_mode_committed_only_on_success():
 def test_mode_switch_blocked_when_busy():
     i = GUI_SRC.index("def _visual_switch_blocked(")
     body = GUI_SRC[i:i + 700]
+    # 传送带不再作为相机切换门禁（用户明确要求去掉），保留其余占用判定
     for g in ("self.auto_sort_running", "self.dynamic_mode", "self._dynamic_busy",
-              "self.current_status == 'busy'", "self._conveyor_busy"):
+              "self.current_status == 'busy'"):
         assert g in body, g

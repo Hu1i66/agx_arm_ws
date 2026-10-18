@@ -15,6 +15,7 @@ import re
 import threading
 import time
 import os
+import glob
 from collections import deque
 
 try:
@@ -53,6 +54,9 @@ def auto_detect_port() -> str:
     # 2) 按已知 VID:PID 匹配
     for p in serial.tools.list_ports.comports():
         if (p.vid, p.pid) in KNOWN_VID_PID:
+            for link in sorted(glob.glob('/dev/serial/by-id/*')):
+                if os.path.realpath(link) == os.path.realpath(p.device):
+                    return link
             return p.device
     # 3) 回退: 任意 ttyUSB* / ttyACM*
     for p in serial.tools.list_ports.comports():
@@ -80,10 +84,11 @@ class STM32Conveyor:
     """
 
     def __init__(self, port: str = None, baudrate: int = DEFAULT_BAUDRATE):
+        self._auto_port = port is None
         self.port = port or auto_detect_port()
         self.baudrate = baudrate
         self._ser: serial.Serial = None
-        self._lock = threading.Lock()      # 保护串口写
+        self._lock = threading.RLock()     # 保护连接切换/串口写；错误分支可重入
         self._read_lock = threading.Lock() # 保护串口读 (reader_loop 与命令应答共用)
         self._status_lock = threading.Lock()  # 保护状态变量
         self._running = False
@@ -97,6 +102,7 @@ class STM32Conveyor:
         self._motor_running = False         # M1: 电机运行 (1=运行)
         self._motor_direction = True        # M2: 方向 (1=正转, 0=反转)
         self._last_status_time = 0.0        # 最后收到帧的时间戳
+        self._last_error = ''
 
         # ── 帧缓冲 ──
         self._buf = b""
@@ -109,46 +115,85 @@ class STM32Conveyor:
         ⚠️ exclusive=True: 串口被其他进程占用时直接抛 SerialException,
         避免"静默打开但抢不到数据" (孤儿 worker 抢占导致 GUI 显示 0)。
         """
-        if self._ser and self._ser.is_open:
+        if self.is_connected:
             return
-        self._ser = serial.Serial(
-            port=self.port,
-            baudrate=self.baudrate,
-            bytesize=serial.EIGHTBITS,
-            parity=serial.PARITY_NONE,
-            stopbits=serial.STOPBITS_ONE,
-            timeout=DEFAULT_TIMEOUT,
-            exclusive=True,
-        )
-        self._running = True
-        self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
-        self._reader_thread.start()
+        # 热插拔后先等旧读线程退出，不能让两个线程读同一串口。
+        previous = self._reader_thread
+        if previous and previous.is_alive():
+            previous.join(timeout=0.3)
+            if previous.is_alive():
+                raise serial.SerialException('旧串口读线程尚未退出，稍后重连')
+        with self._lock:
+            if self.is_connected:
+                return
+            if self._auto_port:
+                self.port = auto_detect_port()  # ttyUSB编号可能已经变化
+            try:
+                self._ser = serial.Serial(
+                    port=self.port, baudrate=self.baudrate,
+                    bytesize=serial.EIGHTBITS, parity=serial.PARITY_NONE,
+                    stopbits=serial.STOPBITS_ONE, timeout=DEFAULT_TIMEOUT, exclusive=True)
+            except (serial.SerialException, OSError) as exc:
+                self._last_error = str(exc)
+                raise
+            with self._status_lock:
+                self._buf = b''
+                self._speed_win.clear()
+                self._speed = self._speed_raw = 0.
+                self._last_status_time = 0.
+                self._object_detected = self._motor_running = False
+                self._last_error = ''
+            self._running = True
+            self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
+            self._reader_thread.start()
 
     def disconnect(self):
         """停止后台线程并关闭串口。"""
         self._running = False
+        with self._lock:
+            ser, self._ser = self._ser, None
+            if ser is not None:
+                try:
+                    ser.close()
+                except Exception:
+                    pass
         if self._reader_thread and self._reader_thread.is_alive():
             self._reader_thread.join(timeout=1.0)
-        if self._ser and self._ser.is_open:
-            try:
-                self._ser.close()
-            except Exception:
-                pass
-        self._ser = None
 
     @property
     def is_connected(self) -> bool:
-        return self._ser is not None and self._ser.is_open
+        ser = self._ser
+        return ser is not None and ser.is_open
+
+    def _connection_lost(self, ser, error):
+        """丢弃失效句柄。仅断开/清理状态，不发送启动、停止或换向命令。"""
+        with self._lock:
+            if self._ser is not ser:
+                return
+            self._ser = None
+            with self._status_lock:
+                self._last_error = str(error)
+                self._last_status_time = 0.
+                self._speed_win.clear()
+                self._speed = self._speed_raw = 0.
+                self._motor_running = self._object_detected = False
+            try:
+                ser.close()
+            except Exception:
+                pass
 
     # ── 后台读取循环 ──
 
     def _reader_loop(self):
         """持续读取串口，解析状态帧并更新状态变量。"""
-        while self._running and self._ser and self._ser.is_open:
+        while self._running and self.is_connected:
+            ser = self._ser
             try:
                 # 与 _send_command 共享读锁, 避免命令应答与状态帧互相抢占
                 with self._read_lock:
-                    data = self._ser.read(256)
+                    if self._ser is not ser:
+                        break
+                    data = ser.read(256)
                 if not data:
                     continue
                 self._buf += data
@@ -156,9 +201,9 @@ class STM32Conveyor:
                 while b'\r\n' in self._buf:
                     line, self._buf = self._buf.split(b'\r\n', 1)
                     self._parse_frame(line)
-            except serial.SerialException:
-                # 串口可能断开，等待重连
-                time.sleep(0.5)
+            except (serial.SerialException, OSError) as exc:
+                self._connection_lost(ser, exc)
+                break  # GUI监控线程重新枚举设备并调用connect，不忙等旧句柄。
             except Exception:
                 # 其他异常不中断读取
                 time.sleep(0.1)
@@ -198,6 +243,9 @@ class STM32Conveyor:
         if not self.is_connected:
             return False
         with self._lock:
+            ser = self._ser
+            if ser is None or not ser.is_open:
+                return False
             try:
                 # 暂停后台读取, 独占串口读命令应答
                 with self._read_lock:
@@ -221,7 +269,8 @@ class STM32Conveyor:
                             # 无数据时短暂休眠，避免忙等
                             time.sleep(0.01)
                 return False
-            except serial.SerialException:
+            except (serial.SerialException, OSError) as exc:
+                self._connection_lost(ser, exc)
                 return False
 
     def start(self) -> bool:
@@ -265,6 +314,8 @@ class STM32Conveyor:
                 'motor_direction': self._motor_direction,
                 'last_status_time': self._last_status_time,
                 'connected': self.is_connected,
+                'last_error': self._last_error,
+                'port': self.port,
             }
 
 
