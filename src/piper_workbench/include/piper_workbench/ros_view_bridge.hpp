@@ -16,6 +16,7 @@ public:
  explicit RosViewBridge(const rclcpp::NodeOptions &,QObject *parent=nullptr);
  ~RosViewBridge() override;
  QImage image(QString camera,bool annotated=true);
+ double imageAge(QString camera,bool annotated=true);
  rclcpp::Node::SharedPtr node;
 signals:
  void detection(QString,QJsonObject);

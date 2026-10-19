@@ -415,6 +415,47 @@ class ProcessManager:
             "detail": "SIGINT/SIGTERM 后仍存活，未删除登记；请人工处理",
         }
 
+    def stop_owned_group(self, component_key, *, timeout_sigint=SIGINT_WAIT_S, timeout_sigterm=SIGTERM_WAIT_S):
+        """Finish a registered launch group even when its leader already exited.
+
+        Every surviving PID must still belong to this boot/session/user/workspace.
+        Signals target those checked PIDs, never a name match or an unowned group.
+        """
+        record=self.get_record(component_key)
+        if record is None:return {'result':'not_registered','component_key':component_key}
+        result=self.stop(component_key,timeout_sigint=timeout_sigint,timeout_sigterm=timeout_sigterm)
+        if result['result'] not in ('incomplete_exit','stop_failed'):return result
+        pgid=int(record.get('pgid',0));uid=int(record.get('uid',-1))
+        if (record.get('managed_workspace')!=str(self.workspace) or record.get('boot_id')!=_boot_id()
+                or pgid<=1 or pgid==os.getpgrp() or pgid!=record.get('pid') or uid!=os.getuid()):
+            return dict(result,detail='残留进程组身份不匹配，未发送信号')
+        last_signal=None
+        for signum,timeout in [(signal.SIGINT,timeout_sigint),(signal.SIGTERM,timeout_sigterm),(signal.SIGKILL,2.)]:
+            current=self.get_record(component_key)
+            if not current or current.get('record_id')!=record.get('record_id'):return dict(result,detail='进程登记已改变，停止清理')
+            members=_pgid_members(pgid);checked=[]
+            for pid in members:
+                st=_parse_stat(pid)
+                try:
+                    env=pathlib.Path(f'/proc/{pid}/environ').read_bytes().split(b'\0')
+                    owner=('AGX_ARM_WS='+str(self.workspace)).encode() in env
+                except OSError:owner=False
+                if (not st or st['session']!=pgid or st['starttime']<int(record['proc_starttime']) or _proc_uid(pid)!=uid or not owner):
+                    return dict(result,detail=f'残留PID {pid} 无法确认属于当前工作树，未强制终止')
+                checked.append((pid,st['starttime']))
+            for pid,start in checked:
+                st=_parse_stat(pid)
+                if not st or st['starttime']!=start:continue
+                try:os.kill(pid,signum)
+                except ProcessLookupError:pass
+            last_signal=signal.Signals(signum).name
+            deadline=time.monotonic()+timeout
+            while _pgid_members(pgid) and time.monotonic()<deadline:time.sleep(.05)
+            if not _pgid_members(pgid):
+                self.unregister(component_key,record['record_id'])
+                return dict(result='stopped',component_key=component_key,signal=last_signal,detail='已清理本工作树残留子进程')
+        return dict(result='stop_failed',component_key=component_key,alive_members=_pgid_members(pgid),detail='已核验残留进程但无法退出')
+
     def _finalize_stop(self, component_key: str, record: dict, is_parent: bool):
         pid = int(record.get("pid", 0))
         pgid = int(record.get("pgid", 0))

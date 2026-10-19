@@ -925,6 +925,7 @@ def ensure_background(component: str, *, camera: str = "d455", mode: str = "frui
 
         argv = build_command(component, camera=camera, mode=mode, ros_args=ros_args)
         env = build_env(camera)
+        if component=='action' and initiator=='workbench':env['PIPER_WORKBENCH_MANAGED']='1'
         if cancel_event is not None and cancel_event.is_set():
             return {"result": "cancelled", "ready": False, "component_key": key}
         log_file = _runtime_log_dir() / f"{key.replace(':', '_')}.log"
@@ -977,11 +978,16 @@ def _ready_timeout(component: str, mode: str) -> float:
 def stop_component(component: str, *, camera: str = "d455", mode: str = "fruit",
                    initiator: str | None = None,
                    owner_session: str | None = None,
-                   allow_cross_initiator: bool = False) -> dict:
+                   allow_cross_initiator: bool = False, cleanup_owned: bool = False) -> dict:
     key = component_key(component, camera=camera, mode=mode)
     manager = _manager()
     with manager.transition_lock(key):
-        res = manager.stop(key, require_owner=initiator,
+        if cleanup_owned:
+            record=manager.get_record(key)
+            if record and initiator and record.get('initiator')!=initiator and not allow_cross_initiator:
+                return {'result':'not_owner','component_key':key}
+            res=manager.stop_owned_group(key)
+        else:res = manager.stop(key, require_owner=initiator,
                            owner_session=owner_session,
                            allow_cross_initiator=allow_cross_initiator)
     _log_runtime(key, f"STOP initiator={initiator} "

@@ -104,6 +104,8 @@ def generate_launch_description():
         description='Use simulation clock (/clock) for MoveIt stack. Keep false on real hardware.',
     )
 
+    use_rviz_arg = DeclareLaunchArgument('use_rviz', default_value='true', choices=['true', 'false'])
+
     # ── agx_arm_ctrl ─────────────────────────────────────────────────
     agx_arm_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -145,6 +147,7 @@ def generate_launch_description():
             'tcp_offset': LaunchConfiguration('tcp_offset'),
             'follow': LaunchConfiguration('follow'),
             'use_sim_time': LaunchConfiguration('use_sim_time'),
+            'use_rviz': LaunchConfiguration('use_rviz'),
         }.items(),
     )
 
@@ -164,6 +167,7 @@ def generate_launch_description():
         tcp_offset_arg,
         follow_arg,
         use_sim_time_arg,
+        use_rviz_arg,
         # launches
         agx_arm_launch,
         moveit_launch,

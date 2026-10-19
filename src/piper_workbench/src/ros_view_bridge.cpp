@@ -36,5 +36,11 @@ RosViewBridge::~RosViewBridge(){executor_.cancel();if(thread_.joinable())thread_
 QImage RosViewBridge::image(QString camera,bool annotated){
  QMutexLocker lock(&mutex_);auto key=camera;auto now=QDateTime::currentMSecsSinceEpoch();
  if(annotated&&now-imageTimes_.value(camera+"-annotated",0)<1500)key+="-annotated";
- if(now-imageTimes_.value(key,0)>2000)return {};return images_.value(key);
+ return images_.value(key);
+}
+
+double RosViewBridge::imageAge(QString camera,bool annotated){
+ QMutexLocker lock(&mutex_);auto now=QDateTime::currentMSecsSinceEpoch();
+ if(annotated&&now-imageTimes_.value(camera+"-annotated",0)<1500)camera+="-annotated";
+ auto stamp=imageTimes_.value(camera,0);return stamp?double(now-stamp)/1000.:-1.;
 }

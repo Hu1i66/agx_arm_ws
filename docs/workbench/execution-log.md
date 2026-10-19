@@ -39,3 +39,8 @@ Task 10: complete (software implementation and scoped offline checks; hardware/f
 Task 11: complete (software implementation and scoped offline checks; hardware/field acceptance explicitly pending in docs/workbench/validation.md).
 Final: Ruling: keep existing failure-protection algorithm and external-process ownership; no automatic unknown T1 kill — preserve original operation + other workspaces — cost: externally owned T1 requires stopping original terminal.
 Final: Ruling: capture error feedback graded Important and fixed — missing-camera/write failures must be visible — no remaining deferred minor.
+
+
+## 2026-10-19 现场反馈修复
+
+修复 RViz 高分屏闪烁、sudo 标准输入凭据、YOLO 本地权重准备、恢复串口耦合及残留驱动，并补全连接关闭和曝光原图预览。用户确认 RViz 已正常，第二次授权恢复确认机械臂使能与实际反馈。具体证据、测试及 USB 链路边界见 [现场修复记录](field-fixes-20261019.md)。

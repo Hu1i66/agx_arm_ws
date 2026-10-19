@@ -48,7 +48,12 @@ class Tasks:
     def recovery(self,op):
         with self.lock:
             self.pause=True;self.continuous=False;self.queue_running=False;self.queued.clear();self.inflight=None;self.phase='paused';self.failed.clear()
-            self.conveyor('stop');self.control(op)
+            self.control(op)
+            warnings=[]
+            try:self.conveyor('stop')
+            except Exception as exc:
+                warnings.append('传送带停带未确认: '+str(exc));self.emit('task.status',dict(self.status(),error=warnings[-1]))
+            return {'warnings':warnings,'state':'paused'}
     def result(self,result):
         with self.lock:
             if not self.inflight:return

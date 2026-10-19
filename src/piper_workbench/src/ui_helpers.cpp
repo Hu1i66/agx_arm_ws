@@ -33,7 +33,7 @@ QFrame *Ui::card(QString title,QWidget *parent){
 QPushButton *Ui::button(QString text,bool primary,QString symbol){
  auto *b=new AnimatedButton(text);b->setMinimumHeight(38);b->setCursor(Qt::PointingHandCursor);
  if(primary)b->setObjectName("primary");if(!symbol.isEmpty()){
-  auto glyph=icon(symbol).pixmap(20,20);if(primary){QPainter paint(&glyph);paint.setCompositionMode(QPainter::CompositionMode_SourceIn);paint.fillRect(glyph.rect(),Qt::white);}b->setIcon(QIcon(glyph));
+  auto glyph=icon(symbol).pixmap(px(20),px(20));if(primary){QPainter paint(&glyph);paint.setCompositionMode(QPainter::CompositionMode_SourceIn);paint.fillRect(glyph.rect(),Qt::white);}b->setIcon(QIcon(glyph));
  }
  return b;
 }
@@ -44,9 +44,14 @@ void Ui::ImageView::paintEvent(QPaintEvent *){
  QPainter p(this);p.setRenderHint(QPainter::Antialiasing);p.fillRect(rect(),QColor("#F0F3F7"));
  auto box=imageRect();if(frame.isNull()){
   p.setPen(QPen(QColor("#CBD5E1"),1));p.drawRoundedRect(rect().adjusted(1,1,-1,-1),7,7);
-  icon("capture").paint(&p,QRect(width()/2-20,height()/2-52,40,40));p.setPen(QColor("#64748B"));p.drawText(rect().adjusted(0,20,0,20),Qt::AlignCenter,waiting);return;
+  icon("capture").paint(&p,QRect(width()/2-px(20),height()/2-px(52),px(40),px(40)));p.setPen(QColor("#64748B"));p.drawText(rect().adjusted(0,20,0,20),Qt::AlignCenter,waiting);return;
  }
- p.drawImage(box,frame);if(selected<0)return;
+ p.drawImage(box,frame);
+ if(ageSeconds>2){
+  QRect banner(px(8),px(8),width()-px(16),px(32));p.setPen(Qt::NoPen);p.setBrush(QColor(255,247,224,242));p.drawRoundedRect(banner,6,6);
+  p.setPen(QColor("#865A13"));p.drawText(banner,Qt::AlignCenter,QString("画面已暂停 · 上次更新 %1 秒前").arg(ageSeconds,0,'f',0));
+ }
+ if(selected<0||ageSeconds>2)return;
  for(auto row:detection["objects"].toArray()){
   auto o=row.toObject();if(o["track_id"].toInt(-2)!=selected)continue;auto b=o["bbox_pixel"].toObject();
   QRectF r(box.x()+b["x1"].toDouble()*box.width()/frame.width(),box.y()+b["y1"].toDouble()*box.height()/frame.height(),(b["x2"].toDouble()-b["x1"].toDouble())*box.width()/frame.width(),(b["y2"].toDouble()-b["y1"].toDouble())*box.height()/frame.height());
@@ -87,4 +92,32 @@ void Ui::TracePlot::paintEvent(QPaintEvent *){
  for(int i=0;i<=4;++i){double y=plot.bottom()-i*plot.height()/4.;painter.setPen(QPen(QColor("#E7EDF5"),1));painter.drawLine(QPointF(plot.left(),y),QPointF(plot.right(),y));painter.setPen(QColor("#64748B"));painter.drawText(QRectF(0,y-10,48,20),Qt::AlignRight,QString::number(ymin+(ymax-ymin)*i/4.,'f',1));}
  auto draw=[&](const QVector<QPointF> &points,QColor color,Qt::PenStyle style){QPainterPath path;bool first=true;for(auto value:points){QPointF point(plot.left()+(value.x()-xmin)/(xmax-xmin)*plot.width(),plot.bottom()-(value.y()-ymin)/(ymax-ymin)*plot.height());if(first){path.moveTo(point);first=false;}else path.lineTo(point);}painter.setPen(QPen(color,2,style));painter.drawPath(path);};
  draw(actual,QColor("#1769FF"),Qt::SolidLine);draw(target,QColor("#7587A3"),Qt::DashLine);painter.setPen(QColor("#64748B"));painter.drawText(QRectF(plot.left(),plot.bottom()+8,80,20),QString::number(xmin,'f',2));painter.drawText(QRectF(plot.right()-55,plot.bottom()+8,55,20),Qt::AlignRight,QString::number(xmax,'f',2));
+}
+
+// Humble RViz passes logical sizes to Ogre's native X11 surface. Run Qt at
+// native pixels, then scale only our widget metrics to retain desktop readability.
+// See ros2/rviz#1052 and #1870; no system Qt/ROS libraries are replaced.
+int Ui::px(int value){return qRound(value*qApp->property("workbenchUiScale").toDouble());}
+void Ui::scaleNativeUi(QWidget *root){
+ const double scale=qApp->property("workbenchUiScale").toDouble();if(qFuzzyCompare(scale,1.))return;
+ QString css=qApp->styleSheet();QRegularExpression pixels("(-?\\d+)px");auto matches=pixels.globalMatch(css);QVector<QRegularExpressionMatch> positions;while(matches.hasNext())positions<<matches.next();
+ for(auto it=positions.crbegin();it!=positions.crend();++it)css.replace(it->capturedStart(),it->capturedLength(),QString::number(px(it->captured(1).toInt()))+"px");qApp->setStyleSheet(css);
+ auto widgets=root->findChildren<QWidget *>();widgets.prepend(root);
+ for(auto *widget:widgets){
+  auto minimum=widget->minimumSize(),maximum=widget->maximumSize();
+  widget->setMinimumSize(px(minimum.width()),px(minimum.height()));
+  widget->setMaximumSize(maximum.width()==QWIDGETSIZE_MAX?QWIDGETSIZE_MAX:px(maximum.width()),maximum.height()==QWIDGETSIZE_MAX?QWIDGETSIZE_MAX:px(maximum.height()));
+  if(auto *button=qobject_cast<QAbstractButton *>(widget))button->setIconSize(button->iconSize()*scale);
+  if(auto *list=qobject_cast<QAbstractItemView *>(widget))list->setIconSize(list->iconSize()*scale);
+  if(auto *label=qobject_cast<QLabel *>(widget)){auto pixmap=label->pixmap(Qt::ReturnByValue);if(!pixmap.isNull())label->setPixmap(pixmap.scaled(pixmap.size()*scale,Qt::KeepAspectRatio,Qt::SmoothTransformation));}
+  if(auto *table=qobject_cast<QTableWidget *>(widget))table->verticalHeader()->setDefaultSectionSize(px(30));
+ }
+ for(auto *layout:root->findChildren<QLayout *>()){
+  auto m=layout->contentsMargins();layout->setContentsMargins(px(m.left()),px(m.top()),px(m.right()),px(m.bottom()));
+  if(auto *grid=qobject_cast<QGridLayout *>(layout)){if(grid->horizontalSpacing()>=0)grid->setHorizontalSpacing(px(grid->horizontalSpacing()));if(grid->verticalSpacing()>=0)grid->setVerticalSpacing(px(grid->verticalSpacing()));}
+  else if(auto *form=qobject_cast<QFormLayout *>(layout)){if(form->horizontalSpacing()>=0)form->setHorizontalSpacing(px(form->horizontalSpacing()));if(form->verticalSpacing()>=0)form->setVerticalSpacing(px(form->verticalSpacing()));}
+  else if(layout->spacing()>=0)layout->setSpacing(px(layout->spacing()));
+  for(int i=0;i<layout->count();++i)if(auto *spacer=layout->itemAt(i)->spacerItem()){auto size=spacer->sizeHint();spacer->changeSize(px(size.width()),px(size.height()),spacer->sizePolicy().horizontalPolicy(),spacer->sizePolicy().verticalPolicy());}
+ }
+ root->resize(root->size()*scale);
 }

@@ -1,0 +1,52 @@
+{
+  "checked_at": "2026-10-19 11:12:05 CST",
+  "worktree": "/home/lxf/.codex/worktrees/f142/agx_arm_ws",
+  "arm_pid": 977019,
+  "arm_instance": "938243b59ca84c3ea80a363c04fbc8b0",
+  "enable_confirmed": true,
+  "disconnected_warnings_in_current_instance": 0,
+  "feedback_probe": {
+    "feedback_samples": 597,
+    "last_feedback": {
+      "stamp": 1792379420.8755968,
+      "joints": {
+        "joint1": 0.0,
+        "joint2": 0.0,
+        "joint3": 0.0,
+        "joint4": 0.0,
+        "joint5": 0.0,
+        "joint6": 0.0,
+        "gripper_joint1": 0.0,
+        "gripper_joint2": -0.0
+      }
+    },
+    "last_arm_status": {
+      "ctrl_mode": 1,
+      "arm_status": 0,
+      "communication_status_joint": [
+        false,
+        false,
+        false,
+        false,
+        false,
+        false
+      ]
+    },
+    "publisher_count": 1
+  },
+  "can_status": "11: can0: <NOARP,UP,LOWER_UP,ECHO> mtu 16 qdisc pfifo_fast state UP mode DEFAULT group default qlen 10\n    link/can  promiscuity 0 minmtu 0 maxmtu 0 \n    can state ERROR-ACTIVE restart-ms 0 \n\t  bitrate 1000000 sample-point 0.750 \n\t  tq 62 prop-seg 5 phase-seg1 6 phase-seg2 4 sjw 2\n\t  gs_usb: tseg1 1..16 tseg2 1..8 sjw 1..4 brp 1..1024 brp-inc 1\n\t  clock 48000000 \n\t  re-started bus-errors arbit-lost error-warn error-pass bus-off\n\t  0          0          0          0          0          0         numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 parentbus usb parentdev 1-2.4:1.0 \n    RX:  bytes packets errors dropped  missed   mcast           \n       8578852 1072524      0       0       0       0 \n    TX:  bytes packets errors dropped carrier collsns           \n           136  330027      0       0       0       0 \n",
+  "second_authorized_recovery": {
+    "id": "arm.recover",
+    "ok": true,
+    "result": {
+      "state": "awaiting_feedback",
+      "detail": "连接流程已完成，使能待实际反馈确认；抓取保持暂停"
+    }
+  },
+  "retained_components": {
+    "camera:d455": 967063,
+    "camera:dabai": 967197,
+    "action": 967450,
+    "detector:dual": 975870
+  }
+}

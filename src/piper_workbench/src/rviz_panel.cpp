@@ -81,7 +81,9 @@ RvizPanel::RvizPanel(QWidget *parent) : QWidget(parent) {
 }
 RvizPanel::~RvizPanel() = default;
 void RvizPanel::setEditing(bool editing) {
-  if (planning_) planning_->subProp("Planning Request")->subProp("Query Goal State")->setValue(editing);
+  if (!planning_)return;
+  auto *property=planning_->subProp("Planning Request")->subProp("Query Goal State");
+  if(property->getValue().toBool()!=editing)property->setValue(editing);
 }
 
 QVector<double> RvizPanel::actualJoints() const{

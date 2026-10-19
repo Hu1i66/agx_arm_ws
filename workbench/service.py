@@ -68,7 +68,7 @@ class Workbench:
         now=time.time();seen=self.ros.seen if self.ros else {}
         return dict(config_errors=[e for e in (self.settings.error,self.placements.error) if e],components=rows,task=self.tasks.status(),placements=self.placements.get(),parameters=self.settings.get(),
             cameras={c:dict(state='receiving' if now-seen.get(c,0)<2 else 'waiting',age_s=now-seen[c] if c in seen else None,input_fps=self.ros.rates.get(c,0) if self.ros else 0,detection_fps=self.ros.rates.get('yolo:'+c,0) if self.ros else 0,detection_age_s=now-seen['yolo:'+c] if 'yolo:'+c in seen else None) for c in ('d455','dabai')},
-            feedback=self.ros.capture_actual_pose() if self.ros and self.ros.joints and now-self.ros.joints[1]<.5 else None,
+            feedback=self.ros.feedback_snapshot() if self.ros else None,
             reconnect=dict(count=self.notice.count,last_at=self.notice.last),conveyor=self.belt.get_status() if self.belt else {'connected':False},
             nodes=self.ros.get_node_names() if self.ros else [],socket=str(self.root/'.runtime/workbench.sock'))
     def log_ros(self,source,text,stamp):
@@ -128,8 +128,20 @@ class Workbench:
 
         if op=='system.start_missing':return self.components.ensure_missing_components()
         if op=='system.cancel':self.components.cancel.set();return {'state':'cancel_requested'}
+        if op=='system.stop_all':
+            warnings=[]
+            try:self.capture.stop()
+            except Exception as exc:warnings.append(dict(component='capture',error=str(exc)))
+            for sid,session in list(self.calibration.sessions.items()):
+                try:session['proc'].stop()
+                except ProcessLookupError:pass
+                except Exception as exc:warnings.append(dict(component='calibration:'+sid,error=str(exc)))
+            return self.components.close_all_connections()+warnings
         if op=='arm.recover':return self.components.recover_arm_connection()
         if op.startswith('component.'):
+            # An explicit activation click must run again after USB re-enumeration.
+            if op=='component.start' and args['component'] in ('can','activate'):
+                return self.components.start(args['component'],args.get('camera_id','d455'),force=True)
             return getattr(self.components,op.split('.')[1])(args['component'],args.get('camera_id','d455'))
         if op=='motion.start':return self.tasks.start(**args)
         if op=='motion.send':

@@ -1,4 +1,5 @@
 """Existing launcher adapter. Ordinary ensure and forced arm recovery are separate."""
+import json,os
 import pathlib
 import shlex
 import subprocess
@@ -20,13 +21,23 @@ class Components:
     def command(self, component):
         if component=='can':
             script=self.root/'src/agx_arm_ros/scripts/can_activate.sh'
-            # pkexec provides the normal system authentication dialog; no saved password.
-            return ['pkexec','bash','-c',f'bash {shlex.quote(str(script))} can0 1000000 && cansend can0 123#1122334455667788 && ip -s link show can0']
+            # Password is local-only and supplied to sudo through stdin.
+            return ['sudo','-S','-p','','bash','-c',f'bash {shlex.quote(str(script))} can0 1000000 && cansend can0 123#1122334455667788 && ip -s link show can0']
+        if component=='can-down':return ['sudo','-S','-p','','ip','link','set','can0','down']
         return ['/usr/bin/python3',str(self.root/'activate_robot.py')]
 
     def _run(self, argv):
         self.emit('log.batch',{'source':'连接命令','lines':['$ '+shlex.join(argv)]})
-        proc=subprocess.Popen(argv,cwd=self.root,env=self.launcher.build_env('dual'),stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1)
+        password=None
+        if argv[0]=='sudo':
+            path=self.root/'.runtime/workbench-credentials.json'
+            if path.is_file():password=json.loads(path.read_text())['sudo_password']
+            if password is None:raise RuntimeError('未配置本机sudo凭据，请在终端激活CAN或配置本地凭据')
+        proc=subprocess.Popen(argv,cwd=self.root,env=self.launcher.build_env('dual'),stdin=subprocess.PIPE if password is not None else subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1)
+        if password is not None:
+            try:proc.stdin.write(password+'\n');proc.stdin.flush()
+            except BrokenPipeError:pass
+            finally:proc.stdin.close()
         lines=[]
         for line in proc.stdout:
             lines.append(line); self.emit('log.batch',{'source':'连接命令','lines':[line.rstrip()]})
@@ -42,7 +53,8 @@ class Components:
         if component=='conveyor':
             if self.conveyor is None: raise RuntimeError('传送带接口不可用')
             return self.conveyor('connect')
-        result=self.launcher.ensure_background(component,camera=camera,initiator='workbench',wait_ready=False)
+        extra={'ros_args':['use_rviz:=false']} if component=='arm' else {}
+        result=self.launcher.ensure_background(component,camera=camera,initiator='workbench',wait_ready=False,**extra)
         if result.get('result') not in ('spawned','reused','reused_external'):
             raise RuntimeError(result.get('detail',str(result)))
         self.emit('component.status',dict(component=component,camera_id=camera,**result))
@@ -51,7 +63,7 @@ class Components:
     def stop(self, component, camera='d455'):
         if component=='conveyor': return self.conveyor('disconnect')
         if component in ('can','activate'): return {'detail':'一次性操作，无常驻进程'}
-        return self.launcher.stop_component(component,camera=camera,initiator='workbench',allow_cross_initiator=True)
+        return self.launcher.stop_component(component,camera=camera,initiator='workbench',allow_cross_initiator=True,cleanup_owned=True)
 
     def ensure_missing_components(self):
         self.cancel.clear(); results=[]
@@ -74,6 +86,30 @@ class Components:
             self.emit('component.status',results[-1])
         return results
 
+    def close_all_connections(self):
+        self.cancel.set();self.completed.clear();results=[]
+        try:self.control('recovery_prepare')
+        except Exception as exc:results.append(dict(component='pause',error=str(exc)))
+        if self.conveyor:
+            try:self.conveyor('stop')
+            except Exception as exc:results.append(dict(component='conveyor',error=str(exc)))
+        # Stop control consumers before CAN. No home or gripper commands.
+        order=[('action','d455'),('arm','d455'),('detector','dual'),('camera_tf','d455'),('camera_tf','dabai'),('camera','d455'),('camera','dabai'),('conveyor','d455')]
+        for component,camera in order:
+            try:
+                stopped=self.stop(component,camera)
+                result=dict(component=component,camera_id=camera,result=stopped)
+                if isinstance(stopped,dict) and stopped.get('result') not in (None,'stopped','not_registered','already_exited','stale_record_removed'):
+                    result['error']=stopped.get('detail',str(stopped))
+            except Exception as exc:result=dict(component=component,camera_id=camera,error=str(exc))
+            results.append(result);self.emit('component.status',result)
+        try:
+            result=self.run(self.command('can-down'))
+            if result['returncode']:raise RuntimeError(result.get('output','CAN关闭失败'))
+            results.append(dict(component='can',result=result));self.completed.clear()
+        except Exception as exc:results.append(dict(component='can',error=str(exc)))
+        return results
+
     def recover_arm_connection(self):
         if not self.lock.acquire(blocking=False): raise RuntimeError('恢复正在执行')
         try:
@@ -94,6 +130,6 @@ class Components:
                 self.emit('arm.recovery.progress',{'step':i,'label':label,'state':'completed','result':result})
             return {'state':'awaiting_feedback','detail':'连接流程已完成，使能待实际反馈确认；抓取保持暂停'}
         except Exception as exc:
-            self.emit('arm.recovery.progress',{'state':'failed','error':str(exc)})
+            self.emit('arm.recovery.progress',{'step':i,'label':label,'state':'failed','error':str(exc)})
             raise
         finally: self.lock.release()

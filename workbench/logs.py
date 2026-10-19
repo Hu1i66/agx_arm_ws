@@ -40,6 +40,6 @@ class Logs:
         if not path.is_file():return []
         key=str(path);offset,partial=self.offsets.get(key,(0,b''))
         if path.stat().st_size<offset:offset=0;partial=b''
-        with path.open('rb') as f:f.seek(offset);data=partial+f.read();offset=f.tell()
+        with path.open('rb') as f:f.seek(offset);data=partial+f.read(65536);offset=f.tell()
         parts=data.split(b'\n');self.offsets[key]=(offset,parts[-1])
         return [x.decode('utf-8',errors='replace') for x in parts[:-1]]

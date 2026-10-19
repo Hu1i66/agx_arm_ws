@@ -3791,10 +3791,11 @@ def main():
                 node._execute_blue_block_sort(data, blue_block_config)
 
     except KeyboardInterrupt:
-        print("\n⏹️ 收到 Ctrl+C，正在复位机械臂...")
+        print("\n⏹️ 收到 Ctrl+C，停止动作程序...")
         try:
-            node.move_arm_joint(JOINT_STANDBY, "退出前回到待机位")
-            node.operate_gripper(GRIPPER_OPEN, "退出前张开夹爪")
+            if not (os.environ.get("PIPER_WORKBENCH_MANAGED")=="1" or getattr(node,"_workbench_task",False) or node.workbench_interrupted()):
+                node.move_arm_joint(JOINT_STANDBY, "退出前回到待机位")
+                node.operate_gripper(GRIPPER_OPEN, "退出前张开夹爪")
         except Exception:
             pass
         print("⏹️ 动作停止，安全退出。")

@@ -95,9 +95,15 @@ class RosAdapter(Node):
     def pose(self,msg):
         p=msg.pose.position;q=msg.pose.orientation
         self.tcp=([p.x,p.y,p.z,q.x,q.y,q.z,q.w],time.time())
+    def feedback_snapshot(self):
+        # A stale sample is a status, not an exception that aborts status.get.
+        joints=self.joints;tcp=self.tcp;now=time.time()
+        if not joints or now-joints[1]>.5:return None
+        return dict(joints_rad=joints[0],tcp_xyzw=tcp[0] if tcp and now-tcp[1]<.5 else None,stamp=joints[1])
     def capture_actual_pose(self):
-        if not self.joints or time.time()-self.joints[1]>.5:raise ValueError('等待新鲜的实际关节反馈 /feedback/joint_states')
-        return dict(joints_rad=self.joints[0],tcp_xyzw=self.tcp[0] if self.tcp and time.time()-self.tcp[1]<.5 else None,stamp=self.joints[1])
+        pose=self.feedback_snapshot()
+        if pose is None:raise ValueError('等待新鲜的实际关节反馈 /feedback/joint_states')
+        return pose
     def result(self,msg):
         try:self.s.tasks.result(json.loads(msg.data))
         except Exception as exc:self.s.logs.add('任务结果',str(exc))
