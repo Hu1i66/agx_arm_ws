@@ -7,4 +7,9 @@ int main(){
  QJsonObject choices{{"intrinsics:d455",QJsonObject{{"backup","intrinsics-old"}}},{"tcp:d455",QJsonObject{{"backup","tcp-old"}}}};
  assert(WorkbenchState::selection(choices,"intrinsics","d455")["backup"]=="intrinsics-old");
  assert(WorkbenchState::selection(choices,"tcp","dabai")["backup"]=="tcp-old");
+ assert(WorkbenchState::logSignature("arm","[1792395876.22] error 42")==
+        WorkbenchState::logSignature("arm","[1792395889.77] error 99"));
+ assert(WorkbenchState::logSignature("arm","same")!=WorkbenchState::logSignature("detector:dual","same"));
+ assert(WorkbenchState::logSignature("workbench","Load package://rviz_common/icons/ok.png")==
+        WorkbenchState::logSignature("workbench","Load package://rviz_common/icons/warning.png"));
 }

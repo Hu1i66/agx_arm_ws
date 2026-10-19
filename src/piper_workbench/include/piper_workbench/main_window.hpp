@@ -17,7 +17,7 @@ private:
  void refresh();void receive(QString event,QJsonValue data);void showError(QString message);void updateTargets();void applyStatus(QJsonObject);
  void refreshFiles();void refreshPlacements();void savePlacements();void setGoal(QVector<double>);void syncGoal();void moveRviz();
  void startCalibration(QString mode={},QPushButton *button=nullptr);void sendCalibration(QString action,QPushButton *button=nullptr);void refreshParameters();void runTask(bool continuous);void selectTarget(QString cameraId,int trackId);
- void logRow(QJsonObject);void filterLogs();void showFile(QString path);QString camera()const;
+ void logRow(QJsonObject);void indexLogRow(const QJsonObject &);void rebuildLogIndex();void filterLogs();void showFile(QString path);QString camera()const;
  QString request(QPushButton *button,QString op,QJsonObject args={},std::function<void(QJsonValue)> reply={},QString pendingText={},QString successText={},bool keepDisabledOnSuccess=false);
  void finishRequest(QString id,bool ok);void updateTaskButtons();void updateCaptureButtons();void updateCalibrationButtons();
  BackendClient *backend_;RosViewBridge *bridge_;MotionController *motion_;RvizPanel *rviz_;
@@ -29,12 +29,13 @@ private:
  QLabel *resultSummary_,*logMetadata_;
  QComboBox *logTime_;QListWidget *logSources_;
  QPlainTextEdit *connectionLog_,*calibrationLog_,*resultText_,*logDetail_,*diagnosticText_;
- QLineEdit *logSearch_,*planName_;QComboBox *logSource_,*logLevel_,*teachPlan_;QCheckBox *logPause_;
+ QLineEdit *logSearch_,*planName_;QComboBox *logSource_,*logLevel_,*teachPlan_;QCheckBox *logPause_,*logGroup_;
+ QLabel *logStats_;
  QDoubleSpinBox *velocity_,*acceleration_,*captureInterval_,*verifyAngle_,*verifySpeed_;QSpinBox *verifySteps_;
  QVector<QCheckBox *> verifyAxes_;
  QCheckBox *captureD455_,*captureDabai_;QListWidget *captureImages_,*diagnostics_;
  QMap<QString,Ui::ImageView *> images_;QVector<QDoubleSpinBox *> joints_,tcp_;
- QJsonObject status_,placements_,teachDraft_;QMap<QString,QJsonObject> detections_;QJsonArray logRows_,calibrationFiles_;QJsonObject parameterGroups_;
+ QJsonObject status_,placements_,teachDraft_;QMap<QString,QJsonObject> detections_;QJsonArray logRows_,calibrationFiles_;QJsonObject parameterGroups_;QHash<QString,QJsonObject> logGroups_;
  QMap<QString,QMap<QString,QDoubleSpinBox *>> parameterFields_;QMap<QString,QLabel *> componentStates_,healthBadges_;
  QMap<QString,QPushButton *> componentStartButtons_,componentStopButtons_;
  QMap<QString,QPushButton *> calibrationButtons_;QVector<QPushButton *> calibrationLaunchButtons_;QPushButton *calibrationStartButton_=nullptr;
