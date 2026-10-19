@@ -4,6 +4,7 @@
   "paths": {
     "vision_python": "/home/lxf/orange_dataset/.venv/bin/python3",
     "system_python": "/usr/bin/python3",
+    "tablet_python": ".venv_tablet/bin/python",
     "ros_setup": "/opt/ros/humble/setup.bash",
     "workspace_setup": "install/setup.bash",
     "orbbec_setup": "/home/lxf/orbbec_ros2_ws/install/setup.bash",

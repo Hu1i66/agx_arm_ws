@@ -14,6 +14,8 @@ __pycache__/
 .venv/
 .venv_mjx/
 .venv_tablet/
+tablet_hmi/node_modules/
+tablet_hmi/dist/
 # IK 环境（计划 6.4）：物理保留、取消 Git 索引跟踪；fresh clone 不带环境，
 # 必须恢复部署资产（见备份/部署清单）
 .venv_ik/

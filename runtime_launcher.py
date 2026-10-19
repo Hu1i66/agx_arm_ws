@@ -42,11 +42,13 @@ KEY_DETECTOR = "detector:{camera}"
 
 LAUNCHABLE = (
     "arm", "camera", "camera_tf", "detector", "graspnet", "action", "gui", "workbench", "workbench-service",
+    "tablet-gateway", "tablet-media",
     "calibrate-intrinsics", "calibrate-handeye", "calibrate-tcp", "verify-tcp",
     "approve-intrinsics", "approve-handeye", "generate-board",
 )
 COMPONENTS = LAUNCHABLE + ("preflight", "stop", "status")
-STOPPABLE = ("arm", "camera", "camera_tf", "detector", "graspnet", "action", "gui", "workbench", "workbench-service")
+STOPPABLE = ("arm", "camera", "camera_tf", "detector", "graspnet", "action", "gui", "workbench", "workbench-service",
+             "tablet-gateway", "tablet-media")
 
 
 class LauncherError(Exception):
@@ -76,6 +78,16 @@ def build_command(component: str, *, camera: str = "d455", mode: str = "fruit",
         cmd = ["ros2", "launch", "piper_workbench", "workbench.launch.py"]
     elif component == "workbench-service":
         cmd = [str(rc.resolve_resource("system_python")), "-m", "workbench.service"]
+    elif component == "tablet-gateway":
+        python = rc.resolve_resource("tablet_python")
+        if not python.is_file():
+            raise LauncherError("平板网关环境不存在；请运行 scripts/setup_tablet_hmi.sh")
+        cmd = [str(python), "-m", "workbench.gateway"]
+    elif component == "tablet-media":
+        python = rc.resolve_resource("tablet_python")
+        if not python.is_file():
+            raise LauncherError("平板媒体环境不存在；请运行 scripts/setup_tablet_hmi.sh")
+        cmd = [str(python), "-m", "workbench.media"]
     elif component == "camera":
         if camera == "d455":
             # 冻结参数（计划 3.4）：手动与 GUI 共用
@@ -379,6 +391,28 @@ def check_ready(component: str, *, camera: str = "d455", mode: str = "fruit",
     """
     if component in ("workbench", "workbench-service"):
         return {"ready": False, "checks": [], "detail": "使用本工作树进程登记与本地套接字"}
+    if component in ("tablet-gateway", "tablet-media"):
+        import ssl
+        import urllib.request
+        tablet = json.loads((rc.workspace_root() / "config/tablet_hmi.json").read_text())
+        if component == "tablet-gateway":
+            url = "https://127.0.0.1:" + str(tablet["gateway"]["https_port"]) + "/api/v1/health"
+            context = ssl.create_default_context()
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+            try:
+                with urllib.request.urlopen(url, timeout=1.5, context=context) as response:
+                    data = json.loads(response.read())
+                return {"ready": data.get("state") == "online", "checks": [], "detail": "网关 HTTPS 健康检查"}
+            except Exception as exc:
+                return {"ready": False, "checks": [], "detail": str(exc)}
+        url = "http://127.0.0.1:" + str(tablet["media"]["port"]) + "/health"
+        try:
+            with urllib.request.urlopen(url, timeout=1.5) as response:
+                data = json.loads(response.read())
+            return {"ready": data.get("state") == "online", "checks": [], "detail": "媒体健康检查"}
+        except Exception as exc:
+            return {"ready": False, "checks": [], "detail": str(exc)}
     if component == "detector" and camera == "dual":
         # Do not reuse a single-camera node just because its root output exists.
         enabled=True

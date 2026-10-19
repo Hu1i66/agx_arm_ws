@@ -8,7 +8,7 @@
 using namespace Ui;
 QWidget *MainWindow::makeDebug(){
  auto *page=new QWidget;page->setObjectName("page");auto *layout=new QVBoxLayout(page);layout->setContentsMargins(20,20,20,16);layout->addWidget(text("调试与参数","pageTitle"));debugTabs_=new QTabWidget;layout->addWidget(debugTabs_,1);
- debugTabs_->addTab(makeMotion(),"运动调试");debugTabs_->addTab(makeParameters(),"抓取参数");debugTabs_->addTab(makeCameraSettings(),"相机与检测");debugTabs_->addTab(makeDynamicBelt(),"动态分界与区域");debugTabs_->addTab(makeFiles(),"标定文件");debugTabs_->addTab(makeTeach(),"示教与放置点");debugTabs_->addTab(makeAdvanced(),"高级");return page;
+ debugTabs_->addTab(makeMotion(),"运动调试");debugTabs_->addTab(makeParameters(),"抓取参数");debugTabs_->addTab(makeCameraSettings(),"相机与检测");debugTabs_->addTab(makeDynamicBelt(),"动态分界与区域");debugTabs_->addTab(makeFiles(),"标定文件");debugTabs_->addTab(makeTeach(),"示教与放置点");debugTabs_->addTab(makeTabletManagement(),"平板上位机");debugTabs_->addTab(makeAdvanced(),"高级");return page;
 }
 QWidget *MainWindow::makeMotion(){
  auto *page=new QWidget;auto *row=new QHBoxLayout(page);row->setContentsMargins(0,12,0,0);auto *model=card("运动规划 · 实际模型与目标影子");auto *ml=static_cast<QVBoxLayout *>(model->layout());

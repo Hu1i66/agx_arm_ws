@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "gateway": {
+    "bind": "0.0.0.0",
+    "https_port": 8443,
+    "http_port": 8080,
+    "hostname": "piper.local",
+    "pwa_dist": "tablet_hmi/dist",
+    "service_socket": ".runtime/workbench.sock"
+  },
+  "media": {
+    "bind": "127.0.0.1",
+    "port": 8090,
+    "jpeg_fps": 6,
+    "jpeg_quality": 72,
+    "webrtc_fps": 15,
+    "h264_encoder": "nvenc",
+    "inactive_after_s": 2.0
+  },
+  "pairing": {
+    "ttl_s": 600,
+    "cookie_days": 365
+  },
+  "lease": {
+    "ttl_s": 15,
+    "renew_s": 5
+  },
+  "paths": {
+    "runtime_dir": ".runtime/tablet_hmi",
+    "certificates": ".runtime/tablet_hmi/certs"
+  },
+  "limits": {
+    "pair_failures": 5,
+    "pair_backoff_s": 30,
+    "request_cache_s": 60
+  }
+}

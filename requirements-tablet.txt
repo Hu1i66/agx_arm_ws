@@ -1,0 +1,4 @@
+aiohttp>=3.9,<4
+aiortc>=1.9,<2
+cryptography>=42,<50
+qrcode>=7.4,<9

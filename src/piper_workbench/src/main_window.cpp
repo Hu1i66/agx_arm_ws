@@ -52,7 +52,7 @@ MainWindow::MainWindow(QWidget *parent):QMainWindow(parent){
  auto *frames=new QTimer(this);connect(frames,&QTimer::timeout,this,[this]{for(auto it=images_.begin();it!=images_.end();++it){if(!it.value()->isVisible())continue;QString cam=it.key().section(':',0,0);bool raw=it.key().contains(":raw");
  if(cam=="calibration"&&(bridge_->imageAge(cam,false)<0||bridge_->imageAge(cam,false)>2))cam=calibrationCamera_->currentIndex()==0?"d455":"dabai";
  it.value()->frame=bridge_->image(cam,!raw);it.value()->ageSeconds=bridge_->imageAge(cam,!raw);it.value()->update();}if(regionEditor_&&regionEditor_->isVisible())regionEditor_->setFrame(bridge_->image("d455",false));});frames->start(100);
- refreshTimer_=new QTimer(this);connect(refreshTimer_,&QTimer::timeout,this,[this]{if(backend_->connected()){refresh();if(pages_->currentIndex()==1&&debugTabs_->currentIndex()==4)refreshFiles();}});refreshTimer_->start(2000);
+ refreshTimer_=new QTimer(this);connect(refreshTimer_,&QTimer::timeout,this,[this]{if(backend_->connected()){refresh();if(pages_->currentIndex()==1&&debugTabs_->currentIndex()==4)refreshFiles();if(pages_->currentIndex()==1&&debugTabs_->currentIndex()==6)refreshTablet();}});refreshTimer_->start(2000);
  if(backend_->connected()){refresh();refreshFiles();refreshParameters();toast_->setText("后台已连接 · 各组件可独立操作");}
  auto *logs=new QTimer(this);connect(logs,&QTimer::timeout,this,[this]{if(logsDirty_&&!logPause_->isChecked()&&pages_->currentIndex()==5){filterLogs();logsDirty_=false;}});logs->start(350);
  Ui::scaleNativeUi(this);

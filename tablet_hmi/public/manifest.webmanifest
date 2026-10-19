@@ -1,0 +1,19 @@
+{
+  "name": "Piper 平板工作台",
+  "short_name": "Piper 工作台",
+  "description": "Piper 机械臂局域网便携操作终端",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f5f7fa",
+  "theme_color": "#f5f7fa",
+  "lang": "zh-CN",
+  "icons": [
+    {"src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png"},
+    {"src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
+  ],
+  "shortcuts": [
+    {"name": "抓取", "short_name": "抓取", "url": "/#/grab"},
+    {"name": "连接", "short_name": "连接", "url": "/#/connect"}
+  ]
+}

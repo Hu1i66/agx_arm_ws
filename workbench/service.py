@@ -6,6 +6,7 @@ from .capture import Capture
 from .calibration import Calibration
 from .components import Components,COMPONENTS
 from .logs import Logs,ReconnectNotice
+from .tablet import TabletManager
 from .tasks import Tasks
 from .grasp_flow import grasp_stage_from_text
 from vision.belt_roi import (DEFAULT_LOWER_HSV, DEFAULT_UPPER_HSV,
@@ -38,6 +39,7 @@ class Workbench:
         except (OSError,ValueError):pass
         self.tasks.receiver_alive=lambda:self.ros is not None and self.ros.count_subscribers('/sorting_cmds')>0
         self.calibration=Calibration(self.root,self.emit)
+        self.tablet=TabletManager(self.root)
         self.components=Components(self.root,control=self.tasks.recovery,emit=self.emit,conveyor=self.conveyor)
         if with_ros:
             from .ros_adapter import RosAdapter
@@ -142,6 +144,24 @@ class Workbench:
         self.emit('settings.applied',dict(group=group,**result));return result
     def dispatch(self,op,args):
         if op=='status.get':return self.status()
+        if op=='tablet.telemetry':return self.ros.tablet_telemetry() if self.ros else {'links':{},'connected':False}
+        if op=='tablet.status.get':return self.tablet.status()
+        if op=='tablet.start_all':return self.tablet.start_all()
+        if op=='tablet.stop_all':return self.tablet.stop_all()
+        if op=='tablet.gateway.start':return self.tablet.start('gateway')
+        if op=='tablet.gateway.stop':return self.tablet.stop('gateway')
+        if op=='tablet.gateway.restart':return self.tablet.restart('gateway')
+        if op=='tablet.media.start':return self.tablet.start('media')
+        if op=='tablet.media.stop':return self.tablet.stop('media')
+        if op=='tablet.media.restart':return self.tablet.restart('media')
+        if op=='tablet.pair.create':return self.tablet.pair_create(args.get('role','operator'))
+        if op=='tablet.pair.revoke_all':return self.tablet.pair_revoke_all()
+        if op=='tablet.device.revoke':return self.tablet.device_revoke(args['device_id'])
+        if op=='tablet.lease.revoke':return self.tablet.lease_revoke()
+        if op=='tablet.certificate.info':return self.tablet.certificate_info()
+        if op=='tablet.certificate.regenerate':return self.tablet.certificate_regenerate()
+        if op=='tablet.certificate.download':return {'path':self.tablet.certificate_path()}
+        if op=='tablet.stream.keyframe':return self.tablet.stream_keyframe(args['camera_id'])
         if op=='tools.conveyor_calibration':
             if self.direction_samples is None:
                 self.direction_samples={};return {'state':'collecting','detail':'开始记录D455轨迹；让物体随传送带移动，再次点击结束并计算方向'}
@@ -171,7 +191,16 @@ class Workbench:
             if op=='component.start' and args['component'] in ('can','activate'):
                 return self.components.start(args['component'],args.get('camera_id','d455'),force=True)
             return getattr(self.components,op.split('.')[1])(args['component'],args.get('camera_id','d455'))
-        if op=='motion.start':return self.tasks.start(**args)
+        if op=='motion.start':
+            args=dict(args)
+            placement_id=args.pop('placement_id',None)
+            if placement_id:
+                data=self.placements.get();plans={row.get('id'):row for row in data.get('plans',[])}
+                if placement_id not in plans:raise ValueError('放置方案不存在: '+str(placement_id))
+                selection=data.setdefault('selection',{});selection['default_plan_id']=placement_id
+                self.placements.save(data)
+                self.emit('settings.applied',{'group':'placement','values':{'default_plan_id':placement_id,'name':plans[placement_id].get('name','')}})
+            return self.tasks.start(**args)
         if op=='motion.send':
             if args.get('pick',{}).get('_reference_frame')=='legacy_link6':raise ValueError('旧法兰坐标缺少朝向，请从实际TCP反馈重新保存')
             cmd=args.get('cmd');topic='/emergency_stop' if cmd in ('emergency_stop','standby','reset') else '/sorting_cmds'
@@ -292,7 +321,12 @@ class Workbench:
         for key,rec in records.items():
             if not isinstance(rec,dict) or not rec.get('log_file'):continue
             path=pathlib.Path(rec['log_file'])
-            if str(path) not in self.logs.offsets:self.logs.offsets[str(path)]=(int(rec.get('log_offset',path.stat().st_size if path.exists() else 0)),b'')
+            if str(path) not in self.logs.offsets:
+                # A service restart must not replay a detector/T1 log that predates it.
+                # Historical raw logs remain available from the log page.
+                existing=path.stat().st_size if path.exists() else 0
+                initial=existing if float(rec.get('started_at',0))<self.external_started-1 else int(rec.get('log_offset',existing))
+                self.logs.offsets[str(path)]=(initial,b'')
             for line in self.logs.tail(path):
                 batch.append(self.logs.add(key,line,instance=rec.get('record_id'),pid=rec.get('pid')))
                 if key=='action' and self.tasks.inflight:

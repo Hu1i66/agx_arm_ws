@@ -110,6 +110,28 @@ class RosAdapter(Node):
         joints=self.joints;tcp=self.tcp;now=time.time()
         if not joints or now-joints[1]>.5:return None
         return dict(joints_rad=joints[0],tcp_xyzw=tcp[0] if tcp and now-tcp[1]<.5 else None,stamp=joints[1])
+    def tablet_telemetry(self):
+        """Return base_link FK poses for the tablet Three.js scene."""
+        now=time.time();links={}
+        for name in ('base_link','link1','link2','link3','link4','link5','link6',
+                     'gripper_base','gripper_link1','gripper_link2','tcp_link'):
+            try:
+                transform=self.tf_buffer.lookup_transform('base_link',name,rclpy.time.Time()).transform
+                links[name]=[
+                    transform.translation.x,transform.translation.y,transform.translation.z,
+                    transform.rotation.x,transform.rotation.y,transform.rotation.z,transform.rotation.w,
+                ]
+            except Exception:
+                pass
+        joints=self.joints
+        tcp=self.tcp
+        return {
+            'stamp':now,
+            'links':links,
+            'joints_rad':list(joints[0]) if joints and now-joints[1]<=.5 else None,
+            'tcp_xyzw':list(tcp[0]) if tcp and now-tcp[1]<=.5 else None,
+            'connected':bool(joints and now-joints[1]<=.5),
+        }
     def capture_actual_pose(self):
         pose=self.feedback_snapshot()
         if pose is None:raise ValueError('等待新鲜的实际关节反馈 /feedback/joint_states')

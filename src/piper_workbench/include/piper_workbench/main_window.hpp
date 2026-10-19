@@ -14,9 +14,10 @@ public:
 protected:void closeEvent(QCloseEvent *)override;bool eventFilter(QObject *,QEvent *)override;
 private:
  QWidget *makeMain();QWidget *makeDebug();QWidget *makeConnections();QWidget *makeCalibration();QWidget *makeCapture();QWidget *makeLogs();
- QWidget *makeMotion();QWidget *makeParameters();QWidget *makeCameraSettings();QWidget *makeDynamicBelt();QWidget *makeFiles();QWidget *makeTeach();QWidget *makeAdvanced();
+ QWidget *makeMotion();QWidget *makeParameters();QWidget *makeCameraSettings();QWidget *makeDynamicBelt();QWidget *makeFiles();QWidget *makeTeach();QWidget *makeTabletManagement();QWidget *makeAdvanced();
  void refresh();void receive(QString event,QJsonValue data);void showError(QString message);void updateTargets();void applyStatus(QJsonObject);
  void refreshFiles();void refreshPlacements();void savePlacements();void setGoal(QVector<double>);void syncGoal();void moveRviz();
+ void refreshTablet();
  void startCalibration(QString mode={},QPushButton *button=nullptr);void sendCalibration(QString action,QPushButton *button=nullptr);void refreshParameters();void runTask(bool continuous);void selectTarget(QString cameraId,int trackId);
  void logRow(QJsonObject);void indexLogRow(const QJsonObject &);void rebuildLogIndex();void filterLogs();void showFile(QString path);QString camera()const;
  QString request(QPushButton *button,QString op,QJsonObject args={},std::function<void(QJsonValue)> reply={},QString pendingText={},QString successText={},bool keepDisabledOnSuccess=false);
@@ -33,6 +34,10 @@ private:
  QPlainTextEdit *connectionLog_,*calibrationLog_,*resultText_,*logDetail_,*diagnosticText_;
  QLineEdit *logSearch_,*planName_;QComboBox *logSource_,*logLevel_,*teachPlan_;QCheckBox *logPause_,*logGroup_;
  QLabel *logStats_;
+ QLabel *tabletSummary_,*tabletPairQr_,*tabletPairCode_,*tabletPairAddress_,*tabletCertState_;
+ QPlainTextEdit *tabletEvents_;
+ QTableWidget *tabletDevices_,*tabletMedia_;
+ QComboBox *tabletPairRole_;QString tabletPairId_;qint64 tabletPairExpires_=0;
  QDoubleSpinBox *velocity_,*acceleration_,*captureInterval_,*verifyAngle_,*verifySpeed_;QSpinBox *verifySteps_;
  QVector<QCheckBox *> verifyAxes_;
  QCheckBox *captureD455_,*captureDabai_;QListWidget *captureImages_,*diagnostics_;

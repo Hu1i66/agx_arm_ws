@@ -21,6 +21,7 @@ import sys
 RESOURCE_KEYS = (
     "vision_python",
     "system_python",
+    "tablet_python",
     "ros_setup",
     "workspace_setup",
     "orbbec_setup",
