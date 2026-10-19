@@ -19,6 +19,7 @@ int main(int argc, char **argv) {
   auto args = app.arguments();
   if(args.contains("--size")){auto size=args.value(args.indexOf("--size")+1).split("x");if(size.size()==2)window->resize(Ui::px(size[0].toInt()),Ui::px(size[1].toInt()));}
   if(args.contains("--page"))window->showPage(args.value(args.indexOf("--page")+1).toInt());
+  if(args.contains("--debug-tab"))window->showDebugTab(args.value(args.indexOf("--debug-tab")+1).toInt());
   QString capturePath=args.contains("--screenshot")?args.value(args.indexOf("--screenshot")+1):QString::fromLocal8Bit(qgetenv("PIPER_WORKBENCH_SCREENSHOT"));
   if (!capturePath.isEmpty()) {
     QString path=capturePath;

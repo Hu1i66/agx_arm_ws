@@ -1,4 +1,5 @@
 #include "piper_workbench/ui_helpers.hpp"
+#include <algorithm>
 #include <cmath>
 namespace {
 class AnimatedButton:public QPushButton{
@@ -101,6 +102,85 @@ void Ui::GraspFlow::paintEvent(QPaintEvent *){
  }
  QFont f=font();if(f.pointSizeF()>0)f.setPointSizeF(std::max(8.,f.pointSizeF()*.88));else f.setPixelSize(std::max(10,int((f.pixelSize()>0?f.pixelSize():14)*.88)));
  p.setFont(f);p.setPen(QColor("#66768C"));p.drawText(QRectF(18,4,width()-36,18),Qt::AlignRight|Qt::AlignVCenter,detail_);
+}
+
+Ui::RegionEditor::RegionEditor(QWidget *parent):QWidget(parent){
+ setMinimumSize(420,300);setSizePolicy(QSizePolicy::Expanding,QSizePolicy::Expanding);setMouseTracking(true);setCursor(Qt::CrossCursor);
+}
+void Ui::RegionEditor::setFrame(const QImage &frame){frame_=frame;update();}
+void Ui::RegionEditor::setLines(int trigger,int stop,int abandon){lines_[0]=trigger;lines_[1]=stop;lines_[2]=abandon;update();}
+void Ui::RegionEditor::setPolygon(const QJsonArray &polygon){polygon_=polygon;update();}
+void Ui::RegionEditor::setMode(int mode){mode_=mode;dragLine_=dragVertex_=-1;setCursor(mode==2?Qt::CrossCursor:Qt::ArrowCursor);update();}
+QRectF Ui::RegionEditor::imageRect()const{
+ QSize source=frame_.isNull()?QSize(640,480):frame_.size();QSize scaled=source.scaled(rect().size(),Qt::KeepAspectRatio);
+ return QRectF(QPointF((width()-scaled.width())/2.,(height()-scaled.height())/2.),scaled);
+}
+bool Ui::RegionEditor::imagePoint(QPoint position,QPointF &point)const{
+ QRectF box=imageRect();if(!box.contains(position))return false;QSize source=frame_.isNull()?QSize(640,480):frame_.size();
+ point=QPointF((position.x()-box.left())*source.width()/box.width(),(position.y()-box.top())*source.height()/box.height());return true;
+}
+void Ui::RegionEditor::paintEvent(QPaintEvent *){
+ QPainter p(this);p.setRenderHint(QPainter::Antialiasing);p.fillRect(rect(),QColor("#F0F3F7"));QRectF box=imageRect();
+ if(frame_.isNull()){
+  p.setPen(QColor("#64748B"));p.drawText(rect(),Qt::AlignCenter,"等待 D455 原始画面");return;
+ }
+ p.drawImage(box,frame_);QSize source=frame_.size();
+ QPolygonF polygon;
+ for(auto value:polygon_){auto point=value.toArray();polygon<<QPointF(box.left()+point[0].toDouble()*box.width()/source.width(),box.top()+point[1].toDouble()*box.height()/source.height());}
+ if(polygon.size()>=2){
+  QPen beltPen(QColor("#FF9F1A"),2,Qt::DashLine);p.setPen(beltPen);p.setBrush(QColor(255,159,26,28));
+  if(polygon.size()>=3)p.drawPolygon(polygon);else p.drawPolyline(polygon);
+  p.setBrush(QColor("#FF9F1A"));p.setPen(QPen(Qt::white,1));
+  for(auto point:polygon)p.drawEllipse(point,5,5);
+ }
+ QStringList names={"触发","停带","放弃"};QList<QColor> colors={QColor("#1769FF"),QColor("#E59A00"),QColor("#D64545")};
+ for(int i=0;i<3;++i){
+  double x=box.left()+lines_[i]*box.width()/source.width();p.setPen(QPen(colors[i],2));p.drawLine(QPointF(x,box.top()),QPointF(x,box.bottom()));
+  QRectF label(x+4,box.top()+6+i*22,56,19);p.setPen(Qt::NoPen);p.setBrush(QColor(255,255,255,220));p.drawRoundedRect(label,4,4);p.setPen(colors[i]);QFont f=font();f.setBold(true);f.setPixelSize(11);p.setFont(f);p.drawText(label,Qt::AlignCenter,QString("%1 %2").arg(names[i]).arg(lines_[i]));
+ }
+ p.setPen(QColor("#475569"));QFont f=font();f.setPixelSize(11);p.setFont(f);p.drawText(box.adjusted(8,box.height()-25,0,0),Qt::AlignLeft,"橙色虚线：D455 传送带区域");
+}
+void Ui::RegionEditor::mousePressEvent(QMouseEvent *event){
+ QPointF image;if(!imagePoint(event->pos(),image))return;QSize source=frame_.isNull()?QSize(640,480):frame_.size();QRectF box=imageRect();
+ if(mode_==0){
+  int best=-1;double distance=14.;
+  for(int i=0;i<3;++i){double x=box.left()+lines_[i]*box.width()/source.width();double d=std::abs(event->x()-x);if(d<distance){best=i;distance=d;}}
+  dragLine_=best;return;
+ }
+ if(mode_==2){
+  polygon_.append(QJsonArray{int(std::lround(image.x())),int(std::lround(image.y()))});dragVertex_=polygon_.size()-1;if(polygonMoved)polygonMoved(polygon_);update();return;
+ }
+ if(mode_==1){
+  int nearest=-1;double bestDistance=12.;
+  for(int i=0;i<polygon_.size();++i){auto point=polygon_[i].toArray();QPointF d(box.left()+point[0].toDouble()*box.width()/source.width(),box.top()+point[1].toDouble()*box.height()/source.height());double distance=QLineF(event->pos(),d).length();if(distance<bestDistance){nearest=i;bestDistance=distance;}}
+  if(nearest>=0){dragVertex_=nearest;return;}
+  if(polygon_.size()>=2){
+   double edgeDistance=12.;int insertAfter=-1;
+   for(int i=0;i<polygon_.size();++i){
+    auto a=polygon_[i].toArray(),b=polygon_[(i+1)%polygon_.size()].toArray();
+    QPointF da(box.left()+a[0].toDouble()*box.width()/source.width(),box.top()+a[1].toDouble()*box.height()/source.height());
+    QPointF db(box.left()+b[0].toDouble()*box.width()/source.width(),box.top()+b[1].toDouble()*box.height()/source.height());
+    QPointF ab=db-da;double length2=QPointF::dotProduct(ab,ab);double t=length2>0?std::clamp(QPointF::dotProduct(QPointF(event->pos())-da,ab)/length2,0.,1.):0.;
+    double distance=QLineF(event->pos(),da+t*ab).length();if(distance<edgeDistance){edgeDistance=distance;insertAfter=i;}
+   }
+   if(insertAfter>=0){QJsonArray next;for(int i=0;i<polygon_.size();++i){next.append(polygon_[i]);if(i==insertAfter)next.append(QJsonArray{int(std::lround(image.x())),int(std::lround(image.y()))});}polygon_=next;dragVertex_=insertAfter+1;if(polygonMoved)polygonMoved(polygon_);update();}
+  }
+ }
+}
+void Ui::RegionEditor::mouseMoveEvent(QMouseEvent *event){
+ if(!(event->buttons()&Qt::LeftButton))return;QPointF image;if(!imagePoint(event->pos(),image))return;
+ int x=int(std::lround(image.x())),y=int(std::lround(image.y()));
+ if(mode_==0&&dragLine_>=0){
+  if(dragLine_==0)lines_[0]=std::clamp(x,1,lines_[1]-1);
+  else if(dragLine_==1)lines_[1]=std::clamp(x,lines_[0]+1,lines_[2]);
+  else lines_[2]=std::clamp(x,lines_[1],639);
+  if(lineMoved)lineMoved(dragLine_,lines_[dragLine_]);update();
+ }else if(mode_==1&&dragVertex_>=0&&dragVertex_<polygon_.size()){
+  polygon_[dragVertex_]=QJsonArray{std::clamp(x,0,639),std::clamp(y,0,479)};if(polygonMoved)polygonMoved(polygon_);update();
+ }
+}
+void Ui::RegionEditor::mouseReleaseEvent(QMouseEvent *){
+ if(mode_==1&&dragVertex_>=0&&polygonMoved)polygonMoved(polygon_);dragLine_=dragVertex_=-1;
 }
 
 void Ui::collapsible(QFrame *card){

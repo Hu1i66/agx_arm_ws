@@ -8,7 +8,8 @@ from .components import Components,COMPONENTS
 from .logs import Logs,ReconnectNotice
 from .tasks import Tasks
 from .grasp_flow import grasp_stage_from_text
-from vision.belt_roi import calibration_payload
+from vision.belt_roi import (DEFAULT_LOWER_HSV, DEFAULT_UPPER_HSV,
+                             calibration_payload, load_calibration, polygon_mask)
 import runtime_config as rc
 import runtime_launcher as launcher
 
@@ -33,6 +34,8 @@ class Workbench:
         self.ros=None;self.belt=None;self.belt_commanded=None;self.belt_lock=threading.RLock()
         self.grasp_stage_cycle=None;self.grasp_stage_last=None
         self.tasks=Tasks(self.send,self.control,self.conveyor,self.emit)
+        try:self.tasks.set_dynamic_lines(json.loads((self.root/'config/dynamic_grasp.json').read_text()))
+        except (OSError,ValueError):pass
         self.tasks.receiver_alive=lambda:self.ros is not None and self.ros.count_subscribers('/sorting_cmds')>0
         self.calibration=Calibration(self.root,self.emit)
         self.components=Components(self.root,control=self.tasks.recovery,emit=self.emit,conveyor=self.conveyor)
@@ -116,7 +119,12 @@ class Workbench:
                 if type(original[key]) is int:
                     if not float(value).is_integer():raise ValueError(key+' 必须为整数')
                     values[key]=int(value)
-            atomic_json(self.root/'config/dynamic_grasp.json',values);result={'state':'next_object','values':values}
+            if all(k in values for k in ('trigger_line_u','stop_line_u','abandon_line_u')):
+                if not 0<values['trigger_line_u']<values['stop_line_u']<=values['abandon_line_u']<=640:
+                    raise ValueError('动态分界线顺序无效')
+            atomic_json(self.root/'config/dynamic_grasp.json',values)
+            self.tasks.set_dynamic_lines(values)
+            result={'state':'next_object','values':values}
         elif group=='vision':
             result=self.ros.parameters('/object_detector',values);data[group].update(values);self.settings.save(data)
         elif group.startswith('camera:'):
@@ -222,6 +230,41 @@ class Workbench:
         if op=='capture.start':return self.capture.start(args.get('cameras',['d455','dabai']),args.get('interval',2.))
         if op=='capture.stop':return self.capture.stop()
         if op=='capture.export':return {'path':str(self.capture.export())}
+        if op=='dynamic.lines':
+            values=args.get('values',{})
+            trigger=int(values['trigger_line_u']);stop=int(values['stop_line_u']);abandon=int(values['abandon_line_u'])
+            if not 0<trigger<stop<=abandon<=640:
+                raise ValueError('分界线必须满足 0 < 触发线 < 停带线 ≤ 放弃线 ≤ 640')
+            data=json.loads((self.root/'config/dynamic_grasp.json').read_text())
+            data.update(trigger_line_u=trigger,stop_line_u=stop,abandon_line_u=abandon)
+            atomic_json(self.root/'config/dynamic_grasp.json',data)
+            self.tasks.set_dynamic_lines(data)
+            return {'state':'saved','values':dict(trigger_line_u=trigger,stop_line_u=stop,abandon_line_u=abandon)}
+        if op=='belt.roi.get':
+            data=load_calibration(self.root/'config/calibration/d455_belt_roi.json')
+            return data or {'polygon':[]}
+        if op=='belt.save_polygon':
+            polygon=[]
+            for point in args.get('polygon',[]):
+                if not isinstance(point,(list,tuple)) or len(point)!=2:
+                    raise ValueError('多边形点格式无效')
+                polygon.append([int(point[0]),int(point[1])])
+            if not 3<=len(polygon)<=64:raise ValueError('传送带多边形需要 3 到 64 个点')
+            path=self.root/'config/calibration/d455_belt_roi.json'
+            data=load_calibration(path) or {}
+            width=int(data.get('image_width',640));height=int(data.get('image_height',480))
+            if any(x<0 or x>width or y<0 or y>height for x,y in polygon):
+                raise ValueError('多边形点超出图像范围')
+            mask=polygon_mask(polygon,width,height,(width,height))
+            area=int(mask.sum()//255) if mask is not None else 0
+            if area<width*height*.02:raise ValueError('传送带区域过小')
+            payload=dict(schema_version=1,image_width=width,image_height=height,
+                lower_hsv=data.get('lower_hsv',DEFAULT_LOWER_HSV),
+                upper_hsv=data.get('upper_hsv',DEFAULT_UPPER_HSV),
+                polygon=polygon,area_pixels=area,
+                created_at=time.strftime('%Y-%m-%d %H:%M:%S'))
+            atomic_json(path,payload)
+            return payload
         if op=='belt.calibrate':
             frame=self.capture.frames.get('d455')
             if frame is None:raise ValueError('尚未收到 D455 原始图像')

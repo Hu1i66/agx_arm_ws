@@ -24,6 +24,14 @@ def test_reacquires_target_when_track_id_changes_at_same_position():
     cmd=t.start('dabai-static',track_id=4,session='dabai',target_snapshot=old)
     assert cmd['target_track_id']==9 and cmd['pick']['x']==.33
 
+
+def test_dynamic_boundary_values_are_loaded_into_tick():
+    t,_=make()
+    t.set_dynamic_lines({'trigger_line_u':170,'stop_line_u':470,'abandon_line_u':520})
+    assert t.dynamic_lines=={
+        'trigger_line_u':170,'stop_line_u':470,'abandon_line_u':520,
+    }
+
 def test_ui_close_idle_pauses_without_stopping_processes():
     t,calls=make();t.request_pause_after_cycle()
     assert calls==['pause_after_cycle','stop']

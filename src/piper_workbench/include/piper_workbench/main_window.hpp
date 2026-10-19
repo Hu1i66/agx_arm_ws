@@ -9,11 +9,12 @@ public:
  explicit MainWindow(QWidget *parent=nullptr);
  ~MainWindow() override;
  void showPage(int index);
+ void showDebugTab(int index);
  QJsonObject inspect() const;
 protected:void closeEvent(QCloseEvent *)override;bool eventFilter(QObject *,QEvent *)override;
 private:
  QWidget *makeMain();QWidget *makeDebug();QWidget *makeConnections();QWidget *makeCalibration();QWidget *makeCapture();QWidget *makeLogs();
- QWidget *makeMotion();QWidget *makeParameters();QWidget *makeCameraSettings();QWidget *makeFiles();QWidget *makeTeach();QWidget *makeAdvanced();
+ QWidget *makeMotion();QWidget *makeParameters();QWidget *makeCameraSettings();QWidget *makeDynamicBelt();QWidget *makeFiles();QWidget *makeTeach();QWidget *makeAdvanced();
  void refresh();void receive(QString event,QJsonValue data);void showError(QString message);void updateTargets();void applyStatus(QJsonObject);
  void refreshFiles();void refreshPlacements();void savePlacements();void setGoal(QVector<double>);void syncGoal();void moveRviz();
  void startCalibration(QString mode={},QPushButton *button=nullptr);void sendCalibration(QString action,QPushButton *button=nullptr);void refreshParameters();void runTask(bool continuous);void selectTarget(QString cameraId,int trackId);
@@ -26,6 +27,7 @@ private:
  QComboBox *mode_,*plan_,*placementMode_,*calibrationKind_,*calibrationCamera_,*fileKind_,*fileCamera_;
  QTableWidget *targets_,*files_,*sampleTable_,*logTable_,*teachTable_;
  QLabel *selectedTargetLabel_=nullptr;QJsonObject selectedTargetSnapshot_;
+ Ui::RegionEditor *regionEditor_=nullptr;QSpinBox *triggerLine_,*stopLine_,*abandonLine_;QComboBox *regionMode_;QLabel *regionState_;QJsonArray beltPolygon_;
  QLabel *resultSummary_,*logMetadata_;
  QComboBox *logTime_;QListWidget *logSources_;
  QPlainTextEdit *connectionLog_,*calibrationLog_,*resultText_,*logDetail_,*diagnosticText_;

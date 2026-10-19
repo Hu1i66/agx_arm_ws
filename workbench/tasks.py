@@ -5,12 +5,17 @@ class Tasks:
     def __init__(self,send,control,conveyor,emit):
         self.send=send;self.control=control;self.conveyor=conveyor;self.emit=emit
         self.lock=threading.RLock();self.mode='d455-static';self.continuous=False
+        self.dynamic_lines={'trigger_line_u':130,'stop_line_u':490,'abandon_line_u':510}
         self.pause=True;self.inflight=None;self.detections={};self.phase='paused';self.stopped_at=0.;self.failed=set();self.abandon_at=0.;self.queued=[];self.queue_running=False;self.sent_at=0.;self.acknowledged=False;self.receiver_alive=lambda:True;self.receiver_missing_at=None
     def detection(self,camera,data):
         with self.lock:
             old=self.detections.get(camera,({},0))[0]
             if camera=='d455' and old.get('motion_session')!=data.get('motion_session'):self.failed.clear()
             self.detections[camera]=(data,time.time())
+    def set_dynamic_lines(self,settings):
+        self.dynamic_lines={'trigger_line_u':int(settings.get('trigger_line_u',130)),
+                            'stop_line_u':int(settings.get('stop_line_u',490)),
+                            'abandon_line_u':int(settings.get('abandon_line_u',510))}
     def select(self,camera,track_id,session=None,target_snapshot=None):
         data,at=self.detections.get(camera,({},0))
         if time.time()-at>1.:raise ValueError('等待当前相机的新检测结果')
@@ -104,14 +109,15 @@ class Tasks:
             if not self.continuous:return
             data,at=self.detections.get('d455',({},0))
             if time.time()-at>1.:return
-            dynamic=self.mode=='d455-dynamic';line=130 if dynamic else 260
+            dynamic=self.mode=='d455-dynamic';line=self.dynamic_lines['trigger_line_u'] if dynamic else 260
             candidates=[o for o in data.get('objects',[]) if o.get('base_position_m') and o.get('bbox_pixel',{}).get('x2',-1)>=line and o.get('track_id') not in self.failed]
             obj=max(candidates,key=lambda o:o['bbox_pixel']['x1']+o['bbox_pixel']['x2'],default=None)
             if dynamic:
-                far=[o for o in candidates if o['bbox_pixel']['x2']>=490]
+                stop_line=self.dynamic_lines['stop_line_u'];abandon_line=self.dynamic_lines['abandon_line_u']
+                far=[o for o in candidates if o['bbox_pixel']['x2']>=stop_line]
                 if far and time.time()-self.abandon_at>=2.5:
                     self.conveyor('stop')
-                    if any(o['bbox_pixel']['x2']>=510 for o in far):self.abandon_at=time.time();return
+                    if any(o['bbox_pixel']['x2']>=abandon_line for o in far):self.abandon_at=time.time();return
                     self.dispatch('d455',far[0]['track_id'],data.get('motion_session'),dynamic=False);return
                 self.conveyor('start')
                 if obj:self.dispatch('d455',obj['track_id'],data.get('motion_session'),dynamic=True)

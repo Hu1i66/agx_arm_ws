@@ -1,6 +1,7 @@
 #pragma once
 #include <QtWidgets>
 #include <QVariantAnimation>
+#include <QJsonArray>
 namespace Ui {
 int px(int value);
 void scaleNativeUi(QWidget *root);
@@ -36,5 +37,24 @@ public:
 private:
  QVariantAnimation animation_;QTimer pulseTimer_;QElapsedTimer pulseClock_;
  QString stage_="waiting",detail_="等待开始";qreal displayPos_=0.,pulse_=0.;bool active_=false;
+};
+class RegionEditor:public QWidget{
+public:
+ explicit RegionEditor(QWidget *parent=nullptr);
+ void setFrame(const QImage &frame);
+ void setLines(int trigger,int stop,int abandon);
+ void setPolygon(const QJsonArray &polygon);
+ void setMode(int mode);
+ QJsonArray polygon()const{return polygon_;}
+ std::function<void(int,int)> lineMoved;
+ std::function<void(const QJsonArray &)> polygonMoved;
+protected:
+ void paintEvent(QPaintEvent *)override;
+ void mousePressEvent(QMouseEvent *)override;
+ void mouseMoveEvent(QMouseEvent *)override;
+ void mouseReleaseEvent(QMouseEvent *)override;
+private:
+ QRectF imageRect()const;bool imagePoint(QPoint position,QPointF &point)const;
+ QImage frame_;QJsonArray polygon_;int lines_[3]={130,490,510};int mode_=0,dragLine_=-1,dragVertex_=-1;
 };
 }

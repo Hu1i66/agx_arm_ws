@@ -51,8 +51,8 @@ MainWindow::MainWindow(QWidget *parent):QMainWindow(parent){
   if(WorkbenchState::targetChanged(observedGoal_,target)){observedGoal_=target;motion_->invalidate();}syncGoal();}});
  auto *frames=new QTimer(this);connect(frames,&QTimer::timeout,this,[this]{for(auto it=images_.begin();it!=images_.end();++it){if(!it.value()->isVisible())continue;QString cam=it.key().section(':',0,0);bool raw=it.key().contains(":raw");
  if(cam=="calibration"&&(bridge_->imageAge(cam,false)<0||bridge_->imageAge(cam,false)>2))cam=calibrationCamera_->currentIndex()==0?"d455":"dabai";
- it.value()->frame=bridge_->image(cam,!raw);it.value()->ageSeconds=bridge_->imageAge(cam,!raw);it.value()->update();}});frames->start(100);
- refreshTimer_=new QTimer(this);connect(refreshTimer_,&QTimer::timeout,this,[this]{if(backend_->connected()){refresh();if(pages_->currentIndex()==1&&debugTabs_->currentIndex()==3)refreshFiles();}});refreshTimer_->start(2000);
+ it.value()->frame=bridge_->image(cam,!raw);it.value()->ageSeconds=bridge_->imageAge(cam,!raw);it.value()->update();}if(regionEditor_&&regionEditor_->isVisible())regionEditor_->setFrame(bridge_->image("d455",false));});frames->start(100);
+ refreshTimer_=new QTimer(this);connect(refreshTimer_,&QTimer::timeout,this,[this]{if(backend_->connected()){refresh();if(pages_->currentIndex()==1&&debugTabs_->currentIndex()==4)refreshFiles();}});refreshTimer_->start(2000);
  if(backend_->connected()){refresh();refreshFiles();refreshParameters();toast_->setText("后台已连接 · 各组件可独立操作");}
  auto *logs=new QTimer(this);connect(logs,&QTimer::timeout,this,[this]{if(logsDirty_&&!logPause_->isChecked()&&pages_->currentIndex()==5){filterLogs();logsDirty_=false;}});logs->start(350);
  Ui::scaleNativeUi(this);
@@ -60,6 +60,7 @@ MainWindow::MainWindow(QWidget *parent):QMainWindow(parent){
 MainWindow::~MainWindow(){delete motion_;delete bridge_;}
 void MainWindow::closeEvent(QCloseEvent *event){backend_->call("session.close");event->accept();}
 void MainWindow::showPage(int index){nav_->setCurrentRow(index);}
+void MainWindow::showDebugTab(int index){debugTabs_->setCurrentIndex(index);}
 QString MainWindow::camera()const{return mode_->currentIndex()==2?"dabai":"d455";}
 QString MainWindow::request(QPushButton *button,QString op,QJsonObject args,std::function<void(QJsonValue)> reply,QString pendingText,QString successText,bool keepDisabledOnSuccess){
  if(!button||button->property("requestPending").toBool())return {};

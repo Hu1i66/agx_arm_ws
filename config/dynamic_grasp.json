@@ -21,5 +21,8 @@
   "intercept_s_max_m": 0.18,
   "max_trajectory_s": 4.0,
   "stage_move_s": 3.0,
-  "max_wait_s": 10.0
+  "max_wait_s": 10.0,
+  "trigger_line_u": 130,
+  "stop_line_u": 490,
+  "abandon_line_u": 510
 }
