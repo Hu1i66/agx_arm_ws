@@ -42,7 +42,7 @@ MainWindow::MainWindow(QWidget *parent):QMainWindow(parent){
  connect(debugTabs_,&QTabWidget::currentChanged,this,[this]{moveRviz();});
  connect(backend_,&BackendClient::online,this,[this](bool online){toast_->setText(online?"后台已连接 · 各组件可独立操作":"后台连接中 · 可继续查看配置与三维模型");if(online){refresh();refreshParameters();refreshFiles();}});
  connect(backend_,&BackendClient::event,this,&MainWindow::receive);
- connect(bridge_,&RosViewBridge::detection,this,[this](QString cam,QJsonObject detection){detections_[cam]=detection;updateTargets();},Qt::QueuedConnection);
+ connect(bridge_,&RosViewBridge::detection,this,[this](QString cam,QJsonObject detection){detections_[cam]=detection;if(cam==camera())updateTargets();},Qt::QueuedConnection);
  connect(bridge_,&RosViewBridge::joints,this,[this](QVector<double> values){lastActual_=values;QStringList fields;for(int i=0;i<values.size();++i)fields<<QString("J%1  %2°").arg(i+1).arg(values[i]*180/M_PI,0,'f',1);jointFeedback_->setText(fields.join("    "));},Qt::QueuedConnection);
  connect(motion_,&MotionController::status,this,[this](QString value){motionState_->setText(value);});
  if(rviz_->planning())connect(rviz_->planning(),&moveit_rviz_plugin::MotionPlanningDisplay::queryGoalStateChanged,this,[this]{if(!syncing_&&rviz_->planning()->getRobotModel()&&rviz_->planning()->getQueryGoalState()){
@@ -96,7 +96,9 @@ bool MainWindow::eventFilter(QObject *object,QEvent *event){
 
 void MainWindow::receive(QString event,QJsonValue value){
  auto data=value.toObject();
- if(event=="vision.targets"){detections_[data["camera_id"].toString()]=data["detection"].toObject();updateTargets();}
+ // The direct ROS bridge already owns image and target updates. The service
+ // repeats the same detection via IPC and must not rebuild the table twice.
+ if(event=="vision.targets")return;
  else if(event=="arm.control_reason")toast_->setText(data["detail"].toString()+" · "+data["original"].toString());
  else if(event=="arm.reconnect_required")toast_->setText(data["detail"].toString()+QString(" · 当前实例累计 %1 次").arg(data["count"].toInt()));
  else if(event=="arm.recovery.progress"){connectionState_->setText(QString("恢复步骤 %1  %2  %3").arg(data["step"].toInt()+1).arg(data["label"].toString(),data["state"].toString()=="completed"?"已完成":data["state"].toString()=="failed"?"失败":"执行中"));if(data.contains("error"))connectionState_->setText(connectionState_->text()+"："+data["error"].toString());connectionLog_->appendPlainText(QJsonDocument(data).toJson(QJsonDocument::Indented));}
