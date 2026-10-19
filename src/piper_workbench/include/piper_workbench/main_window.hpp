@@ -21,7 +21,7 @@ private:
  QString request(QPushButton *button,QString op,QJsonObject args={},std::function<void(QJsonValue)> reply={},QString pendingText={},QString successText={},bool keepDisabledOnSuccess=false);
  void finishRequest(QString id,bool ok);void updateTaskButtons();void updateCaptureButtons();void updateCalibrationButtons();
  BackendClient *backend_;RosViewBridge *bridge_;MotionController *motion_;RvizPanel *rviz_;
- QStackedWidget *pages_;QListWidget *nav_;QTabWidget *debugTabs_;QWidget *mainHost_,*motionHost_;QLabel *toast_,*health_,*jointFeedback_,*taskState_,*motionState_,*connectionState_,*calibrationState_,*captureState_;
+ QStackedWidget *pages_;QListWidget *nav_;QTabWidget *debugTabs_;QWidget *mainHost_,*motionHost_;QLabel *toast_,*health_,*jointFeedback_,*beltSpeedLabel_,*taskState_,*motionState_,*connectionState_,*calibrationState_,*captureState_;
  Ui::GraspFlow *graspFlow_=nullptr;QString graspStage_="waiting";
  QComboBox *mode_,*plan_,*placementMode_,*calibrationKind_,*calibrationCamera_,*fileKind_,*fileCamera_;
  QTableWidget *targets_,*files_,*sampleTable_,*logTable_,*teachTable_;

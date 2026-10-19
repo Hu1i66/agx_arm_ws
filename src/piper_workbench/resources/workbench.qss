@@ -8,6 +8,7 @@ QLabel#pageTitle { font-size:26px; font-weight:700; padding-bottom:4px; }
 QLabel#cardTitle { font-size:17px; font-weight:600; }
 QLabel#muted { color:#64748B; font-size:13px; }
 QLabel#notice { color:#1769FF; background:#EEF5FF; border-radius:6px; padding:9px; }
+QLabel#beltSpeed { color:#0F4FC4; background:#EDF4FF; border:1px solid #D7E5FF; border-radius:6px; padding:7px 11px; font-weight:600; }
 QListWidget#navigation { background:transparent; border:0; padding:10px 6px; outline:0; }
 QListWidget#navigation::item { height:48px; margin:3px 4px; padding-left:14px; border-radius:7px; color:#42546F; }
 QListWidget#navigation::item:selected { background:#E4EEFF; color:#1769FF; font-weight:600; }
