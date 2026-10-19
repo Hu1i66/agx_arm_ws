@@ -7,6 +7,7 @@ from .calibration import Calibration
 from .components import Components,COMPONENTS
 from .logs import Logs,ReconnectNotice
 from .tasks import Tasks
+from .grasp_flow import grasp_stage_from_text
 import runtime_config as rc
 import runtime_launcher as launcher
 
@@ -29,6 +30,7 @@ class Workbench:
         self.saved_poses=JsonStore(rc.resolve_resource('saved_poses'),{})
         self.placements=PlacementStore(self.root/'config/workbench/placements.json')
         self.ros=None;self.belt=None;self.belt_commanded=None;self.belt_lock=threading.RLock()
+        self.grasp_stage_cycle=None;self.grasp_stage_last=None
         self.tasks=Tasks(self.send,self.control,self.conveyor,self.emit)
         self.tasks.receiver_alive=lambda:self.ros is not None and self.ros.count_subscribers('/sorting_cmds')>0
         self.calibration=Calibration(self.root,self.emit)
@@ -237,6 +239,13 @@ class Workbench:
             if str(path) not in self.logs.offsets:self.logs.offsets[str(path)]=(int(rec.get('log_offset',path.stat().st_size if path.exists() else 0)),b'')
             for line in self.logs.tail(path):
                 batch.append(self.logs.add(key,line,instance=rec.get('record_id'),pid=rec.get('pid')))
+                if key=='action' and self.tasks.inflight:
+                    if self.grasp_stage_cycle!=self.tasks.inflight:
+                        self.grasp_stage_cycle=self.tasks.inflight;self.grasp_stage_last=None
+                    mapped=grasp_stage_from_text(line)
+                    if mapped and mapped[0]!=self.grasp_stage_last:
+                        self.grasp_stage_last=mapped[0]
+                        self.emit('grasp.stage',{'stage':mapped[0],'label':mapped[1],'cycle_id':self.tasks.inflight})
                 if key=='arm' and rec.get('record_id')==self.notice.instance:
                     if '[agx_arm_ctrl_single_node]' in line and 'Agx_arm is not connected, cannot control' in line:
                         stamp_match=re.search(r'\[(\d+\.\d+)\]',line)

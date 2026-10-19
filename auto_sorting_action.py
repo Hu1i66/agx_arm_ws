@@ -327,6 +327,7 @@ class MoveItActionClient(WorkbenchControl, Node):
         self._workbench_recover = False
         self._workbench_sub = self.create_subscription(String, '/workbench/control', self._workbench_control, 10)
         self.status_pub = self.create_publisher(String, '/sorting_status', 10)
+        self.workbench_stage_pub = self.create_publisher(String, '/workbench/grasp_stage', 10)
         self.cycle_result_pub = self.create_publisher(String, '/sorting/cycle_result', 10)
         self.robot_status_pub = self.create_publisher(String, '/sorting/robot_status', 10)
         self.is_busy = False
@@ -947,6 +948,7 @@ class MoveItActionClient(WorkbenchControl, Node):
         return self._latest_graspnet_result
 
     def move_arm_joint(self, joints, desc, continuous=False):
+        getattr(self, '_workbench_stage_from_text', lambda text: None)(desc)
         self.get_logger().info(f"🚀 正在规划(关节空间) -> {desc}")
         c = Constraints()
         joint_names = ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6']
@@ -1738,6 +1740,7 @@ class MoveItActionClient(WorkbenchControl, Node):
     def move_arm_pose(self, pose_dict, desc, continuous=False, planning_mode='normal',
                        preferred_orientation=None, fixed_orientation=False, approach_target_z=None,
                        auto_grasp=False):
+        getattr(self, '_workbench_stage_from_text', lambda text: None)(desc)
         """
         统一运动方法：优先使用 IK + 关节空间，失败回退到 Cartesion 规划
 
@@ -2135,6 +2138,7 @@ class MoveItActionClient(WorkbenchControl, Node):
         self._joint_states_pub.publish(msg)
 
     def operate_gripper(self, target_pos, desc):
+        getattr(self, '_workbench_stage_from_text', lambda text: None)(desc)
         if self.workbench_interrupted():return False
         self.get_logger().info(f"✊ 正在执行夹爪动作 -> {desc} (target: {target_pos})")
 
@@ -2199,6 +2203,7 @@ class MoveItActionClient(WorkbenchControl, Node):
 
     def _publish_robot_status(self, success, cargo_type, confidence, source_pos_dict, target_joints, grasp_ok, error_code):
         """收集分拣周期数据并通过 /sorting/robot_status 发布."""
+        self._workbench_stage('complete' if success else 'error', '本轮完成' if success else '本轮异常')
         # source_position 坐标字符串
         src = source_pos_dict
         source_position = f"({src['x']:.3f}, {src['y']:.3f}, {src['z']:.3f})"
@@ -2301,6 +2306,36 @@ class MoveItActionClient(WorkbenchControl, Node):
             "reason": reason,
         })
         self.status_pub.publish(msg)
+
+    def _workbench_stage(self, stage, label):
+        if not getattr(self, '_workbench_task', False):
+            return
+        msg = String()
+        msg.data = json.dumps({
+            'stage': stage,
+            'label': label,
+            'cycle_id': getattr(self, '_workbench_cycle_id', ''),
+            'stamp': time.time(),
+        }, ensure_ascii=False)
+        self.workbench_stage_pub.publish(msg)
+
+    def _workbench_stage_from_text(self, text):
+        text = str(text or '')
+        if '闭合夹爪' in text:
+            stage, label = 'grasp', '夹爪闭合'
+        elif '抬起' in text:
+            stage, label = 'lift', '抬升搬运'
+        elif '松开夹爪' in text or '放置' in text or '移动' in text:
+            stage, label = 'place', '前往放置点'
+        elif '返回' in text or '待机位' in text or '观察位' in text:
+            stage, label = 'return', '返回参考位'
+        elif '下降' in text:
+            stage, label = 'descend', '下降对齐'
+        elif '上方过渡' in text or '预抓取' in text or '抓取位' in text:
+            stage, label = 'approach', '接近目标'
+        else:
+            return
+        self._workbench_stage(stage, label)
 
     # ====================================================================
     # Task 2.1: 蓝方块分拣 (sort_blue_block)
@@ -3155,6 +3190,8 @@ def main():
                 pick_id = data.get("pick_name", "Pick")
                 obj_class = str(data.get("object_name") or pick_id).split(' (')[0].strip()
                 cycle_id = str(data.get("cycle_id", ""))
+                node._workbench_cycle_id = cycle_id
+                node._workbench_stage('target', '目标已锁定')
 
                 place_id = "放置点"
                 placement = node.placement_snapshot(obj_class, camera) if node._workbench_task else None

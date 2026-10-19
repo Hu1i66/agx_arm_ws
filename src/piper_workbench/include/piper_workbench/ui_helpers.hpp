@@ -1,5 +1,6 @@
 #pragma once
 #include <QtWidgets>
+#include <QVariantAnimation>
 namespace Ui {
 int px(int value);
 void scaleNativeUi(QWidget *root);
@@ -9,6 +10,7 @@ QLabel *text(QString value,QString role="muted");
 QWidget *scroll(QWidget *child);
 QIcon icon(QString name);
 void collapsible(QFrame *card);
+void fadeIn(QWidget *widget,int duration=220);
 class TracePlot:public QWidget{
 public:
  explicit TracePlot(QWidget *parent=nullptr):QWidget(parent){setMinimumHeight(230);}
@@ -24,5 +26,15 @@ public:
  void paintEvent(QPaintEvent *)override;
  void mousePressEvent(QMouseEvent *)override;
  QRect imageRect()const;
+};
+class GraspFlow:public QWidget{
+public:
+ explicit GraspFlow(QWidget *parent=nullptr);
+ void setStage(QString stage,QString detail={});
+ void setActive(bool active);
+ void paintEvent(QPaintEvent *)override;
+private:
+ QVariantAnimation animation_;QTimer pulseTimer_;QElapsedTimer pulseClock_;
+ QString stage_="waiting",detail_="等待开始";qreal displayPos_=0.,pulse_=0.;bool active_=false;
 };
 }

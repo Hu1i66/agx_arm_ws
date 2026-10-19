@@ -4,7 +4,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import CompressedImage, Image, CameraInfo
 from geometry_msgs.msg import PoseStamped, TransformStamped
 from std_msgs.msg import Float64MultiArray, String
-from visualization_msgs.msg import Marker
+from visualization_msgs.msg import Marker, MarkerArray
 from tf2_ros import TransformBroadcaster
 import cv2
 import numpy as np
@@ -36,80 +36,69 @@ _MODEL_PATH = str(_rc.resolve_resource("yolo_weights"))
 _D455_HANDEYE = _rc.load_handeye("d455")
 from camera_geometry import CameraGeometry, image_qos, fresh_image
 from runtime_geometry import object_centroid_from_rgbd, short_axis_tool_rotation
+from vision.tracker import (ClassVoteStabilizer, Detection, PointKalmanCV,
+                            ScalarKalmanCV, deduplicate_detections, iou_xyxy)
 
 
 class ObjectTrack:
-    """单个物体 track 的 EMA (指数移动平均) 滤波状态。
-
-    用于平滑 YOLO 检测结果, 消除像素 bbox、深度、坐标的帧间抖动。
-    每个 track 绑定一个类别 + 空间位置 (像素中心), 通过最近邻匹配关联帧间检测。
-    """
+    """Track state with constant-velocity Kalman filtering and class voting."""
 
     def __init__(self, track_id, class_name, obs, frame_count, alpha=0.25):
         self.track_id = track_id
         self.class_name = class_name
-        self.alpha = alpha  # EMA 系数: 新观测权重, 越小越平滑
-        # 上一帧像素中心 (用于匹配)
+        self.class_votes = ClassVoteStabilizer(class_name)
+        self.stable_class = class_name
+        self.alpha = alpha
         self.last_center_u = obs['center_u']
         self.last_center_v = obs['center_v']
-        # 滤波状态 (初始值 = 第一次观测)
+        self.kf_u = ScalarKalmanCV(obs['center_u'], measurement_var=16., process_var=20.)
+        self.kf_v = ScalarKalmanCV(obs['center_v'], measurement_var=16., process_var=20.)
         self.s_x1 = float(obs['x1'])
         self.s_y1 = float(obs['y1'])
         self.s_x2 = float(obs['x2'])
         self.s_y2 = float(obs['y2'])
-        self.s_depth = obs.get('depth')        # float or None
+        self.s_depth = obs.get('depth')
         self.s_cam = list(obs['camera_coords']) if obs.get('camera_coords') is not None else None
         self.s_ee = list(obs['ee_coords']) if obs.get('ee_coords') is not None else None
         self.s_base = list(obs['base_coords']) if obs.get('base_coords') is not None else None
-        # 元数据
+        self.base_kf = PointKalmanCV(self.s_base) if self.s_base is not None else None
         self.last_update_frame = frame_count
         self.miss_count = 0
+        self.hits = 1
         self.confidence = obs.get('conf', 0.0)
-        self.last_obs = obs  # 保留最新原始观测 (调试用)
+        self.last_obs = obs
 
-    def update(self, obs, frame_count, alpha=None):
-        """用新观测做 EMA 更新。alpha=None 时用 self.alpha。
-        深度失败的帧不更新 s_depth/s_cam/s_ee/s_base (保留上一帧滤波值)。"""
+    def update(self, obs, frame_count, class_name, alpha=None, dt=0.1):
         a = alpha if alpha is not None else self.alpha
-        self.last_center_u = obs['center_u']
-        self.last_center_v = obs['center_v']
-        # bbox EMA
-        self.s_x1 = a * float(obs['x1']) + (1 - a) * self.s_x1
-        self.s_y1 = a * float(obs['y1']) + (1 - a) * self.s_y1
-        self.s_x2 = a * float(obs['x2']) + (1 - a) * self.s_x2
-        self.s_y2 = a * float(obs['y2']) + (1 - a) * self.s_y2
-        # 深度 EMA (深度失败时保留旧值, 不更新)
+        self.class_name = class_name
+        self.stable_class = self.class_votes.update(class_name)
+        center_u = self.kf_u.update(obs['center_u'], dt)
+        center_v = self.kf_v.update(obs['center_v'], dt)
+        width = a * (float(obs['x2']) - float(obs['x1'])) + (1 - a) * (self.s_x2 - self.s_x1)
+        height = a * (float(obs['y2']) - float(obs['y1'])) + (1 - a) * (self.s_y2 - self.s_y1)
+        self.last_center_u, self.last_center_v = center_u, center_v
+        self.s_x1, self.s_x2 = center_u - width / 2., center_u + width / 2.
+        self.s_y1, self.s_y2 = center_v - height / 2., center_v + height / 2.
         d = obs.get('depth')
         if d is not None:
-            if self.s_depth is None:
-                self.s_depth = d
-            else:
-                self.s_depth = a * d + (1 - a) * self.s_depth
-        # 相机坐标 EMA
+            self.s_depth = d if self.s_depth is None else a * d + (1 - a) * self.s_depth
         cam = obs.get('camera_coords')
         if cam is not None:
-            if self.s_cam is None:
-                self.s_cam = list(cam)
-            else:
-                self.s_cam = [a * cam[i] + (1 - a) * self.s_cam[i] for i in range(3)]
-        # 末端坐标 EMA
+            self.s_cam = list(cam) if self.s_cam is None else [a * cam[i] + (1 - a) * self.s_cam[i] for i in range(3)]
         ee = obs.get('ee_coords')
         if ee is not None:
-            if self.s_ee is None:
-                self.s_ee = list(ee)
-            else:
-                self.s_ee = [a * ee[i] + (1 - a) * self.s_ee[i] for i in range(3)]
-        # 基座坐标 EMA
+            self.s_ee = list(ee) if self.s_ee is None else [a * ee[i] + (1 - a) * self.s_ee[i] for i in range(3)]
         base = obs.get('base_coords')
         if base is not None:
-            if self.s_base is None:
+            if self.base_kf is None:
+                self.base_kf = PointKalmanCV(base)
                 self.s_base = list(base)
             else:
-                self.s_base = [a * base[i] + (1 - a) * self.s_base[i] for i in range(3)]
-        # 元数据
+                self.s_base = self.base_kf.update(base, dt)
         self.last_update_frame = frame_count
         self.miss_count = 0
-        self.confidence = obs.get('conf', self.confidence)
+        self.hits += 1
+        self.confidence = .7 * self.confidence + .3 * float(obs.get('conf', self.confidence))
         self.last_obs = obs
 
 # ==========================================================================
@@ -243,6 +232,7 @@ class CameraState:
         self.held_rgb = None              # depth_pair_delay 用: 上一轮暂存的 (stamp, BGR 图)
         self.rgb_ready = False
         self.last_processed_stamp = None  # 避免同一帧重复推理
+        self.min_track_hits = 2
 
         # ── 滤波 (EMA + 帧间匹配) ──
         self.tracks = {}                  # {track_id: ObjectTrack}
@@ -272,6 +262,8 @@ class CameraState:
         self.pub_detection_info = None
         self.pub_annotated = None
         self.pub_object_marker = None
+        self.pub_object_markers = None
+        self.marker_ids = set()
         self.pub_object_pose_stamped = None
 
         # ── GUI ──
@@ -387,6 +379,8 @@ class ObjectDetector(Node):
                 CompressedImage, self._topic(p, "yolo/annotated_image/compressed"), 1)
             cam.pub_object_marker = self.create_publisher(
                 Marker, self._topic(p, "object_marker"), 10)
+            cam.pub_object_markers = self.create_publisher(
+                MarkerArray, self._topic(p, "objects_markers"), 10)
             cam.pub_object_pose_stamped = self.create_publisher(
                 PoseStamped, self._topic(p, "object_pose"), 10)
 
@@ -537,11 +531,12 @@ class ObjectDetector(Node):
 
         cam.enabled = bool(p("enabled", d["enabled"]))
         # 腕载Dabai的水果容易出现多个重叠框；使用现有YOLO NMS去重。
-        cam.yolo_conf = float(p("yolo_conf", 0.25))
-        cam.yolo_iou = float(p("yolo_iou", 0.7))
+        cam.yolo_conf = float(p("yolo_conf", 0.22))
+        cam.yolo_iou = float(p("yolo_iou", 0.45))
         cam.detect_period_s = float(p("detect_period_s", self.detect_period_s))
         cam.last_detect_at = -100.
-        cam.yolo_agnostic_nms = bool(p("yolo_agnostic_nms", False))
+        cam.yolo_agnostic_nms = bool(p("yolo_agnostic_nms", True))
+        cam.min_track_hits = int(p("min_track_hits", 2))
         cam.use_depth_camera = bool(p("use_depth_camera", d["use_depth_camera"]))
         cam.rgb_topic = str(p("rgb_topic", d["rgb_topic"]))
         cam.depth_topic = str(p("depth_topic", d["depth_topic"]))
@@ -728,25 +723,29 @@ class ObjectDetector(Node):
                 self.set_exposure(active, False, active.current_exposure - step)
 
     # ==================== 滤波: track 匹配与清理 ====================
-    def _find_matching_track(self, cam, class_name, center_u, center_v, exclude_ids=None):
+    def _find_matching_track(self, cam, class_name, center_u, center_v, bbox, exclude_ids=None):
         """在现有 tracks 中找同类且像素中心距离最近的 track (贪心匹配)。
         exclude_ids: 本帧已匹配过的 track_id 集合, 避免重复匹配。
         返回 ObjectTrack 或 None。"""
         exclude_ids = exclude_ids or set()
         best_track = None
         best_dist = self.filter_match_dist_px
+        best_other = None
+        best_other_dist = self.filter_match_dist_px * 1.25
         for track in cam.tracks.values():
             if track.track_id in exclude_ids:
-                continue
-            if track.class_name != class_name:
                 continue
             dx = track.last_center_u - center_u
             dy = track.last_center_v - center_v
             dist = math.sqrt(dx * dx + dy * dy)
-            if dist < best_dist:
+            if track.class_name == class_name and dist < best_dist:
                 best_dist = dist
                 best_track = track
-        return best_track
+            elif track.class_name != class_name and dist < best_other_dist:
+                if iou_xyxy(bbox, (track.s_x1, track.s_y1, track.s_x2, track.s_y2)) >= .20:
+                    best_other_dist = dist
+                    best_other = track
+        return best_track or best_other
 
     def _cleanup_stale_tracks(self, cam, frame_count):
         """删除连续 filter_max_misses 帧未匹配的 track, 并对未匹配 track miss_count++。"""
@@ -1218,6 +1217,62 @@ class ObjectDetector(Node):
         ps.pose.orientation.w = 1.0
         cam.pub_object_pose_stamped.publish(ps)
 
+    def publish_object_markers(self, cam, objects):
+        """Publish every tracked object so the workbench 3D view can show it."""
+        array = MarkerArray()
+        current = set()
+        for obj in objects:
+            base = obj.get("base_position_m")
+            if not base:
+                continue
+            marker_id = int(obj.get("track_id", 0)) + 1
+            current.add(marker_id)
+            marker = Marker()
+            marker.header.stamp = self.get_clock().now().to_msg()
+            marker.header.frame_id = self.base_frame_id
+            marker.ns = f"{cam.name}_detected_objects"
+            marker.id = marker_id
+            marker.type = Marker.SPHERE
+            marker.action = Marker.ADD
+            marker.pose.position.x = float(base["x"])
+            marker.pose.position.y = float(base["y"])
+            marker.pose.position.z = float(base["z"]) + .02
+            marker.pose.orientation.w = 1.
+            diameter = max(.02, min(float(obj.get("estimated_diameter_m", .05)), .15))
+            marker.scale.x = marker.scale.y = marker.scale.z = diameter * .65
+            marker.color.r, marker.color.g, marker.color.b = (.08, .48, 1.) if cam.name == "d455" else (.0, .75, .62)
+            marker.color.a = .72
+            marker.lifetime.sec = 1
+            array.markers.append(marker)
+
+            label = Marker()
+            label.header = marker.header
+            label.ns = f"{cam.name}_labels"
+            label.id = marker.id
+            label.type = Marker.TEXT_VIEW_FACING
+            label.action = Marker.ADD
+            label.pose = marker.pose
+            label.pose.position.z += diameter * .55
+            label.pose.orientation.w = 1.
+            label.scale.z = .045
+            label.color.r = label.color.g = label.color.b = 1.
+            label.color.a = .95
+            label.text = f"T{obj.get('track_id')} {obj.get('object_name', 'object')}"
+            label.lifetime.sec = 1
+            array.markers.append(label)
+
+        for old_id in cam.marker_ids - current:
+            for name, marker_type in ((f"{cam.name}_detected_objects", Marker.SPHERE),
+                                      (f"{cam.name}_labels", Marker.TEXT_VIEW_FACING)):
+                marker = Marker()
+                marker.header.stamp = self.get_clock().now().to_msg()
+                marker.header.frame_id = self.base_frame_id
+                marker.ns = name; marker.id = old_id
+                marker.type = marker_type; marker.action = Marker.DELETE
+                array.markers.append(marker)
+        cam.marker_ids = current
+        cam.pub_object_markers.publish(array)
+
     def camera_info_cb(self, cam, msg):
         """D455优先使用与手眼标定相同的批准内参；无文件时读取驱动。"""
         if cam.cam_info_received:
@@ -1311,17 +1366,17 @@ class ObjectDetector(Node):
             # 遍历 YOLO 输出的所有检测框, 每个都: 绘制标注 + 坐标变换 + 收集到 objects 列表。
             # 主物体 (= 最高置信度的有效物体) 信息填到顶层字段, 保持与 auto_sorting_action.py
             # 的向后兼容 (_two_stage_refine 仍能读 detected / base_position_m)。
-            boxes = results[0].boxes
-            if len(boxes) > 0:
+            raw_boxes = results[0].boxes
+            detections = []
+            for box in raw_boxes:
+                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                detections.append(Detection(
+                    float(x1), float(y1), float(x2), float(y2),
+                    float(box.conf[0].cpu().numpy()),
+                    int(box.cls[0].cpu().numpy())))
+            boxes_sorted = deduplicate_detections(detections)
+            if boxes_sorted:
                 cam.detection_count += 1
-                # 按置信度从高到低排序, 主物体 = boxes_sorted[0]
-                boxes_sorted = sorted(
-                    boxes,
-                    key=lambda b: float(b.conf[0].cpu().numpy()),
-                    reverse=True
-                )
-            else:
-                boxes_sorted = []
 
             # eye-to-hand: 无需选择机械臂位姿, 相机变换是常量
             selected_robot_pose = None
@@ -1344,9 +1399,9 @@ class ObjectDetector(Node):
             matched_track_ids = set()  # 本帧已匹配的 track_id, 避免重复匹配
 
             for idx, box in enumerate(boxes_sorted):
-                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                conf = float(box.conf[0].cpu().numpy())
-                cls_id = int(box.cls[0].cpu().numpy())
+                x1, y1, x2, y2 = box.bbox
+                conf = box.confidence
+                cls_id = box.class_id
                 class_name = self.model.names[cls_id]
 
                 # 中心点
@@ -1413,7 +1468,7 @@ class ObjectDetector(Node):
                         'position_m': dict(zip(('x', 'y', 'z'), map(float, centroid_data['centroid']))),
                     }
                 track = self._find_matching_track(
-                    cam, class_name, center_u, center_v, matched_track_ids)
+                    cam, class_name, center_u, center_v, (x1, y1, x2, y2), matched_track_ids)
                 if track is None:
                     # 新物体, 创建 track
                     track_id = cam.next_track_id
@@ -1422,7 +1477,18 @@ class ObjectDetector(Node):
                     cam.tracks[track_id] = track
                 else:
                     matched_track_ids.add(track.track_id)
-                    track.update(raw_obs, cam.frame_count, 1.0 if cam.name=="dabai" else self.filter_alpha)
+                    track.update(raw_obs, cam.frame_count, class_name,
+                                 1.0 if cam.name=="dabai" else self.filter_alpha,
+                                 cam.detect_period_s)
+                if track.hits < cam.min_track_hits:
+                    continue
+
+                published_class = track.stable_class
+                published_cls_id = next(
+                    (cid for cid, name in self.model.names.items() if name == published_class),
+                    cls_id)
+                real_width, real_height = self._get_class_dimensions(published_class)
+                volume = self.estimate_object_volume(real_width, real_height, shape="sphere")
 
                 # 用滤波值替换 (画框/标注/发布都用平滑后的值)
                 x1, y1, x2, y2 = track.s_x1, track.s_y1, track.s_x2, track.s_y2
@@ -1442,7 +1508,7 @@ class ObjectDetector(Node):
                 box_color = box_colors[idx % len(box_colors)]
                 cv2.rectangle(display_img, (int(x1), int(y1)), (int(x2), int(y2)), box_color, 2)
                 cv2.circle(display_img, (center_u, center_v), 4, (0, 0, 255), -1)
-                label = f"#{idx+1} {class_name}: {conf:.2f}"
+                label = f"#{idx+1} {published_class}: {conf:.2f} ({track.class_votes.stability:.0%})"
                 cv2.putText(display_img, label, (int(x1), max(int(y1)-8, 12)),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, box_color, 2)
 
@@ -1460,9 +1526,12 @@ class ObjectDetector(Node):
                                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 255), 1)
                     obj_info = {
                         "index": idx + 1,
-                        "object_name": class_name,
-                        "confidence": conf,
-                        "class_id": cls_id,
+                        "object_name": published_class,
+                        "raw_object_name": class_name,
+                        "class_stability": round(track.class_votes.stability, 3),
+                        "confidence": round(track.confidence, 4),
+                        "raw_confidence": round(conf, 4),
+                        "class_id": published_cls_id,
                         "bbox_pixel": {
                             "x1": int(x1), "y1": int(y1),
                             "x2": int(x2), "y2": int(y2)
@@ -1502,9 +1571,12 @@ class ObjectDetector(Node):
                 # ── 收集物体信息到 objects 列表 (用滤波值) ──
                 obj_info = {
                     "index": idx + 1,
-                    "object_name": class_name,
-                    "confidence": conf,
-                    "class_id": cls_id,
+                    "object_name": published_class,
+                    "raw_object_name": class_name,
+                    "class_stability": round(track.class_votes.stability, 3),
+                    "confidence": round(track.confidence, 4),
+                    "raw_confidence": round(conf, 4),
+                    "class_id": published_cls_id,
                     "bbox_pixel": {
                         "x1": int(x1), "y1": int(y1),
                         "x2": int(x2), "y2": int(y2)
@@ -1569,11 +1641,13 @@ class ObjectDetector(Node):
                     coord_data = [obj_x, obj_y, obj_z,
                                  0.0, 0.0, 0.0,  # ee_coords 占位 (eye-to-hand 不适用)
                                  real_width, real_height, volume,
-                                 conf, float(cls_id), depth_m]
+                                 conf, float(published_cls_id), depth_m]
                     if distance_to_robot is not None:
                         coord_data.append(distance_to_robot)
                     coord_msg.data = coord_data
                     cam.pub_object_pose.publish(coord_msg)
+
+            self.publish_object_markers(cam, objects_list)
 
             # 循环结束: 清理过期 track + 未匹配 track miss_count++
             self._cleanup_stale_tracks(cam, cam.frame_count)

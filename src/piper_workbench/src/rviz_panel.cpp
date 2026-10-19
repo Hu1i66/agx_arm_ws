@@ -52,6 +52,10 @@ RvizPanel::RvizPanel(QWidget *parent) : QWidget(parent) {
   grid->subProp("Cell Size")->setValue(0.1);
   grid->subProp("Color")->setValue(QColor("#D4DAE3"));
   grid->subProp("Plane Cell Count")->setValue(20);
+  for (const auto &item : QList<QPair<QString,QString>>{{"/objects_markers","D455 检测目标"},{"/dabai/objects_markers","Dabai 检测目标"}}) {
+    auto *display = manager_->createDisplay("rviz_default_plugins/MarkerArray", item.second, true);
+    if (display && display->subProp("Topic")) display->subProp("Topic")->setValue(item.first);
+  }
   planning_ = new WorkbenchPlanningDisplay;
   manager_->addDisplay(planning_,true);
   planning_->setName("机械臂与规划");planning_->setEnabled(true);

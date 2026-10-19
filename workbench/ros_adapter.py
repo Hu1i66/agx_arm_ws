@@ -26,6 +26,7 @@ class RosAdapter(Node):
             self.create_subscription(String,'/workbench/task_ack',lambda m:self.s.tasks.acknowledge(json.loads(m.data)),10),
             self.create_subscription(String,'/sorting/cycle_result',self.result,10),
             self.create_subscription(String,'/sorting_status',lambda m:self.s.emit('task.status',{'action_state':m.data}),10),
+            self.create_subscription(String,'/workbench/grasp_stage',lambda m:self.s.emit('grasp.stage',json.loads(m.data)),10),
             self.create_subscription(Log,'/rosout',self.rosout,100)])
         self._executor=rclpy.executors.MultiThreadedExecutor(num_threads=2);self._executor.add_node(self)
         self.thread=threading.Thread(target=self._executor.spin,daemon=True);self.thread.start()

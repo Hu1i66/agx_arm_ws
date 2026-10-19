@@ -12,6 +12,10 @@ object_detector:
     yolo_device: "cuda:0"
     # ── D455 偏差补偿（当前生产默认值）──
     d455.use_depth_camera: true
+    d455.yolo_conf: 0.20
+    d455.yolo_iou: 0.45
+    d455.yolo_agnostic_nms: true
+    d455.min_track_hits: 2
     d455.x_offset_m: 0.0
     d455.y_offset_m: 0.0
     d455.z_offset_m: 0.0
@@ -24,6 +28,7 @@ object_detector:
     base_frame_id: base_link
 
     # Dabai单次静态抓取：同一水果的重叠框去重，D455沿用原检测参数。
-    dabai.yolo_conf: 0.35
-    dabai.yolo_iou: 0.4
+    dabai.yolo_conf: 0.16
+    dabai.yolo_iou: 0.45
     dabai.yolo_agnostic_nms: true
+    dabai.min_track_hits: 2

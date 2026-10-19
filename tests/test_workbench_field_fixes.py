@@ -92,3 +92,14 @@ def test_capture_status_tracks_real_worker_state(tmp_path):
     assert capture.status()['running'] is True
     capture.stop()
     assert capture.status()['running'] is False
+
+
+def test_grasp_flow_maps_existing_action_logs():
+    from workbench.grasp_flow import grasp_stage_from_text
+    assert grasp_stage_from_text('收到客户端指令：抓取') [0] == 'target'
+    assert grasp_stage_from_text('抓取位上方过渡点 (工具轴预抓取点)')[0] == 'approach'
+    assert grasp_stage_from_text('下降抓取 (直线插补)')[0] == 'descend'
+    assert grasp_stage_from_text('闭合夹爪(拿取,完全闭合)')[0] == 'grasp'
+    assert grasp_stage_from_text('抬起脱离→夹取上方')[0] == 'lift'
+    assert grasp_stage_from_text('移动到放置点 (关节空间)')[0] == 'place'
+    assert grasp_stage_from_text('释放后返回参考位')[0] == 'return'

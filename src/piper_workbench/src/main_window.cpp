@@ -135,6 +135,8 @@ void MainWindow::applyStatus(QJsonObject state){
  if(placements_.isEmpty()){placements_=state["placements"].toObject();refreshPlacements();}
  auto task=state["task"].toObject();QString phase=task["phase"].toString();taskState_->setText(phase=="paused"?"已暂停 · 由你明确开始下一轮":phase=="grasping"?"当前物体抓放中":phase=="pause_pending"?"完成当前物体后暂停":"等待目标进入抓取区");
  captureRunning_=state["capture"].toObject()["running"].toBool();updateTaskButtons();updateCaptureButtons();
+ if(graspFlow_){bool active=task["continuous"].toBool()||!task["inflight"].toString().isEmpty();graspFlow_->setActive(active);
+  if(!active&&graspStage_!="complete"&&graspStage_!="error"){graspStage_="waiting";graspFlow_->setStage("waiting","等待开始");}}
  if(state["reconnect"].toObject()["count"].toInt()>0)toast_->setText("机械臂连接异常，建议到「连接」执行碰撞后恢复；该警告不唯一代表碰撞");
  else if(state["feedback"].isObject()&&toast_->text().startsWith("机械臂连接异常")){toast_->setText("机械臂实际反馈已恢复 · 抓取保持暂停");toast_->setStyleSheet("");}
 }
@@ -157,6 +159,10 @@ void MainWindow::receive(QString event,QJsonValue value){
  // The direct ROS bridge already owns image and target updates. The service
  // repeats the same detection via IPC and must not rebuild the table twice.
  if(event=="vision.targets")return;
+ else if(event=="grasp.stage"&&graspFlow_){
+  graspStage_=data["stage"].toString();graspFlow_->setActive(graspStage_!="complete"&&graspStage_!="error");
+  graspFlow_->setStage(graspStage_,data["label"].toString(graspStage_));
+ }
  else if(event=="arm.control_reason")toast_->setText(data["detail"].toString()+" · "+data["original"].toString());
  else if(event=="arm.reconnect_required")toast_->setText(data["detail"].toString()+QString(" · 当前实例累计 %1 次").arg(data["count"].toInt()));
  else if(event=="arm.recovery.progress"){connectionState_->setText(QString("恢复步骤 %1  %2  %3").arg(data["step"].toInt()+1).arg(data["label"].toString(),data["state"].toString()=="completed"?"已完成":data["state"].toString()=="failed"?"失败":"执行中"));if(data.contains("error"))connectionState_->setText(connectionState_->text()+"："+data["error"].toString());connectionLog_->appendPlainText(QJsonDocument(data).toJson(QJsonDocument::Indented));}
@@ -177,7 +183,18 @@ void MainWindow::receive(QString event,QJsonValue value){
   captureState_->setText(QString("已保存 %1 张\n%2\n%3").arg(data["count"].toInt()).arg(data["directory"].toString(),QJsonDocument(data["errors"].toObject()).toJson(QJsonDocument::Compact)));
   captureImages_->clear();for(auto row:data["images"].toArray()){auto image=row.toObject();auto *item=new QListWidgetItem(image["camera"].toString()+"  "+image["path"].toString(),captureImages_);item->setIcon(QIcon(data["directory"].toString()+"/"+image["path"].toString()));}
  }
+ else if(event=="task.status"&&data.contains("result")&&graspFlow_){
+  auto result=data["result"].toObject();bool ok=result["ok"].toBool()||result["cycle_success"].toInt()>0;
+  graspStage_=ok?"complete":"error";graspFlow_->setActive(false);graspFlow_->setStage(graspStage_,ok?"本轮完成":"本轮异常");
+  QTimer::singleShot(1600,this,[this]{if(graspStage_=="complete"){graspStage_="waiting";graspFlow_->setStage("waiting","等待下一轮");}});
+  if(!ok&&result.contains("error"))showError(result["error"].toString());
+ }
  else if(event=="task.status"&&data.contains("error"))showError(data["error"].toString());
+ else if(event=="task.status"&&data.contains("action_state")&&graspFlow_){
+  QString state=data["action_state"].toString();
+  if(state=="busy"&&(graspStage_=="waiting"||graspStage_=="target")){graspStage_="approach";graspFlow_->setActive(true);graspFlow_->setStage("approach","动作程序执行中");}
+  else if(state=="error"){graspStage_="error";graspFlow_->setActive(false);graspFlow_->setStage("error","动作程序报错");}
+ }
 }
 void MainWindow::showFile(QString path){QDesktopServices::openUrl(QUrl::fromLocalFile(path));}
 

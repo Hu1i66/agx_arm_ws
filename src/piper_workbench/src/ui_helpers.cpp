@@ -1,4 +1,5 @@
 #include "piper_workbench/ui_helpers.hpp"
+#include <cmath>
 namespace {
 class AnimatedButton:public QPushButton{
 public:
@@ -63,6 +64,45 @@ void Ui::ImageView::mousePressEvent(QMouseEvent *event){
  for(auto row:detection["objects"].toArray()){auto o=row.toObject(),b=o["bbox_pixel"].toObject();if(x>=b["x1"].toDouble()&&x<=b["x2"].toDouble()&&y>=b["y1"].toDouble()&&y<=b["y2"].toDouble()){selected=o["track_id"].toInt();if(picked)picked(selected);update();break;}}
 }
 
+Ui::GraspFlow::GraspFlow(QWidget *parent):QWidget(parent){
+ setMinimumHeight(88);setMaximumHeight(88);setSizePolicy(QSizePolicy::Expanding,QSizePolicy::Fixed);
+ animation_.setDuration(420);animation_.setEasingCurve(QEasingCurve::OutCubic);
+ connect(&animation_,&QVariantAnimation::valueChanged,this,[this](QVariant value){displayPos_=value.toDouble();update();});
+ pulseTimer_.setInterval(33);connect(&pulseTimer_,&QTimer::timeout,this,[this]{pulse_=.5+.5*std::sin(pulseClock_.elapsed()/1000.*5.2);update();});
+ pulseClock_.start();pulseTimer_.start();
+}
+void Ui::GraspFlow::setStage(QString stage,QString detail){
+ static const QMap<QString,int> order={{"waiting",0},{"target",1},{"approach",2},{"descend",3},{"grasp",4},{"lift",4},{"place",5},{"release",5},{"return",6},{"complete",6},{"error",-1}};
+ stage_=stage;if(!detail.isEmpty())detail_=detail;
+ int target=order.value(stage,0);if(target>=0&&target!=int(qRound(displayPos_))){animation_.stop();animation_.setStartValue(displayPos_);animation_.setEndValue(qreal(target));animation_.start();}
+ update();
+}
+void Ui::GraspFlow::setActive(bool active){active_=active;update();}
+void Ui::GraspFlow::paintEvent(QPaintEvent *){
+ static const QStringList labels={"识别","接近","对齐","夹取","搬运","释放","返回"};
+ QPainter p(this);p.setRenderHint(QPainter::Antialiasing);
+ QRectF panel=rect().adjusted(0,0,-1,-1);p.setPen(QPen(QColor("#E2E8F0"),1));p.setBrush(QColor("#FBFDFF"));p.drawRoundedRect(panel,8,8);
+ const qreal left=22.,right=width()-22.,y=25.,step=(right-left)/(labels.size()-1);
+ QLinearGradient track(left,0,right,0);track.setColorAt(0,QColor("#8FB8FF"));track.setColorAt(1,QColor("#1769FF"));
+ p.setPen(QPen(QColor("#E6ECF4"),3));p.drawLine(QPointF(left,y),QPointF(right,y));
+ if(displayPos_>0){QPointF end(left+step*displayPos_,y);p.setPen(QPen(QBrush(track),3));p.drawLine(QPointF(left,y),end);}
+ int activeIndex=qRound(displayPos_);QString activeStage=stage_;bool failed=activeStage=="error";
+ for(int i=0;i<labels.size();++i){
+  QPointF center(left+step*i,y);bool done=i<activeIndex;bool current=i==activeIndex;
+  QColor color=done?QColor("#1769FF"):current?(failed?QColor("#D64545"):QColor("#1769FF")):QColor("#D7E0EC");
+  if(current&&active_&&!failed){p.setPen(QPen(QColor(23,105,255,45),7+4*pulse_));p.setBrush(Qt::NoBrush);p.drawEllipse(center,10+pulse_*2,10+pulse_*2);}
+  p.setPen(Qt::NoPen);p.setBrush(color);p.drawEllipse(center,done||current?8.:6.,done||current?8.:6.);
+  if(done){p.setPen(QPen(Qt::white,2,Qt::SolidLine,Qt::RoundCap));p.drawLine(center+QPointF(-3,0),center+QPointF(-.5,2.5));p.drawLine(center+QPointF(-.5,2.5),center+QPointF(3.5,-3));}
+  p.setPen(current?QColor("#0F4FC4"):done?QColor("#365A91"):QColor("#8A99AD"));
+  QFont f=font();f.setBold(current);
+  if(f.pointSizeF()>0)f.setPointSizeF(std::max(8.,f.pointSizeF()*.93));
+  else f.setPixelSize(std::max(10,int((f.pixelSize()>0?f.pixelSize():14)*.93)));
+  p.setFont(f);p.drawText(QRectF(center.x()-38,y+12,76,26),Qt::AlignHCenter|Qt::AlignTop,labels[i]);
+ }
+ QFont f=font();if(f.pointSizeF()>0)f.setPointSizeF(std::max(8.,f.pointSizeF()*.88));else f.setPixelSize(std::max(10,int((f.pixelSize()>0?f.pixelSize():14)*.88)));
+ p.setFont(f);p.setPen(QColor("#66768C"));p.drawText(QRectF(18,4,width()-36,18),Qt::AlignRight|Qt::AlignVCenter,detail_);
+}
+
 void Ui::collapsible(QFrame *card){
  auto *layout=static_cast<QVBoxLayout *>(card->layout());if(!layout->count()||!layout->itemAt(0)->layout())return;
  auto *header=static_cast<QHBoxLayout *>(layout->itemAt(0)->layout());auto *toggle=new QToolButton;toggle->setArrowType(Qt::UpArrow);toggle->setCheckable(true);toggle->setChecked(true);toggle->setToolTip("展开 / 收起");header->addWidget(toggle);
@@ -120,4 +160,13 @@ void Ui::scaleNativeUi(QWidget *root){
   for(int i=0;i<layout->count();++i)if(auto *spacer=layout->itemAt(i)->spacerItem()){auto size=spacer->sizeHint();spacer->changeSize(px(size.width()),px(size.height()),spacer->sizePolicy().horizontalPolicy(),spacer->sizePolicy().verticalPolicy());}
  }
  root->resize(root->size()*scale);
+}
+void Ui::fadeIn(QWidget *widget,int duration){
+ if(!widget)return;
+ auto *effect=new QGraphicsOpacityEffect(widget);widget->setGraphicsEffect(effect);
+ auto *animation=new QPropertyAnimation(effect,"opacity",widget);
+ animation->setDuration(duration);animation->setEasingCurve(QEasingCurve::OutCubic);
+ animation->setStartValue(.38);animation->setEndValue(1.);
+ animation->start(QAbstractAnimation::DeleteWhenStopped);
+ QObject::connect(animation,&QPropertyAnimation::finished,widget,[widget]{widget->setGraphicsEffect(nullptr);});
 }
