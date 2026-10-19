@@ -20,7 +20,7 @@ private:
  void startCalibration(QString mode={},QPushButton *button=nullptr);void sendCalibration(QString action,QPushButton *button=nullptr);void refreshParameters();void runTask(bool continuous);void selectTarget(QString cameraId,int trackId);
  void logRow(QJsonObject);void indexLogRow(const QJsonObject &);void rebuildLogIndex();void filterLogs();void showFile(QString path);QString camera()const;
  QString request(QPushButton *button,QString op,QJsonObject args={},std::function<void(QJsonValue)> reply={},QString pendingText={},QString successText={},bool keepDisabledOnSuccess=false);
- void finishRequest(QString id,bool ok);void updateTaskButtons();void updateCaptureButtons();void updateCalibrationButtons();
+ void finishRequest(QString id,bool ok);void updateTaskButtons();void updateCaptureButtons();void updateCalibrationButtons();void applyCaptureResult(const QJsonObject &data,bool notify);
  BackendClient *backend_;RosViewBridge *bridge_;MotionController *motion_;RvizPanel *rviz_;
  QStackedWidget *pages_;QListWidget *nav_;QTabWidget *debugTabs_;QWidget *mainHost_,*motionHost_;QLabel *toast_,*health_,*jointFeedback_,*beltSpeedLabel_,*taskState_,*motionState_,*connectionState_,*calibrationState_,*captureState_;
  Ui::GraspFlow *graspFlow_=nullptr;QString graspStage_="waiting";

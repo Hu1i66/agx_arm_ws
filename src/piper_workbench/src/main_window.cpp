@@ -109,6 +109,29 @@ void MainWindow::updateCaptureButtons(){
  if(captureOnceButton_&&!captureOnceButton_->property("requestPending").toBool())captureOnceButton_->setEnabled(!captureRunning_);
  captureStartButton_->setText(captureRunning_?"采集中":"开始采集");
 }
+void MainWindow::applyCaptureResult(const QJsonObject &data,bool notify){
+ QString state=data["state"].toString();auto errors=data["errors"].toObject();
+ if(state=="error"||!errors.isEmpty()){
+  QStringList details;
+  for(auto it=errors.begin();it!=errors.end();++it){
+   QString name=it.key()=="d455"?"D455":it.key()=="dabai"?"Dabai":it.key();
+   details<<name+"："+it.value().toString();
+  }
+  QString reason=details.isEmpty()?"相机未返回新的原始图像":details.join("；");
+  captureState_->setStyleSheet("color:#B4232D;");
+  captureState_->setText("本次未保存 · 采集失败\n"+reason+"\n最近采集列表保持不变");
+  if(notify)showError(reason);
+  return;
+ }
+ captureState_->setStyleSheet("color:#10865D;");
+ int saved=data["saved_count"].toInt(),total=data.value("count").toInt();
+ captureState_->setText(QString("本次保存 %1 张 · 会话累计 %2 张\n%3").arg(saved).arg(total).arg(data["directory"].toString()));
+ captureImages_->clear();
+ for(auto row:data["images"].toArray()){
+  auto image=row.toObject();auto *item=new QListWidgetItem(image["camera"].toString()+"  "+image["path"].toString(),captureImages_);
+  item->setIcon(QIcon(data["directory"].toString()+"/"+image["path"].toString()));
+ }
+}
 void MainWindow::updateCalibrationButtons(){
  if(calibrationStartButton_&&!calibrationStartButton_->property("requestPending").toBool())calibrationStartButton_->setEnabled(!calibrationRunning_);
  for(auto *button:calibrationLaunchButtons_)
@@ -182,8 +205,7 @@ void MainWindow::receive(QString event,QJsonValue value){
  }
  else if(event=="capture.progress"){
   if(data.contains("error")){showError(data["error"].toString());captureState_->setText("采集未完成："+data["error"].toString());return;}
-  captureState_->setText(QString("已保存 %1 张\n%2\n%3").arg(data["count"].toInt()).arg(data["directory"].toString(),QJsonDocument(data["errors"].toObject()).toJson(QJsonDocument::Compact)));
-  captureImages_->clear();for(auto row:data["images"].toArray()){auto image=row.toObject();auto *item=new QListWidgetItem(image["camera"].toString()+"  "+image["path"].toString(),captureImages_);item->setIcon(QIcon(data["directory"].toString()+"/"+image["path"].toString()));}
+  applyCaptureResult(data,true);
  }
  else if(event=="task.status"&&data.contains("result")&&graspFlow_){
   auto result=data["result"].toObject();bool ok=result["ok"].toBool()||result["cycle_success"].toInt()>0;

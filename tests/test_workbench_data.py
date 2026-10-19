@@ -21,13 +21,48 @@ def test_placement_snapshot_mapping_and_waypoints(tmp_path):
 def test_capture_fresh_pixels_and_export(tmp_path):
     cap=Capture(tmp_path); pixels=np.full((3,4,3),27,np.uint8)
     cap.update('d455',pixels,1.); cap.update('dabai',pixels,2.)
-    cap.once(['d455','dabai']); assert cap.count==2
+    result=cap.once(['d455','dabai']); assert cap.count==2 and result['state']=='saved'
+    manifest=json.loads((cap.session/'session.json').read_text())
+    assert manifest['state']=='saved' and manifest['requested_cameras']==['d455','dabai']
+    assert manifest['saved_cameras']==['d455','dabai'] and not manifest['errors']
     cap.once(['d455','dabai']); assert cap.count==2 # no duplicate old frame
     cap.stop();cap.update('d455',pixels,3.);assert cap.count==2
     path=cap.export(); z=zipfile.ZipFile(path)
     assert len([x for x in z.namelist() if x.endswith('.png')])==2
     import cv2
     assert (cv2.imread(str(next(cap.session.rglob('*.png'))))==27).all()
+
+def test_dual_capture_timeout_never_saves_one_camera_only(tmp_path):
+    import threading,time
+    cap=Capture(tmp_path);pixels=np.zeros((2,2,3),np.uint8);cap.update('dabai',pixels,1.)
+    result=[];thread=threading.Thread(target=lambda:result.append(cap.next_frame(['d455','dabai'],timeout=.3)))
+    thread.start();time.sleep(.03);cap.update('dabai',pixels+1,2.);thread.join(1)
+    assert result[0]['state']=='error' and result[0]['saved_count']==0 and cap.count==0
+    assert 'd455' in result[0]['errors'] and 'dabai' not in result[0]['errors']
+    assert not list(cap.session.rglob('*.png'))
+    manifest=json.loads((cap.session/'session.json').read_text())
+    assert manifest['state']=='error' and manifest['requested_cameras']==['d455','dabai']
+    assert manifest['saved_cameras']==[] and 'd455' in manifest['errors']
+
+def test_single_capture_missing_frame_is_explicit_failure(tmp_path):
+    cap=Capture(tmp_path);result=cap.once(['d455'])
+    assert result['state']=='error' and result['saved_count']==0 and result['errors']['d455']
+    manifest=json.loads((cap.session/'session.json').read_text())
+    assert manifest['state']=='error' and manifest['requested_cameras']==['d455']
+    assert not list(cap.session.rglob('*.png'))
+
+def test_timed_dual_capture_skips_attempts_when_one_camera_is_stale(tmp_path):
+    import time
+    cap=Capture(tmp_path);pixels=np.zeros((2,2,3),np.uint8);cap.update('dabai',pixels,1.)
+    cap.start(['d455','dabai'],interval=.08)
+    try:
+        for stamp in range(2,6):
+            time.sleep(.03);cap.update('dabai',pixels+stamp,stamp)
+    finally:
+        cap.stop()
+    assert cap.count==0 and not list(cap.session.rglob('*.png'))
+    manifest=json.loads((cap.session/'session.json').read_text())
+    assert manifest['state']=='error' and manifest['requested_cameras']==['d455','dabai']
 
 def test_warning_current_instance_only_and_log_export(tmp_path):
     notice=ReconnectNotice();notice.set_instance('new',10.)

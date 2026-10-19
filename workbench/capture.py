@@ -15,32 +15,60 @@ class Capture:
     def _session(self):
         if self.session is None:
             self.session=self.root/(datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')+'_'+uuid.uuid4().hex[:6]);self.session.mkdir(parents=True)
+    def _publish_attempt(self,requested,saved,errors,state):
+        self._session()
+        capture_info=dict(state=state,requested_cameras=requested,saved_cameras=saved,errors=errors,
+            saved_count=len(saved),total_images=len(self.records),timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat())
+        atomic_json(self.session/'session.json',dict(kind='raw_rgb_dataset',**capture_info,images=self.records))
+        return dict(capture_info,count=self.count,directory=str(self.session),images=self.records[-12:])
     def once(self,cameras,emit=True):
+        requested=list(dict.fromkeys(cameras))
+        if not requested:raise ValueError('请选择至少一台相机')
         with self.lock:
             self._session();errors={}
-            for camera in cameras:
+            for camera in requested:
                 frame=self.frames.get(camera)
-                if frame is None or self.used.get(camera)==frame[1]:errors[camera]='等待新的原始图像';continue
-                pixels,stamp=frame;folder=self.session/camera;folder.mkdir(exist_ok=True)
-                target=folder/f'{self.count+1:06d}_{stamp:.9f}.png'
-                if not cv2.imwrite(str(target),pixels):raise OSError('PNG 写入失败: '+str(target))
-                self.used[camera]=stamp;self.count+=1
-                self.records.append(dict(camera=camera,stamp_s=stamp,path=str(target.relative_to(self.session)),width=pixels.shape[1],height=pixels.shape[0],configuration=self.metadata()))
-            atomic_json(self.session/'session.json',dict(kind='raw_rgb_dataset',images=self.records))
-            result=dict(count=self.count,directory=str(self.session),errors=errors,images=self.records[-12:])
+                if frame is None:errors[camera]='尚未收到原始图像'
+                elif self.used.get(camera)==frame[1]:errors[camera]='等待新的原始图像'
+            if errors:
+                result=self._publish_attempt(requested,[],errors,'error')
+            else:
+                pending=[];baseline=self.count;configuration=self.metadata()
+                try:
+                    for offset,camera in enumerate(requested,1):
+                        pixels,stamp=self.frames[camera];folder=self.session/camera;folder.mkdir(exist_ok=True)
+                        target=folder/f'{baseline+offset:06d}_{stamp:.9f}.png'
+                        if not cv2.imwrite(str(target),pixels):
+                            try:target.unlink()
+                            except FileNotFoundError:pass
+                            raise OSError('PNG 写入失败: '+str(target))
+                        pending.append((camera,stamp,pixels,target))
+                except Exception:
+                    for _,_,_,target in pending:
+                        try:target.unlink()
+                        except FileNotFoundError:pass
+                    raise
+                for camera,stamp,pixels,target in pending:
+                    self.used[camera]=stamp;self.count+=1
+                    self.records.append(dict(camera=camera,stamp_s=stamp,path=str(target.relative_to(self.session)),width=pixels.shape[1],height=pixels.shape[0],configuration=configuration))
+                result=self._publish_attempt(requested,requested,{},'saved')
             if emit:self.emit('capture.progress',result)
             return result
     def next_frame(self,cameras,timeout=2.):
-        if not cameras:raise ValueError('请选择至少一台相机')
+        requested=list(dict.fromkeys(cameras))
+        if not requested:raise ValueError('请选择至少一台相机')
         with self.condition:
-            baseline={c:self.frames.get(c,(None,None))[1] for c in cameras};generation=self.generation;deadline=time.monotonic()+timeout
+            baseline={c:self.frames.get(c,(None,None))[1] for c in requested};generation=self.generation;deadline=time.monotonic()+timeout
             while generation==self.generation and time.monotonic()<deadline:
-                if all(c in self.frames and self.frames[c][1]!=baseline[c] for c in cameras):break
+                if all(c in self.frames and self.frames[c][1]!=baseline[c] for c in requested):break
                 self.condition.wait(max(0.,deadline-time.monotonic()))
             if generation!=self.generation:return {'state':'cancelled','count':self.count}
-            fresh=[c for c in cameras if c in self.frames and self.frames[c][1]!=baseline[c]]
-            result=self.once(fresh,emit=False)
-            result['errors'].update({c:'等待下一张原始图像' for c in cameras if c not in fresh})
+            fresh=[c for c in requested if c in self.frames and self.frames[c][1]!=baseline[c]]
+            if len(fresh)!=len(requested):
+                missing={c:'超时未收到新画面' for c in requested if c not in fresh}
+                result=self._publish_attempt(requested,[],missing,'error')
+            else:
+                result=self.once(requested,emit=False)
             self.emit('capture.progress',result)
             return result
 
