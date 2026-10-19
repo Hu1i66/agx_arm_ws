@@ -415,7 +415,10 @@ class TabletGateway:
             return _json_error(404, "未知相机")
         token = issue_media_token(self.paths, device["id"], camera, ttl=60)
         url = f"{self.media_url}/mjpeg/{camera}?" + "&".join(f"{key}={quote(str(value))}" for key, value in token.items())
-        upstream = await self.http.get(url)
+        try:
+            upstream = await self.http.get(url)
+        except Exception as exc:
+            return _json_error(503, "媒体服务不可用: " + str(exc))
         if upstream.status != 200:
             text = await upstream.text()
             upstream.close()
@@ -485,9 +488,12 @@ class TabletGateway:
         camera = request.match_info["camera"]
         token = issue_media_token(self.paths, device["id"], camera, ttl=60)
         url = f"{self.media_url}/snapshot/{camera}?" + "&".join(f"{key}={quote(str(value))}" for key, value in token.items())
-        async with self.http.get(url) as upstream:
-            data = await upstream.read()
-            return web.Response(status=upstream.status, body=data, content_type="image/jpeg", headers={"Cache-Control": "no-store"})
+        try:
+            async with self.http.get(url) as upstream:
+                data = await upstream.read()
+                return web.Response(status=upstream.status, body=data, content_type="image/jpeg", headers={"Cache-Control": "no-store"})
+        except Exception as exc:
+            return _json_error(503, "媒体服务不可用: " + str(exc))
 
     async def media_whep(self, request):
         device = self._require_device(request)
@@ -497,19 +503,25 @@ class TabletGateway:
         token = issue_media_token(self.paths, device["id"], camera, ttl=60)
         url = f"{self.media_url}/whep/{camera}?" + "&".join(f"{key}={quote(str(value))}" for key, value in token.items())
         offer = await request.text()
-        async with self.http.post(url, data=offer, headers={"Content-Type": "application/sdp"}) as upstream:
-            body = await upstream.read()
-            if upstream.status == 200:
-                self.state.event("webrtc.started", {"device_id": device["id"], "camera": camera})
-            else:
-                self.state.event("webrtc.failed", {"device_id": device["id"], "camera": camera, "status": upstream.status})
-            return web.Response(status=upstream.status, body=body, content_type=upstream.content_type)
+        try:
+            async with self.http.post(url, data=offer, headers={"Content-Type": "application/sdp"}) as upstream:
+                body = await upstream.read()
+                if upstream.status == 200:
+                    self.state.event("webrtc.started", {"device_id": device["id"], "camera": camera})
+                else:
+                    self.state.event("webrtc.failed", {"device_id": device["id"], "camera": camera, "status": upstream.status})
+                return web.Response(status=upstream.status, body=body, content_type=upstream.content_type)
+        except Exception as exc:
+            return _json_error(503, "媒体服务不可用: " + str(exc))
 
     async def media_whep_delete(self, request):
         self._require_device(request)
         session_id = request.match_info["session"]
-        async with self.http.delete(self.media_url + "/whep/" + quote(session_id)) as upstream:
-            return web.json_response(await upstream.json(), status=upstream.status)
+        try:
+            async with self.http.delete(self.media_url + "/whep/" + quote(session_id)) as upstream:
+                return web.json_response(await upstream.json(), status=upstream.status)
+        except Exception as exc:
+            return _json_error(503, "媒体服务不可用: " + str(exc))
 
     def _pair_payload(self, pair):
         hostname = self.config.get("gateway", {}).get("hostname", "piper.local")
@@ -621,8 +633,11 @@ class TabletGateway:
     async def admin_keyframe(self, request):
         self._require_admin(request)
         camera = request.query.get("camera", "")
-        async with self.http.post(self.media_url + "/keyframe/" + quote(camera)) as upstream:
-            return web.json_response(await upstream.json(), status=upstream.status)
+        try:
+            async with self.http.post(self.media_url + "/keyframe/" + quote(camera)) as upstream:
+                return web.json_response(await upstream.json(), status=upstream.status)
+        except Exception as exc:
+            return _json_error(503, "媒体服务不可用: " + str(exc))
 
     async def static_file(self, request):
         dist = self.paths.root / self.config.get("gateway", {}).get("pwa_dist", "tablet_hmi/dist")
