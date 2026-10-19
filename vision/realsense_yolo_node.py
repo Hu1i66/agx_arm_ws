@@ -37,7 +37,9 @@ _D455_HANDEYE = _rc.load_handeye("d455")
 from camera_geometry import CameraGeometry, image_qos, fresh_image
 from runtime_geometry import object_centroid_from_rgbd, short_axis_tool_rotation
 from vision.tracker import (ClassVoteStabilizer, Detection, PointKalmanCV,
-                            ScalarKalmanCV, deduplicate_detections, iou_xyxy)
+                            ScalarKalmanCV, deduplicate_detections,
+                            expand_detection, iou_xyxy, merge_fragment_detections,
+                            nearest_cross_camera_match, refine_bbox_grabcut)
 
 
 class ObjectTrack:
@@ -48,6 +50,8 @@ class ObjectTrack:
         self.class_name = class_name
         self.class_votes = ClassVoteStabilizer(class_name)
         self.stable_class = class_name
+        self.cross_class = None
+        self.cross_class_until = 0.
         self.alpha = alpha
         self.last_center_u = obs['center_u']
         self.last_center_v = obs['center_v']
@@ -72,6 +76,8 @@ class ObjectTrack:
         a = alpha if alpha is not None else self.alpha
         self.class_name = class_name
         self.stable_class = self.class_votes.update(class_name)
+        if self.cross_class and time.monotonic() < self.cross_class_until:
+            self.stable_class = self.cross_class
         center_u = self.kf_u.update(obs['center_u'], dt)
         center_v = self.kf_v.update(obs['center_v'], dt)
         width = a * (float(obs['x2']) - float(obs['x1'])) + (1 - a) * (self.s_x2 - self.s_x1)
@@ -233,6 +239,13 @@ class CameraState:
         self.rgb_ready = False
         self.last_processed_stamp = None  # 避免同一帧重复推理
         self.min_track_hits = 2
+        self.preprocess_clahe = False
+        self.clahe_clip_limit = 2.
+        self.inference_size = 640
+        self.tta = False
+        self.bbox_expand_ratio = 0.
+        self.merge_fragments = False
+        self.refine_bbox = False
 
         # ── 滤波 (EMA + 帧间匹配) ──
         self.tracks = {}                  # {track_id: ObjectTrack}
@@ -344,6 +357,8 @@ class ObjectDetector(Node):
             name: self._build_camera(name, defaults)
             for name, defaults in CAMERA_DEFAULTS.items()
         }
+        self._d455_fusion_objects = []
+        self._d455_fusion_stamp = 0.
         for cam in self.cameras.values():
             self._log_camera_config(cam)
 
@@ -537,6 +552,13 @@ class ObjectDetector(Node):
         cam.last_detect_at = -100.
         cam.yolo_agnostic_nms = bool(p("yolo_agnostic_nms", True))
         cam.min_track_hits = int(p("min_track_hits", 2))
+        cam.preprocess_clahe = bool(p("preprocess_clahe", False))
+        cam.clahe_clip_limit = float(p("clahe_clip_limit", 2.))
+        cam.inference_size = int(p("inference_size", 640))
+        cam.tta = bool(p("tta", False))
+        cam.bbox_expand_ratio = float(p("bbox_expand_ratio", 0.))
+        cam.merge_fragments = bool(p("merge_fragments", False))
+        cam.refine_bbox = bool(p("refine_bbox", False))
         cam.use_depth_camera = bool(p("use_depth_camera", d["use_depth_camera"]))
         cam.rgb_topic = str(p("rgb_topic", d["rgb_topic"]))
         cam.depth_topic = str(p("depth_topic", d["depth_topic"]))
@@ -1358,9 +1380,19 @@ class ObjectDetector(Node):
             return
         try:
             # YOLO 检测
-            results = self.model(rgb, conf=cam.yolo_conf, iou=cam.yolo_iou,
+            inference_rgb = rgb
+            if cam.preprocess_clahe:
+                lab = cv2.cvtColor(inference_rgb, cv2.COLOR_BGR2LAB)
+                light, a_channel, b_channel = cv2.split(lab)
+                light = cv2.createCLAHE(clipLimit=cam.clahe_clip_limit,
+                                        tileGridSize=(8, 8)).apply(light)
+                inference_rgb = cv2.cvtColor(
+                    cv2.merge((light, a_channel, b_channel)), cv2.COLOR_LAB2BGR)
+            results = self.model(inference_rgb, conf=cam.yolo_conf, iou=cam.yolo_iou,
                                  device=self.yolo_device,
-                                 agnostic_nms=cam.yolo_agnostic_nms, verbose=False)
+                                 agnostic_nms=cam.yolo_agnostic_nms,
+                                 imgsz=cam.inference_size, augment=cam.tta,
+                                 verbose=False)
             
             # ==================== 多目标检测 ====================
             # 遍历 YOLO 输出的所有检测框, 每个都: 绘制标注 + 坐标变换 + 收集到 objects 列表。
@@ -1375,6 +1407,15 @@ class ObjectDetector(Node):
                     float(box.conf[0].cpu().numpy()),
                     int(box.cls[0].cpu().numpy())))
             boxes_sorted = deduplicate_detections(detections)
+            if cam.merge_fragments:
+                boxes_sorted = merge_fragment_detections(boxes_sorted)
+            if cam.bbox_expand_ratio > 0:
+                boxes_sorted = [expand_detection(d, cam.bbox_expand_ratio, rgb.shape[1], rgb.shape[0])
+                                for d in boxes_sorted]
+            if cam.refine_bbox:
+                boxes_sorted = [
+                    Detection(*refine_bbox_grabcut(rgb, d.bbox), d.confidence, d.class_id)
+                    for d in boxes_sorted]
             if boxes_sorted:
                 cam.detection_count += 1
 
@@ -1499,6 +1540,22 @@ class ObjectDetector(Node):
                 ee_coords = track.s_ee
                 base_coords = track.s_base
 
+                cross_source = None
+                if cam.name == "dabai" and base_coords is not None and time.monotonic() - self._d455_fusion_stamp < .5:
+                    hint = nearest_cross_camera_match(
+                        base_coords, self._d455_fusion_objects, max_distance=.07)
+                    if hint:
+                        track.cross_class = hint.get("object_name")
+                        track.cross_class_until = time.monotonic() + 1.2
+                        track.stable_class = track.cross_class
+                        published_class = track.stable_class
+                        published_cls_id = next(
+                            (cid for cid, name in self.model.names.items() if name == published_class),
+                            cls_id)
+                        real_width, real_height = self._get_class_dimensions(published_class)
+                        volume = self.estimate_object_volume(real_width, real_height, shape="sphere")
+                        cross_source = "d455_fusion"
+
                 # 距离 (用滤波后的基座坐标重算)
                 distance_to_robot = None
                 if base_coords is not None and robot_position is not None:
@@ -1529,6 +1586,7 @@ class ObjectDetector(Node):
                         "object_name": published_class,
                         "raw_object_name": class_name,
                         "class_stability": round(track.class_votes.stability, 3),
+                        "class_source": cross_source or "camera",
                         "confidence": round(track.confidence, 4),
                         "raw_confidence": round(conf, 4),
                         "class_id": published_cls_id,
@@ -1574,6 +1632,7 @@ class ObjectDetector(Node):
                     "object_name": published_class,
                     "raw_object_name": class_name,
                     "class_stability": round(track.class_votes.stability, 3),
+                    "class_source": cross_source or "camera",
                     "confidence": round(track.confidence, 4),
                     "raw_confidence": round(conf, 4),
                     "class_id": published_cls_id,
@@ -1647,6 +1706,9 @@ class ObjectDetector(Node):
                     coord_msg.data = coord_data
                     cam.pub_object_pose.publish(coord_msg)
 
+            if cam.name == "d455":
+                self._d455_fusion_objects = objects_list
+                self._d455_fusion_stamp = time.monotonic()
             self.publish_object_markers(cam, objects_list)
 
             # 循环结束: 清理过期 track + 未匹配 track miss_count++

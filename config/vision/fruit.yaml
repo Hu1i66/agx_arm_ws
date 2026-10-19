@@ -31,4 +31,11 @@ object_detector:
     dabai.yolo_conf: 0.16
     dabai.yolo_iou: 0.45
     dabai.yolo_agnostic_nms: true
-    dabai.min_track_hits: 2
+    dabai.min_track_hits: 3
+    dabai.preprocess_clahe: true
+    dabai.clahe_clip_limit: 2.0
+    dabai.inference_size: 960
+    dabai.tta: true
+    dabai.bbox_expand_ratio: 0.08
+    dabai.merge_fragments: true
+    dabai.refine_bbox: true

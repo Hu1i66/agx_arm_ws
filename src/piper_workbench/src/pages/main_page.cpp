@@ -52,7 +52,7 @@ void MainWindow::updateTargets(){
   if(targets_->item(r,0)->data(Qt::UserRole).toInt()!=track){targets_->item(r,0)->setData(Qt::UserRole,track);targets_->item(r,0)->setToolTip(name+" · "+session);}
   if(targets_->item(r,0)->text()!=label)targets_->item(r,0)->setText(label);
   QString confidence=QString::number(o["confidence"].toDouble(),'f',2);if(targets_->item(r,1)->text()!=confidence)targets_->item(r,1)->setText(confidence);
-  QString source=camera()=="d455"?"D455":"Dabai";if(targets_->item(r,2)->text()!=source)targets_->item(r,2)->setText(source);
+  QString source=camera()=="d455"?"D455":(o["class_source"].toString()=="d455_fusion"?"Dabai · D455 校验":"Dabai");if(targets_->item(r,2)->text()!=source)targets_->item(r,2)->setText(source);
   if(track==selectedTrack_){selectedFound=true;if(targets_->currentRow()!=r)targets_->selectRow(r);}
  }
  if(!selectedFound&&targets_->currentRow()>=0){targets_->clearSelection();targets_->setCurrentCell(-1,-1);}
