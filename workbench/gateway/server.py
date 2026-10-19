@@ -21,7 +21,7 @@ from ..tablet_shared import (
 from .service_client import ServiceClient
 from .state import GatewayState
 
-VERSION = "0.3.1"
+VERSION = "0.3.2"
 COOKIE = "piper_device"
 ALLOWED_ACTIONS = {
     "status.get", "motion.start", "motion.pause_after_cycle", "motion.send",

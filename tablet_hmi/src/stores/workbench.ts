@@ -148,7 +148,7 @@ export const useWorkbench = defineStore("workbench", () => {
           page: location.hash || "#/grab",
           reconnect_reason: error.value,
           ws_rtt_ms: socketLatency.value,
-          app_version: "0.3.1",
+          app_version: "0.3.2",
         }));
       }, 5000);
       window.clearInterval(leaseTimer);

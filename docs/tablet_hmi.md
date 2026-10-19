@@ -1,6 +1,6 @@
 # Piper 平板上位机
 
-版本：`0.3.1`
+版本：`0.3.2`
 
 目标：iPad Safari 优先，兼容 Android Chrome，实验室同一局域网使用。
 
@@ -165,7 +165,7 @@ tablet_hmi/public/models/
 
 网关通过 `tablet.telemetry` 以约 15 Hz 读取 TF，平板对位置做 lerp、对四元数做 slerp。模型不可用时自动退回真实 FK 骨架，而不是隐藏机械臂状态。
 
-Assimp 导出的 GLB 同时带场景根节点和网格节点的 Z-up→Y-up 转换。Three.js 端显式抵消这层重复旋转，再把 TF 位姿转换到 Three.js 坐标；否则各连杆会被二次旋转成散开状态。
+Assimp 导出的 GLB 同时带场景根节点和网格节点的 Z-up→Y-up 转换。Three.js 端对这层重复旋转保留一次净 −90° 轴变换，再把 TF 位姿转换到 Three.js 坐标；如果按普通“抵消两次旋转”处理，各连杆会散开。该组合已通过相邻连杆最近点距离验证。
 
 ## 服务重启与断线
 

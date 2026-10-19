@@ -71,7 +71,7 @@ class TabletManager:
             "media_process": self._process("tablet-media"),
             "gateway": None,
             "error": None,
-            "version": "0.3.1",
+            "version": "0.3.2",
             "pwa": {"version": package_version, "cache_version": cache_version, "built_at": built_at},
         }
         try:

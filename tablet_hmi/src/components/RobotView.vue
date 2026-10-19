@@ -83,8 +83,9 @@ async function loadModel() {
         const gltf = await loader.loadAsync(meta.url);
         const object = gltf.scene;
         // Assimp writes one Z-up conversion on the scene and one on each mesh.
-        // Cancel that double rotation so the mesh stays in the URDF link frame.
-        object.rotation.x += Math.PI;
+        // Leave one net -90° conversion: that is the axis convention used by the
+        // URDF joint chain after the server-side TF is mapped into Three.js.
+        object.rotation.x += Math.PI / 2;
         object.traverse((child) => {
           if (child instanceof THREE.Mesh) {
             child.castShadow = false;
