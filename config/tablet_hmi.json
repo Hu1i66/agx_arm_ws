@@ -14,7 +14,7 @@
     "jpeg_fps": 6,
     "jpeg_quality": 72,
     "webrtc_fps": 15,
-    "h264_encoder": "nvenc",
+    "h264_encoder": "libx264",
     "inactive_after_s": 2.0
   },
   "pairing": {

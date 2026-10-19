@@ -1,4 +1,4 @@
-const CACHE = "piper-tablet-v0.3.1";
+const CACHE = "piper-tablet-v0.3.2";
 const CORE = ["/", "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png"];
 
 self.addEventListener("install", (event) => {

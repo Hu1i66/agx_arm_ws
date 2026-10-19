@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import collections
+import faulthandler
 from fractions import Fraction
 import fractions
 import threading
@@ -491,6 +492,7 @@ async def serve(config=None):
 
 
 def main(argv=None):
+    faulthandler.enable()
     parser = argparse.ArgumentParser(description="Piper tablet media service")
     parser.parse_args(argv)
     try:

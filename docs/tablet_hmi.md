@@ -1,6 +1,7 @@
 # Piper 平板上位机
 
-版本：`0.3.0`  
+版本：`0.3.1`
+
 目标：iPad Safari 优先，兼容 Android Chrome，实验室同一局域网使用。
 
 需求基线见 [tablet_hmi_design_v0.3.md](tablet_hmi_design_v0.3.md)。
@@ -16,6 +17,8 @@
 | 平板媒体 | `.venv_tablet/bin/python -m workbench.media` | ROS 图像订阅、WebRTC H.264、MJPEG/JPEG 降级 |
 
 网关和媒体服务分别登记到现有 `runtime_launcher`，可在电脑工作台“调试 → 平板上位机”中单独启停和重启。任一服务退出不会停止 T1、T5、相机或电脑工作台。
+
+媒体进程由轻量 supervisor 管理。编码器发生原生退出时，supervisor 会按 1～10 秒退避重新创建媒体 worker，并继续向网关提供在线状态；停止媒体服务时会同时结束 supervisor 与 worker。
 
 ## 安装与启动
 
@@ -140,7 +143,9 @@ tablet.stream.keyframe
 - `/camera/camera/color/image_raw`
 - `/dabai/color/image_raw`
 
-WebRTC 使用 aiortc 发送 H.264，默认优先 NVENC，编码器不可用时回退 libx264；默认 15 fps，两路最高目标合计约 3～5 Mbps。JPEG 主循环默认 6 fps，质量 72，通过同源 WebSocket 发送；WebSocket 也不可用时退回 MJPEG。每路只保留最新帧，不建立历史队列。
+WebRTC 使用 aiortc 发送 H.264，默认 15 fps，两路最高目标合计约 3～5 Mbps。当前默认使用 libx264；在 iPad Safari 双流实测中 NVENC 路径曾触发 `libnvcuvid.so` 原生崩溃，因此不再默认启用。`config/tablet_hmi.json` 可将 `media.h264_encoder` 切换为 `nvenc` 做独立验证。JPEG 主循环默认 6 fps，质量 72，通过同源 WebSocket 发送；WebSocket 也不可用时退回 MJPEG。每路只保留最新帧，不建立历史队列。
+
+在平板地址后加 `?transport=jpeg` 可直接验证低带宽 JPEG 模式，例如 `https://10.217.81.33:8443/?transport=jpeg#/grab`。
 
 WebRTC 信令通过网关同源转发，媒体 HTTP 端口只绑定回环地址。短时媒体令牌默认 60 秒，绑定设备与相机。检测框由平板 Canvas 叠加，不烧录进视频。
 
@@ -159,6 +164,8 @@ tablet_hmi/public/models/
 ```
 
 网关通过 `tablet.telemetry` 以约 15 Hz 读取 TF，平板对位置做 lerp、对四元数做 slerp。模型不可用时自动退回真实 FK 骨架，而不是隐藏机械臂状态。
+
+Assimp 导出的 GLB 同时带场景根节点和网格节点的 Z-up→Y-up 转换。Three.js 端显式抵消这层重复旋转，再把 TF 位姿转换到 Three.js 坐标；否则各连杆会被二次旋转成散开状态。
 
 ## 服务重启与断线
 

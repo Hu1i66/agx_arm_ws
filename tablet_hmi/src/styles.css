@@ -335,7 +335,8 @@ h1, h2, h3, p { margin: 0; }
   height: 100%;
   object-fit: fill;
 }
-.camera-viewport video { background: #e9eef5; }
+.camera-viewport video { z-index: 1; background: transparent; }
+.camera-viewport img { z-index: 2; }
 .camera-viewport canvas { z-index: 3; }
 .camera-waiting { position: absolute; inset: 0; z-index: 2; display: grid; place-content: center; justify-items: center; gap: 12px; color: var(--muted); background: #eef2f7; }
 .camera-waiting p { font-size: 11px; }

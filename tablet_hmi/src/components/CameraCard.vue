@@ -12,6 +12,7 @@ const wrapper = ref<HTMLElement | null>(null);
 const mode = ref<"connecting" | "webrtc" | "jpeg" | "paused">("connecting");
 const fallbackUrl = ref("");
 const jpegFrame = ref("");
+const jpegReloadKey = ref(0);
 const streamError = ref("");
 let pc: RTCPeerConnection | null = null;
 let sessionId = "";
@@ -24,6 +25,9 @@ let lastVideoTime = 0;
 let lastVideoAdvance = 0;
 let jpegSocket: WebSocket | null = null;
 let jpegFrameUrl = "";
+let jpegRetryTimer = 0;
+let jpegWatchdog = 0;
+let lastJpegAt = 0;
 
 const label = computed(() => props.camera === "d455" ? "D455" : "Dabai");
 const subtitle = computed(() => props.camera === "d455" ? "固定相机" : "腕载相机");
@@ -90,34 +94,54 @@ function fallbackToJpeg(message: string) {
 
 function startJpegSocket() {
   if (disposed || jpegSocket?.readyState === WebSocket.OPEN || jpegSocket?.readyState === WebSocket.CONNECTING) return;
-  jpegSocket = new WebSocket(`${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/ws/v1/jpeg/${props.camera}`);
-  jpegSocket.binaryType = "blob";
-  jpegSocket.onmessage = (event) => {
+  const socket = new WebSocket(`${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/ws/v1/jpeg/${props.camera}`);
+  jpegSocket = socket;
+  socket.binaryType = "blob";
+  socket.onopen = () => {
+    window.clearTimeout(jpegRetryTimer);
+    jpegRetryTimer = 0;
+  };
+  socket.onmessage = (event) => {
     if (!(event.data instanceof Blob)) return;
     if (jpegFrameUrl) URL.revokeObjectURL(jpegFrameUrl);
     jpegFrameUrl = URL.createObjectURL(event.data);
     jpegFrame.value = jpegFrameUrl;
+    lastJpegAt = performance.now();
   };
-  jpegSocket.onerror = () => {
+  socket.onerror = () => {
     if (mode.value === "jpeg") streamError.value = "WebSocket JPEG 不可用，正在使用 MJPEG";
+  };
+  socket.onclose = () => {
+    if (jpegSocket !== socket) return;
+    jpegSocket = null;
+    if (disposed || mode.value !== "jpeg" || jpegRetryTimer) return;
+    jpegRetryTimer = window.setTimeout(() => {
+      jpegRetryTimer = 0;
+      startJpegSocket();
+    }, 1500);
   };
 }
 
 function stopJpegSocket() {
+  window.clearTimeout(jpegRetryTimer);
+  jpegRetryTimer = 0;
+  window.clearInterval(jpegWatchdog);
+  jpegWatchdog = 0;
   jpegSocket?.close();
   jpegSocket = null;
 }
 
 async function startWebRTC(url: string) {
   if (typeof RTCPeerConnection === "undefined") throw new Error("浏览器不支持 WebRTC");
-  pc = new RTCPeerConnection({ iceServers: [] });
-  const transceiver = pc.addTransceiver("video", { direction: "recvonly" });
+  const peer = new RTCPeerConnection({ iceServers: [] });
+  pc = peer;
+  const transceiver = peer.addTransceiver("video", { direction: "recvonly" });
   const capabilities = RTCRtpSender.getCapabilities?.("video");
   if (capabilities) {
     const h264 = capabilities.codecs.filter((codec) => codec.mimeType.toLowerCase() === "video/h264");
     if (h264.length) transceiver.setCodecPreferences(h264);
   }
-  pc.ontrack = (event) => {
+  peer.ontrack = (event) => {
     if (!video.value) return;
     const element = video.value;
     element.srcObject = event.streams[0] || new MediaStream([event.track]);
@@ -147,16 +171,16 @@ async function startWebRTC(url: string) {
       }
     }, 1000);
   };
-  pc.onconnectionstatechange = () => {
-    if (pc && ["failed", "disconnected"].includes(pc.connectionState)) fallbackToJpeg("WebRTC 已断开，自动切换 JPEG");
+  peer.onconnectionstatechange = () => {
+    if (["failed", "disconnected"].includes(peer.connectionState)) fallbackToJpeg("WebRTC 已断开，自动切换 JPEG");
   };
-  const offer = await pc.createOffer();
-  await pc.setLocalDescription(offer);
+  const offer = await peer.createOffer();
+  await peer.setLocalDescription(offer);
   await new Promise<void>((resolve) => {
-    if (pc?.iceGatheringState === "complete") return resolve();
-    const timeout = window.setTimeout(resolve, 1800);
-    pc?.addEventListener("icegatheringstatechange", () => {
-      if (pc?.iceGatheringState === "complete") {
+    if (peer.iceGatheringState === "complete") return resolve();
+    const timeout = window.setTimeout(resolve, 800);
+    peer.addEventListener("icegatheringstatechange", () => {
+      if (peer.iceGatheringState === "complete") {
         window.clearTimeout(timeout);
         resolve();
       }
@@ -165,14 +189,24 @@ async function startWebRTC(url: string) {
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/sdp" },
-    body: pc.localDescription?.sdp || offer.sdp,
+    body: peer.localDescription?.sdp || offer.sdp,
   });
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || "WebRTC 建连失败");
+    try {
+      const parsed = JSON.parse(text);
+      throw new Error(parsed?.error?.message || text);
+    } catch (error) {
+      if (error instanceof SyntaxError) throw new Error(text || "WebRTC 建连失败");
+      throw error;
+    }
   }
   const body = await response.json();
-  await pc.setRemoteDescription({ type: "answer", sdp: body.sdp });
+  if (disposed || mode.value === "jpeg" || pc !== peer) {
+    peer.close();
+    return;
+  }
+  await peer.setRemoteDescription({ type: "answer", sdp: body.sdp });
   sessionId = body.session_id;
   whepBase = url.split("?")[0];
 }
@@ -183,16 +217,18 @@ async function start() {
     const token = await response.json();
     if (!response.ok) throw new Error(token?.error?.message || "获取视频令牌失败");
     fallbackUrl.value = token.mjpeg_url;
-    startJpegSocket();
+    if (new URLSearchParams(location.search).get("transport") === "jpeg") {
+      fallbackToJpeg("当前使用 JPEG 低带宽模式");
+      return;
+    }
     fallbackTimer = window.setTimeout(() => {
       if (!disposed && mode.value === "connecting") fallbackToJpeg("WebRTC 建连超时，已切换 JPEG");
-    }, 2200);
+    }, 3000);
     await startWebRTC(token.whep_url);
   } catch (err) {
     if (disposed) return;
-    streamError.value = err instanceof Error ? err.message : String(err);
-    mode.value = "jpeg";
     window.clearTimeout(fallbackTimer);
+    fallbackToJpeg(err instanceof Error ? err.message : String(err));
   }
 }
 
@@ -239,6 +275,18 @@ function visibilityChanged() {
 
 watch(objects, drawOverlay, { deep: true });
 watch(() => store.selectedTrack, drawOverlay);
+watch(mode, (value) => {
+  window.clearInterval(jpegWatchdog);
+  jpegWatchdog = 0;
+  if (value !== "jpeg") return;
+  lastJpegAt = performance.now();
+  jpegWatchdog = window.setInterval(() => {
+    if (performance.now() - lastJpegAt > 3000) {
+      if (!jpegSocket || jpegSocket.readyState >= WebSocket.CLOSING) startJpegSocket();
+      if (!jpegFrame.value) jpegReloadKey.value++;
+    }
+  }, 2000);
+});
 onMounted(() => {
   document.addEventListener("visibilitychange", visibilityChanged);
   start();
@@ -275,8 +323,9 @@ onBeforeUnmount(() => {
       <span>{{ objects.length }} 个目标</span>
     </div>
     <div ref="wrapper" class="camera-viewport" @click="choose">
-      <video ref="video" v-show="mode === 'webrtc' || mode === 'paused'" autoplay muted playsinline></video>
-      <img v-if="mode === 'jpeg'" :src="jpegFrame || fallbackUrl" alt="" />
+      <!-- Keep the video element visible during ICE setup; Safari can refuse to decode a display:none stream. -->
+      <video ref="video" autoplay muted playsinline></video>
+      <img v-if="mode === 'jpeg'" :key="jpegReloadKey" :src="jpegFrame || fallbackUrl" alt="" />
       <div v-if="mode !== 'webrtc' && mode !== 'jpeg'" class="camera-waiting">
         <span class="pulse-ring"></span>
         <p>正在建立低延迟视频</p>
