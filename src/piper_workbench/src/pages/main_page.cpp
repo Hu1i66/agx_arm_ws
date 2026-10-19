@@ -40,6 +40,7 @@ void MainWindow::updateTargets(){
  static const QMap<QString,QString> chinese={{"apple","苹果"},{"green_apple","青苹果"},{"orange","橙子"},{"banana","香蕉"},{"yellow_pear","黄梨"},{"green_pear","青梨"},{"strawberry","草莓"},{"peach","桃子"},{"lemon","柠檬"},{"mango","芒果"},{"star_fruit","杨桃"},{"pomegranate","石榴"}};
  QSignalBlocker blocker(targets_);targets_->setUpdatesEnabled(false);
  if(targets_->rowCount()!=objects.size())targets_->setRowCount(objects.size());
+ bool selectedFound=false;
  for(int r=0;r<objects.size();++r){
   auto o=objects[r];QString name=o["object_name"].toString();QString label=chinese.value(name,name);int track=o["track_id"].toInt();
   for(int c=0;c<3;++c)if(!targets_->item(r,c))targets_->setItem(r,c,new QTableWidgetItem);
@@ -47,8 +48,9 @@ void MainWindow::updateTargets(){
   if(targets_->item(r,0)->text()!=label)targets_->item(r,0)->setText(label);
   QString confidence=QString::number(o["confidence"].toDouble(),'f',2);if(targets_->item(r,1)->text()!=confidence)targets_->item(r,1)->setText(confidence);
   QString source=camera()=="d455"?"D455":"Dabai";if(targets_->item(r,2)->text()!=source)targets_->item(r,2)->setText(source);
-  if(track==selectedTrack_&&targets_->currentRow()!=r)targets_->selectRow(r);
+  if(track==selectedTrack_){selectedFound=true;if(targets_->currentRow()!=r)targets_->selectRow(r);}
  }
+ if(!selectedFound&&targets_->currentRow()>=0){targets_->clearSelection();targets_->setCurrentCell(-1,-1);}
  targets_->setUpdatesEnabled(true);
  for(QString cam:{"d455","dabai"}){auto *v=images_[cam+":main"];v->detection=detections_[cam];v->selected=cam==camera()?selectedTrack_:-1;v->update();}
 }
