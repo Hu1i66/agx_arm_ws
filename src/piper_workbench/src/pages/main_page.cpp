@@ -10,7 +10,7 @@ QWidget *MainWindow::makeMain(){
  auto *cameras=new QWidget;auto *cl=new QVBoxLayout(cameras);cl->setContentsMargins(0,0,0,0);cl->setSpacing(12);
  for(QString cam:{"d455","dabai"}){
   auto *box=card(cam=="d455"?"D455 · 固定相机":"Dabai · 腕载相机");auto *bl=static_cast<QVBoxLayout *>(box->layout());
-  auto *stats=text(cam=="d455"?"配置 640 × 480 · 30 帧/秒":"配置 640 × 480 · 15 帧/秒");stats->setObjectName("camera-stats-"+cam);bl->addWidget(stats);auto *view=new ImageView;view->picked=[this,cam](int id){if(camera()!=cam){mode_->setCurrentIndex(cam=="dabai"?2:1);}selectedTrack_=id;selectedSession_=detections_[cam]["motion_session"].toString();updateTargets();};images_[cam+":main"]=view;bl->addWidget(view,1);cl->addWidget(box,1);
+  auto *stats=text(cam=="d455"?"配置 640 × 480 · 30 帧/秒":"配置 640 × 480 · 15 帧/秒");stats->setObjectName("camera-stats-"+cam);bl->addWidget(stats);auto *view=new ImageView;view->picked=[this,cam](int id){selectTarget(cam,id);};images_[cam+":main"]=view;bl->addWidget(view,1);cl->addWidget(box,1);
  }
  split->addWidget(cameras);
  auto *model=card("机械臂实时视图");auto *ml=static_cast<QVBoxLayout *>(model->layout());ml->addWidget(text("基坐标系 base_link · 实际反馈"));mainHost_=new QWidget;mainHost_->setLayout(new QVBoxLayout);mainHost_->layout()->setContentsMargins(0,0,0,0);ml->addWidget(mainHost_,1);jointFeedback_=text("J1 —    J2 —    J3 —    J4 —    J5 —    J6 —\n等待真实关节反馈");ml->addWidget(jointFeedback_);split->addWidget(model);
@@ -24,13 +24,13 @@ QWidget *MainWindow::makeMain(){
  auto *edit=button("编辑放置方案与类别映射",false,"debug");edit->setMaximumHeight(28);edit->setMinimumHeight(28);gl->addWidget(edit);connect(edit,&QPushButton::clicked,this,[this]{nav_->setCurrentRow(1);debugTabs_->setCurrentIndex(4);});
  grasp->setToolTip("放置方案在每个物体开始时固定；修改作用于下一物体");
  auto *start=button("开始动态抓取",true,"play"),*single=button("抓取所选目标",true,"grab"),*stop=button("本轮后停止",false,"stop");startTaskButton_=start;singleTaskButton_=single;stopTaskButton_=stop;single->hide();auto *runbar=new QHBoxLayout;runbar->addWidget(start,2);runbar->addWidget(single,2);runbar->addWidget(stop,1);gl->addLayout(runbar);
- connect(mode_,qOverload<int>(&QComboBox::currentIndexChanged),this,[this,start,single,operations](int i){if(auto *b=findChild<QPushButton *>("observationButton"))b->setText(i==0?"动态准备位":"观察位");start->setVisible(i!=2);single->setVisible(i!=0);selectedTrack_=-1;selectedSession_.clear();updateTargets();updateTaskButtons();Ui::fadeIn(operations);});
+ connect(mode_,qOverload<int>(&QComboBox::currentIndexChanged),this,[this,start,single,operations](int i){if(auto *b=findChild<QPushButton *>("observationButton"))b->setText(i==0?"动态准备位":"观察位");start->setVisible(i!=2);single->setVisible(i!=0);selectedTrack_=-1;selectedSession_.clear();selectedTargetSnapshot_={};updateTargets();updateTaskButtons();Ui::fadeIn(operations);});
  connect(start,&QPushButton::clicked,this,[this]{runTask(true);});connect(single,&QPushButton::clicked,this,[this]{runTask(false);});
  connect(stop,&QPushButton::clicked,this,[this]{stopRequested_=true;updateTaskButtons();request(stopTaskButton_,"motion.pause_after_cycle",{},[this](QJsonValue){refresh();},"正在停止…",{},true);});
  connect(plan_,qOverload<int>(&QComboBox::activated),this,[this](int){savePlacements();});connect(placementMode_,qOverload<int>(&QComboBox::activated),this,[this](int){savePlacements();});ol->addWidget(grasp);
- auto *targetCard=card("检测目标 · 当前相机");auto *tl=static_cast<QVBoxLayout *>(targetCard->layout());targets_=new QTableWidget(0,3);targets_->setHorizontalHeaderLabels({"目标","置信度","来源"});targets_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);targets_->verticalHeader()->hide();targets_->setSelectionBehavior(QAbstractItemView::SelectRows);targets_->setSelectionMode(QAbstractItemView::SingleSelection);targets_->setEditTriggers(QAbstractItemView::NoEditTriggers);targets_->setMinimumHeight(110);tl->addWidget(targets_,1);
+ auto *targetCard=card("检测目标 · 当前相机");auto *tl=static_cast<QVBoxLayout *>(targetCard->layout());selectedTargetLabel_=text("尚未选择目标","notice");tl->addWidget(selectedTargetLabel_);targets_=new QTableWidget(0,3);targets_->setHorizontalHeaderLabels({"目标","置信度","来源"});targets_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);targets_->verticalHeader()->hide();targets_->setSelectionBehavior(QAbstractItemView::SelectRows);targets_->setSelectionMode(QAbstractItemView::SingleSelection);targets_->setEditTriggers(QAbstractItemView::NoEditTriggers);targets_->setMinimumHeight(110);tl->addWidget(targets_,1);
  // Select on press, before the next 10 Hz detection update can rebuild the row.
- connect(targets_,&QTableWidget::cellPressed,this,[this](int row,int){auto *item=targets_->item(row,0);if(!item)return;selectedTrack_=item->data(Qt::UserRole).toInt();selectedSession_=detections_[camera()]["motion_session"].toString();targets_->selectRow(row);for(QString cam:{"d455","dabai"})images_[cam+":main"]->update();});ol->addWidget(targetCard,1);
+ connect(targets_,&QTableWidget::cellPressed,this,[this](int row,int){auto *item=targets_->item(row,0);if(!item)return;selectTarget(camera(),item->data(Qt::UserRole).toInt());});ol->addWidget(targetCard,1);
  auto *belt=card("传送带与本轮状态");auto *bl=static_cast<QVBoxLayout *>(belt->layout());auto *br=new QHBoxLayout;
  for(auto pair:QList<QPair<QString,QString>>{{"启动","start"},{"停止","stop"},{"正转","forward"},{"反转","reverse"}}){auto *b=button(pair.first);br->addWidget(b);connect(b,&QPushButton::clicked,this,[this,pair,b]{request(b,"conveyor.send",{{"action",pair.second}},[this](QJsonValue){refresh();},"发送中…","已发送");});}bl->addLayout(br);taskState_=text("已暂停 · 等待你开始抓取","notice");bl->addWidget(taskState_);ol->addWidget(belt);operations->setMinimumHeight(760);split->addWidget(Ui::scroll(operations));
  split->setStretchFactor(0,27);split->setStretchFactor(1,44);split->setStretchFactor(2,29);split->setSizes({345,560,370});
@@ -39,7 +39,7 @@ QWidget *MainWindow::makeMain(){
 }
 void MainWindow::updateTargets(){
  auto data=detections_[camera()];QString session=data["motion_session"].toString();
- if(selectedTrack_>=0&&selectedSession_!=session){selectedTrack_=-1;selectedSession_.clear();}
+ if(selectedTrack_>=0&&selectedSession_!=session){selectedTrack_=-1;selectedSession_.clear();selectedTargetSnapshot_={};}
  QVector<QJsonObject> objects;for(auto value:data["objects"].toArray())objects<<value.toObject();
  std::sort(objects.begin(),objects.end(),[](const QJsonObject &a,const QJsonObject &b){return a["track_id"].toInt()<b["track_id"].toInt();});
  static const QMap<QString,QString> chinese={{"apple","苹果"},{"green_apple","青苹果"},{"orange","橙子"},{"banana","香蕉"},{"yellow_pear","黄梨"},{"green_pear","青梨"},{"strawberry","草莓"},{"peach","桃子"},{"lemon","柠檬"},{"mango","芒果"},{"star_fruit","杨桃"},{"pomegranate","石榴"}};
@@ -57,13 +57,20 @@ void MainWindow::updateTargets(){
  }
  if(!selectedFound&&targets_->currentRow()>=0){targets_->clearSelection();targets_->setCurrentCell(-1,-1);}
  targets_->setUpdatesEnabled(true);
+ if(selectedTargetLabel_){if(selectedTrack_<0){selectedTargetLabel_->setText("尚未选择目标");selectedTargetLabel_->setStyleSheet("");}else{QString name=selectedTargetSnapshot_["object_name"].toString();QString base=selectedTargetSnapshot_["base_position_m"].isObject()?QString(" · 基座 (%1, %2, %3)").arg(selectedTargetSnapshot_["base_position_m"].toObject()["x"].toDouble(),0,'f',3).arg(selectedTargetSnapshot_["base_position_m"].toObject()["y"].toDouble(),0,'f',3).arg(selectedTargetSnapshot_["base_position_m"].toObject()["z"].toDouble(),0,'f',3):QString();selectedTargetLabel_->setText(QString("已选择：%1  T%2%3%4").arg(name).arg(selectedTrack_).arg(base).arg(selectedFound?"":" · 等待检测刷新"));selectedTargetLabel_->setStyleSheet("color:#0E6B4B;background:#EAF8F1;");}}
  for(QString cam:{"d455","dabai"}){auto *v=images_[cam+":main"];v->detection=detections_[cam];v->selected=cam==camera()?selectedTrack_:-1;v->update();}
 }
 void MainWindow::runTask(bool continuous){
  if(!continuous&&selectedTrack_<0){showError("请先点击画面中的目标框或下方目标列表，再执行抓取");return;}
  graspStage_="target";if(graspFlow_) {graspFlow_->setActive(true);graspFlow_->setStage("target","目标已锁定");}
  auto *button=continuous?startTaskButton_:singleTaskButton_;stopRequested_=false;
- request(button,"motion.start",{{"mode",mode_->currentIndex()==0?"d455-dynamic":mode_->currentIndex()==1?"d455-static":"dabai-static"},{"continuous",continuous},{"track_id",selectedTrack_},{"session",selectedSession_}},[this](QJsonValue){refresh();},continuous?"正在启动抓取…":"正在派发目标…",{},true);
+ request(button,"motion.start",{{"mode",mode_->currentIndex()==0?"d455-dynamic":mode_->currentIndex()==1?"d455-static":"dabai-static"},{"continuous",continuous},{"track_id",selectedTrack_},{"session",selectedSession_},{"target_snapshot",selectedTargetSnapshot_}},[this](QJsonValue){refresh();},continuous?"正在启动抓取…":"正在派发目标…",{},true);
+}
+void MainWindow::selectTarget(QString cameraId,int trackId){
+ if(camera()!=cameraId)mode_->setCurrentIndex(cameraId=="dabai"?2:1);
+ auto data=detections_[cameraId];selectedTrack_=trackId;selectedSession_=data["motion_session"].toString();selectedTargetSnapshot_={};
+ for(auto value:data["objects"].toArray()){auto obj=value.toObject();if(obj["track_id"].toInt()==trackId){selectedTargetSnapshot_=obj;break;}}
+ updateTargets();for(QString cam:{"d455","dabai"})images_[cam+":main"]->update();
 }
 void MainWindow::refreshPlacements(){
  plan_->blockSignals(true);plan_->clear();teachPlan_->blockSignals(true);teachPlan_->clear();auto selection=placements_["selection"].toObject();for(auto item:placements_["plans"].toArray()){auto p=item.toObject();plan_->addItem(p["name"].toString(),p["id"].toString());teachPlan_->addItem(p["name"].toString(),p["id"].toString());}plan_->setCurrentIndex(plan_->findData(selection["default_plan_id"].toString()));placementMode_->setCurrentIndex(selection["mode"]=="class"?1:0);plan_->blockSignals(false);teachPlan_->blockSignals(false);}

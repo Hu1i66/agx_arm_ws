@@ -15,6 +15,15 @@ def test_selected_target_preserves_source_session():
     assert t.phase=='pause_pending'
     t.result({'cycle_id':cmd['cycle_id'],'cycle_success':1});assert calls[-1]=='stop' and t.phase=='paused'
 
+
+def test_reacquires_target_when_track_id_changes_at_same_position():
+    t,calls=make()
+    old={'track_id':4,'object_name':'green_pear','base_position_m':{'x':.33,'y':.05,'z':.01}}
+    t.detection('dabai',{'camera':'dabai','header_stamp':time.time(),'motion_session':'dabai',
+        'objects':[dict(old,track_id=9)]})
+    cmd=t.start('dabai-static',track_id=4,session='dabai',target_snapshot=old)
+    assert cmd['target_track_id']==9 and cmd['pick']['x']==.33
+
 def test_ui_close_idle_pauses_without_stopping_processes():
     t,calls=make();t.request_pause_after_cycle()
     assert calls==['pause_after_cycle','stop']

@@ -16,7 +16,7 @@ private:
  QWidget *makeMotion();QWidget *makeParameters();QWidget *makeCameraSettings();QWidget *makeFiles();QWidget *makeTeach();QWidget *makeAdvanced();
  void refresh();void receive(QString event,QJsonValue data);void showError(QString message);void updateTargets();void applyStatus(QJsonObject);
  void refreshFiles();void refreshPlacements();void savePlacements();void setGoal(QVector<double>);void syncGoal();void moveRviz();
- void startCalibration(QString mode={},QPushButton *button=nullptr);void sendCalibration(QString action,QPushButton *button=nullptr);void refreshParameters();void runTask(bool continuous);
+ void startCalibration(QString mode={},QPushButton *button=nullptr);void sendCalibration(QString action,QPushButton *button=nullptr);void refreshParameters();void runTask(bool continuous);void selectTarget(QString cameraId,int trackId);
  void logRow(QJsonObject);void filterLogs();void showFile(QString path);QString camera()const;
  QString request(QPushButton *button,QString op,QJsonObject args={},std::function<void(QJsonValue)> reply={},QString pendingText={},QString successText={},bool keepDisabledOnSuccess=false);
  void finishRequest(QString id,bool ok);void updateTaskButtons();void updateCaptureButtons();void updateCalibrationButtons();
@@ -25,6 +25,7 @@ private:
  Ui::GraspFlow *graspFlow_=nullptr;QString graspStage_="waiting";
  QComboBox *mode_,*plan_,*placementMode_,*calibrationKind_,*calibrationCamera_,*fileKind_,*fileCamera_;
  QTableWidget *targets_,*files_,*sampleTable_,*logTable_,*teachTable_;
+ QLabel *selectedTargetLabel_=nullptr;QJsonObject selectedTargetSnapshot_;
  QLabel *resultSummary_,*logMetadata_;
  QComboBox *logTime_;QListWidget *logSources_;
  QPlainTextEdit *connectionLog_,*calibrationLog_,*resultText_,*logDetail_,*diagnosticText_;
