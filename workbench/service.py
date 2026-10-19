@@ -68,7 +68,11 @@ class Workbench:
             if op in ('start','stop') and self.belt_commanded==(op=='start') and self.belt.is_connected:return self.belt.get_status()
             result=getattr(self.belt,op)()
             if op in ('start','stop'):
-                if result is False:raise RuntimeError('传送带命令未确认: '+str(self.belt.get_status()))
+                if result is False:
+                    status=self.belt.get_status()
+                    reason=('传送带串口未连接' if not status.get('connected')
+                            else '传送带串口已连接，但电机命令未收到 STM32 OK 确认')
+                    raise RuntimeError(reason+': '+str(status))
                 self.belt_commanded=op=='start'
             return dict(self.belt.get_status(),command_result=result)
     def status(self):
