@@ -44,6 +44,16 @@ USB 拓扑显示这些设备共用 USB2 480M 集线器链。现有证据能确�
 
 实机证据见 [field-recovery-20261019.json](evidence/field-recovery-20261019.json)。完整驱动与相机日志继续保留在本树 `log/runtime/`，原始图像、标定数据和模型未清理。
 
+### 2026-10-19 D455 高频掉帧复核
+
+- 用户问原文：「d455掉线十分频繁，找一下原因，是不是两个相机共用一个yolo的原因」；随后补充：「yolo是用cpu计算的吗？得用我电脑的gpu啊」。
+- 不是模型在 CPU 推理：Python 环境为 PyTorch 2.11 / CUDA 13，模型首次推理后在 `cuda:0`，日志明确输出 `YOLO GPU: NVIDIA GeForce RTX 4060 Laptop GPU`。
+- `realsense2_camera` 启动日志报告 `Device USB type: 2.1`；USB 拓扑显示 D455、Dabai、CAN 和串口共用 `usb1/1-2` 的 480 Mbps 集线器链路，而电脑另有空闲的 USB 3 / 10 Gbps 根接口。
+- 复现时 10 秒探针收到 D455 彩色 0 帧，但 D455 深度仍有约 22.8 帧/秒；由于没有彩色，aligned depth 与 YOLO 检测也为 0。驱动日志同时报 `Frames didn't arrived within 5 seconds`。
+- 隔离共用 YOLO 进程后，15 秒内 D455 彩色恢复 184 帧；重新启动后再次出现断流。结论是 USB 2.1 带宽/链路是根因，YOLO 的 CPU 侧图像回调和标注编码会放大问题；拆成两个 YOLO 进程会增加同一台电脑的 CPU/显存负载，不能修复 USB 带宽。
+- 工作台的状态现在读取 D455 的实际协商速率；USB2 会在相机统计行直接提示。相机帧率改为最近 2 秒窗口统计，画面断流后显示 0，避免旧的平均值继续误导。
+- 硬件处置：把 D455 的数据线直接接到电脑 USB 3（蓝色/SS）口，不经过当前 USB 2 集线器；重新启动 D455 后，工作台应显示 `USB 3`，可用 `lsusb -t` 确认连线达到 5000/10000 Mbps。
+
 ## 本轮清理
 
 临时目录 `.runtime/workbench-fixes/` 已通过 `gio trash` 移入 Ubuntu 回收站，共 13 个文件、1406.4 KB。包括临时 `capture_ui.py`、被遮挡/切页污染的截图、无效黑色像素样本、临时构建输出和已归档的验证副本。有效恢复及反馈证据已转存到本文链接的 JSON。凭据文件、权重链接、必要 build/install、运行日志及实验数据全部保留。

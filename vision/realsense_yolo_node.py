@@ -338,6 +338,9 @@ class ObjectDetector(Node):
         # 实测: RGB↔深度时间差 中位 50ms → 8ms, 吞吐不变。
         # 关掉即回到"处理当前最新帧、用最新深度"的旧行为。
         self.depth_pair_delay = bool(self.declare_parameter("depth_pair_delay", True).value)
+        # Keep inference on the workstation GPU. A missing CUDA runtime must be
+        # visible instead of silently falling back to CPU and starving cameras.
+        self.yolo_device = str(self.declare_parameter("yolo_device", "cuda:0").value)
 
         self.status_printed = False
         self.active_cam_name = None      # 键盘/曝光操作作用的相机 (按 1/2 切换)
@@ -424,6 +427,14 @@ class ObjectDetector(Node):
             f"H={self.known_object_height_m:.3f}m")
         from ultralytics import YOLO
         self.model = YOLO(self.MODEL_PATH)
+        if self.yolo_device != "cpu":
+            import torch
+            if not torch.cuda.is_available():
+                raise RuntimeError("YOLO 配置为使用 GPU，但当前 Python 环境无法访问 CUDA")
+            self.get_logger().info(
+                f"YOLO GPU: {torch.cuda.get_device_name(0)} ({self.yolo_device})")
+        else:
+            self.get_logger().warning("YOLO 已显式配置为 CPU，检测吞吐会明显降低")
         self.get_logger().info(f"✅ 模型加载成功，类别: {self.model.names}")
 
         # 定时器: 单个定时器遍历所有启用相机 (无新帧则跳过, 避免重复推理同一帧)
@@ -1293,6 +1304,7 @@ class ObjectDetector(Node):
         try:
             # YOLO 检测
             results = self.model(rgb, conf=cam.yolo_conf, iou=cam.yolo_iou,
+                                 device=self.yolo_device,
                                  agnostic_nms=cam.yolo_agnostic_nms, verbose=False)
             
             # ==================== 多目标检测 ====================

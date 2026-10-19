@@ -8,6 +8,8 @@ object_detector:
     dabai.enabled: false
     show_gui_window: false
     depth_pair_delay: true
+    # Explicit GPU selection prevents a silent CPU fallback.
+    yolo_device: "cuda:0"
     # ── D455 偏差补偿（当前生产默认值）──
     d455.use_depth_camera: true
     d455.x_offset_m: 0.0

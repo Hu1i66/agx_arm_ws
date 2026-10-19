@@ -1,5 +1,6 @@
 from pathlib import Path
 from workbench.components import Components
+from workbench.service import usb_link_speed
 
 class Launcher:
     def __init__(self): self.calls=[]; self.running=set()
@@ -32,3 +33,11 @@ def test_failed_can_does_not_enable_or_restart(tmp_path):
     import pytest
     with pytest.raises(RuntimeError): c.recover_arm_connection()
     assert l.calls==[('stop','arm')] and calls==['recovery_prepare']
+
+def test_usb_link_speed_reads_negotiated_device_speed(tmp_path):
+    camera=tmp_path/'1-2.1.1'
+    camera.mkdir()
+    (camera/'idVendor').write_text('8086\n')
+    (camera/'idProduct').write_text('0b5c\n')
+    (camera/'speed').write_text('480\n')
+    assert usb_link_speed('8086','0b5c',tmp_path)==480.

@@ -10,6 +10,16 @@ from .tasks import Tasks
 import runtime_config as rc
 import runtime_launcher as launcher
 
+def usb_link_speed(vendor,product,root=pathlib.Path('/sys/bus/usb/devices')):
+    """Return the negotiated Mbps for a connected USB device, if visible."""
+    for device in root.iterdir():
+        try:
+            if (device/'idVendor').read_text().strip()!=vendor:continue
+            if (device/'idProduct').read_text().strip()!=product:continue
+            return float((device/'speed').read_text().strip())
+        except (OSError,ValueError):continue
+    return None
+
 class Workbench:
     def __init__(self,root,with_ros=True):
         self.root=pathlib.Path(root);self.clients=set();self.clients_lock=threading.Lock()
@@ -66,8 +76,10 @@ class Workbench:
             if component in ('can','activate'):row.update(state='command_completed' if component in self.components.completed else 'unknown',command=self.components.command(component))
             rows.append(row)
         now=time.time();seen=self.ros.seen if self.ros else {}
+        cameras={c:dict(state='receiving' if now-seen.get(c,0)<2 else 'waiting',age_s=now-seen[c] if c in seen else None,input_fps=self.ros.current_rate(c) if self.ros else 0,detection_fps=self.ros.current_rate('yolo:'+c) if self.ros else 0,detection_age_s=now-seen['yolo:'+c] if 'yolo:'+c in seen else None) for c in ('d455','dabai')}
+        cameras['d455']['usb_speed_mbps']=usb_link_speed('8086','0b5c')
         return dict(config_errors=[e for e in (self.settings.error,self.placements.error) if e],components=rows,task=self.tasks.status(),placements=self.placements.get(),parameters=self.settings.get(),
-            cameras={c:dict(state='receiving' if now-seen.get(c,0)<2 else 'waiting',age_s=now-seen[c] if c in seen else None,input_fps=self.ros.rates.get(c,0) if self.ros else 0,detection_fps=self.ros.rates.get('yolo:'+c,0) if self.ros else 0,detection_age_s=now-seen['yolo:'+c] if 'yolo:'+c in seen else None) for c in ('d455','dabai')},
+            cameras=cameras,
             feedback=self.ros.feedback_snapshot() if self.ros else None,
             reconnect=dict(count=self.notice.count,last_at=self.notice.last),conveyor=self.belt.get_status() if self.belt else {'connected':False},
             nodes=self.ros.get_node_names() if self.ros else [],socket=str(self.root/'.runtime/workbench.sock'))

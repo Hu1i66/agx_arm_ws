@@ -1,5 +1,5 @@
 """ROS IO on its own executor thread. Never opens hardware on construction."""
-import json,threading,time
+import collections,json,threading,time
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
@@ -12,7 +12,7 @@ from cv_bridge import CvBridge
 
 class RosAdapter(Node):
     def __init__(self,service):
-        super().__init__('piper_workbench_service');self.s=service;self.bridge=CvBridge();self.pubs={};self.joints=None;self.tcp=None;self.seen={};self.rates={};self.nodes=[]
+        super().__init__('piper_workbench_service');self.s=service;self.bridge=CvBridge();self.pubs={};self.joints=None;self.tcp=None;self.seen={};self.rates={};self.rate_times={};self.nodes=[]
         self.geometry={};self.tcp_geometry={};self.closed=False
         from tf2_ros import Buffer,TransformListener
         self.tf_buffer=Buffer();self.tf_listener=TransformListener(self.tf_buffer,self)
@@ -68,10 +68,20 @@ class RosAdapter(Node):
                 if not rclpy.ok() or self.closed:return
                 time.sleep(.1)
     def calibration_evidence(self):return dict(self.geometry,tcp=self.tcp_geometry)
+    def _mark_rate(self,key):
+        now=time.monotonic();samples=self.rate_times.setdefault(key,collections.deque(maxlen=240))
+        samples.append(now)
+        while len(samples)>1 and samples[0]<now-2.:samples.popleft()
+        self.rates[key]=(len(samples)-1)/max(samples[-1]-samples[0],1e-6) if len(samples)>1 else 0.
+    def current_rate(self,key):
+        now=time.monotonic();samples=self.rate_times.get(key)
+        if not samples:return 0.
+        while len(samples)>1 and samples[0]<now-2.:samples.popleft()
+        if len(samples)<2 or now-samples[-1]>1.:return 0.
+        return (len(samples)-1)/max(samples[-1]-samples[0],1e-6)
     def image(self,camera,msg):
         try:
-            now=time.time();last=self.seen.get(camera,now);self.seen[camera]=now
-            if now>last:self.rates[camera]=.9*self.rates.get(camera,0)+.1/(now-last)
+            now=time.time();self.seen[camera]=now;self._mark_rate(camera)
             self.s.capture.update(camera,self.bridge.imgmsg_to_cv2(msg,'bgr8'),msg.header.stamp.sec+msg.header.stamp.nanosec*1e-9)
         except Exception as exc:self.s.logs.add(camera,str(exc))
     def detection(self,camera,msg):
@@ -84,8 +94,7 @@ class RosAdapter(Node):
                     if bp:
                         key=(data.get('motion_session'),obj.get('track_id'))
                         self.s.direction_samples.setdefault(key,[]).append((float(data.get('header_stamp',time.time())),float(bp['x']),float(bp['y'])))
-            now=time.time();previous=self.seen.get('yolo:'+camera,now)
-            if now>previous:self.rates['yolo:'+camera]=.9*self.rates.get('yolo:'+camera,0)+.1/(now-previous)
+            now=time.time();self._mark_rate('yolo:'+camera)
             self.s.tasks.detection(camera,data);self.seen['yolo:'+camera]=now
             self.s.emit('vision.targets',{'camera_id':camera,'detection':data})
         except Exception as exc:self.s.logs.add('检测消息',str(exc))

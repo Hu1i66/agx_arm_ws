@@ -43,3 +43,17 @@ def test_real_ros_raw_images_sources_and_actual_feedback(tmp_path):
         assert received['d455']['motion_session']!=received['dabai']['motion_session']
     finally:
         adapter._executor.shutdown();adapter.thread.join(timeout=2);adapter.destroy_node();publisher.destroy_node();rclpy.shutdown()
+
+
+def test_current_camera_rate_expires_after_stream_stops(monkeypatch):
+    import workbench.ros_adapter as module
+    adapter=module.RosAdapter.__new__(module.RosAdapter)
+    adapter.rates={};adapter.rate_times={}
+    now=[1.0]
+    monkeypatch.setattr(module.time,'monotonic',lambda:now[0])
+    for stamp in (1.0,1.5,2.0):
+        now[0]=stamp;adapter._mark_rate('d455')
+    now[0]=2.0
+    assert adapter.current_rate('d455')==pytest.approx(2.0)
+    now[0]=5.0
+    assert adapter.current_rate('d455')==0.
