@@ -34,12 +34,16 @@ except ImportError as _exc:  # pragma: no cover
 _MODEL_PATH = str(_rc.resolve_resource("yolo_weights"))
 # 活动外参：config/calibration/d455_eye_to_hand.json（缺失/非法明确失败）
 _D455_HANDEYE = _rc.load_handeye("d455")
+_BELT_ROI_PATH = _WS_ROOT / "config/calibration/d455_belt_roi.json"
 from camera_geometry import CameraGeometry, image_qos, fresh_image
 from runtime_geometry import object_centroid_from_rgbd, short_axis_tool_rotation
 from vision.tracker import (ClassVoteStabilizer, Detection, PointKalmanCV,
                             ScalarKalmanCV, deduplicate_detections,
                             expand_detection, iou_xyxy, merge_fragment_detections,
                             nearest_cross_camera_match, refine_bbox_grabcut)
+from vision.belt_roi import (DEFAULT_LOWER_HSV, DEFAULT_UPPER_HSV,
+                             build_belt_mask, filter_detections_in_mask,
+                             load_calibration, polygon_mask)
 
 
 class ObjectTrack:
@@ -239,6 +243,12 @@ class CameraState:
         self.rgb_ready = False
         self.last_processed_stamp = None  # 避免同一帧重复推理
         self.min_track_hits = 2
+        self.belt_filter = True
+        self.belt_lower_hsv = list(DEFAULT_LOWER_HSV)
+        self.belt_upper_hsv = list(DEFAULT_UPPER_HSV)
+        self.belt_mask = None
+        self.belt_polygon = None
+        self.belt_seen_at = 0.
         self.preprocess_clahe = False
         self.clahe_clip_limit = 2.
         self.inference_size = 640
@@ -346,6 +356,9 @@ class ObjectDetector(Node):
         # Keep inference on the workstation GPU. A missing CUDA runtime must be
         # visible instead of silently falling back to CPU and starving cameras.
         self.yolo_device = str(self.declare_parameter("yolo_device", "cuda:0").value)
+        self._belt_calibration = None
+        self._belt_calibration_mtime = -1.
+        self._belt_calibration_checked_at = -100.
 
         self.status_printed = False
         self.active_cam_name = None      # 键盘/曝光操作作用的相机 (按 1/2 切换)
@@ -552,6 +565,9 @@ class ObjectDetector(Node):
         cam.last_detect_at = -100.
         cam.yolo_agnostic_nms = bool(p("yolo_agnostic_nms", True))
         cam.min_track_hits = int(p("min_track_hits", 2))
+        cam.belt_filter = bool(p("belt_filter", True))
+        cam.belt_lower_hsv = list(p("belt_lower_hsv", DEFAULT_LOWER_HSV))
+        cam.belt_upper_hsv = list(p("belt_upper_hsv", DEFAULT_UPPER_HSV))
         cam.preprocess_clahe = bool(p("preprocess_clahe", False))
         cam.clahe_clip_limit = float(p("clahe_clip_limit", 2.))
         cam.inference_size = int(p("inference_size", 640))
@@ -1349,6 +1365,45 @@ class ObjectDetector(Node):
             detected=False,valid=False,invalid_reason=reason,objects=[],objects_count=0))
         cam.pub_detection_info.publish(msg)
 
+    def _reload_belt_calibration(self):
+        now=time.monotonic()
+        if now-self._belt_calibration_checked_at<1.:
+            return
+        self._belt_calibration_checked_at=now
+        try:
+            mtime=_BELT_ROI_PATH.stat().st_mtime
+        except OSError:
+            return
+        if mtime==self._belt_calibration_mtime:
+            return
+        data=load_calibration(_BELT_ROI_PATH)
+        if not data:
+            self.get_logger().warning(f'传送带标定文件无效: {_BELT_ROI_PATH}',throttle_duration_sec=5.)
+            return
+        self._belt_calibration=data
+        self._belt_calibration_mtime=mtime
+        self.get_logger().info(f'已加载 D455 传送带范围: {len(data.get("polygon",[]))} 点')
+
+    def _belt_region(self,cam,rgb):
+        self._reload_belt_calibration()
+        lower=cam.belt_lower_hsv
+        upper=cam.belt_upper_hsv
+        if self._belt_calibration:
+            lower=self._belt_calibration.get('lower_hsv',lower)
+            upper=self._belt_calibration.get('upper_hsv',upper)
+        if cam.name=='d455' and self._belt_calibration:
+            data=self._belt_calibration
+            mask=polygon_mask(data.get('polygon'),rgb.shape[1],rgb.shape[0],
+                              (data.get('image_width',rgb.shape[1]),data.get('image_height',rgb.shape[0])))
+            polygon=None
+            return mask,polygon,mask is not None
+        mask,polygon,valid=build_belt_mask(rgb,lower,upper)
+        if valid:
+            cam.belt_mask=mask;cam.belt_polygon=polygon;cam.belt_seen_at=time.monotonic()
+        elif cam.belt_mask is not None and time.monotonic()-cam.belt_seen_at<.5:
+            return cam.belt_mask,cam.belt_polygon,True
+        return mask,polygon,valid
+
     def detect_and_publish(self, cam, rgb=None, rgb_stamp=None):
         """主检测函数 (针对指定相机, 两路各自调用)。
 
@@ -1378,6 +1433,22 @@ class ObjectDetector(Node):
         if depth_img is None or depth_img.shape[:2] != rgb.shape[:2] or rgb.shape[:2]!=cam.info_size:
             self._publish_invalid(cam,"rgb_depth_intrinsics_pair_unavailable")
             return
+        belt_mask = None
+        belt_polygon = None
+        belt_valid = True
+        belt_rejected = 0
+        if cam.belt_filter:
+            belt_mask, belt_polygon, belt_valid = self._belt_region(cam, rgb)
+            if belt_mask is not None:
+                if belt_polygon:
+                    cv2.polylines(display_img, [np.asarray(belt_polygon, dtype=np.int32)],
+                                  True, (0, 165, 255), 2)
+                else:
+                    contours, _ = cv2.findContours(belt_mask, cv2.RETR_EXTERNAL,
+                                                   cv2.CHAIN_APPROX_SIMPLE)
+                    if contours:
+                        cv2.drawContours(display_img, [max(contours, key=cv2.contourArea)],
+                                         -1, (0, 165, 255), 2)
         try:
             # YOLO 检测
             inference_rgb = rgb
@@ -1416,6 +1487,13 @@ class ObjectDetector(Node):
                 boxes_sorted = [
                     Detection(*refine_bbox_grabcut(rgb, d.bbox), d.confidence, d.class_id)
                     for d in boxes_sorted]
+            if cam.belt_filter:
+                if not belt_valid or belt_mask is None:
+                    belt_rejected = len(boxes_sorted)
+                    boxes_sorted = []
+                else:
+                    boxes_sorted, belt_rejected = filter_detections_in_mask(
+                        boxes_sorted, belt_mask)
             if boxes_sorted:
                 cam.detection_count += 1
 
@@ -1739,6 +1817,9 @@ class ObjectDetector(Node):
                 "motion_session": cam.motion_session,
                 "objects": objects_list,
                 "objects_count": len(objects_list),
+                "belt_filter_enabled": cam.belt_filter,
+                "belt_region_valid": belt_valid,
+                "belt_filtered_out": belt_rejected,
             }
             if primary_info is not None:
                 info_dict["object_name"] = primary_info["object_name"]

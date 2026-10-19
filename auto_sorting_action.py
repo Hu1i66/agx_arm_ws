@@ -735,15 +735,21 @@ class MoveItActionClient(WorkbenchControl, Node):
     def cmd_callback(self, msg):
         try:
             command=json.loads(msg.data);camera=command.get('camera_id','d455')
-            self.validate_workbench_command(command)
+            validator=getattr(self,'validate_workbench_command',None)
+            if validator:validator(command)
             if command.get("workbench") and command.get("start_intent"):
                 self._pause_after_cycle=False
             assert_visual_target_fresh(command)
             if camera not in ('d455','dabai'):raise ValueError('未知抓取相机')
             if camera=='dabai' and command.get('cmd')=='sort_dynamic':raise ValueError('Dabai首轮仅支持静态抓取')
         except (ValueError,TypeError) as exc:
-            self.get_logger().error(str(exc));self.workbench_ack(locals().get('command',{}),False,str(exc));return
-        self.cmd_queue.put(msg.data);self.workbench_ack(command,True)
+            self.get_logger().error(str(exc))
+            ack=getattr(self,'workbench_ack',None)
+            if ack:ack(locals().get('command',{}),False,str(exc))
+            return
+        self.cmd_queue.put(msg.data)
+        ack=getattr(self,'workbench_ack',None)
+        if ack:ack(command,True)
         
     def _check_calibrated_tool(self):
         if time.monotonic()-getattr(self,'_tool_check_at',-100.)>2.:
@@ -3097,7 +3103,8 @@ def main():
                 
             try:
                 data = json.loads(cmd_data_str)
-                node.validate_workbench_command(data)
+                validator=getattr(node,'validate_workbench_command',None)
+                if validator:validator(data)
                 assert_visual_target_fresh(data)  # 出队重新查戳，不能只在ROS接收时检查
             except Exception as e:
                 print(f"❌ 收到无法解析的指令: {cmd_data_str}, 错误: {e}")

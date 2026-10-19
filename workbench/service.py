@@ -8,6 +8,7 @@ from .components import Components,COMPONENTS
 from .logs import Logs,ReconnectNotice
 from .tasks import Tasks
 from .grasp_flow import grasp_stage_from_text
+from vision.belt_roi import calibration_payload
 import runtime_config as rc
 import runtime_launcher as launcher
 
@@ -217,6 +218,14 @@ class Workbench:
         if op=='capture.start':return self.capture.start(args.get('cameras',['d455','dabai']),args.get('interval',2.))
         if op=='capture.stop':return self.capture.stop()
         if op=='capture.export':return {'path':str(self.capture.export())}
+        if op=='belt.calibrate':
+            frame=self.capture.frames.get('d455')
+            if frame is None:raise ValueError('尚未收到 D455 原始图像')
+            data=calibration_payload(frame[0])
+            path=self.root/'config/calibration/d455_belt_roi.json'
+            atomic_json(path,data)
+            return dict(state='saved',path=str(path),polygon=data['polygon'],
+                        lower_hsv=data['lower_hsv'],upper_hsv=data['upper_hsv'])
         if op=='logs.subscribe':return self.logs.query(**args)[-10000:]
         if op=='logs.export':return {'path':str(self.logs.export(**args))}
         if op=='logs.history':

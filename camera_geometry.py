@@ -65,9 +65,17 @@ class CameraGeometry:
             with self.lock:rows=list(self.poses)
             if not rows or time.monotonic()-rows[-1][2]>1.:raise ValueError('Fresh image-time robot feedback unavailable')
             before=[row for row in rows if row[0]<=stamp];after=[row for row in rows if row[0]>=stamp]
-            if not before or not after:raise ValueError('Image-time robot pose not bracketed; retry after fresh feedback')
+            if not before or not after:
+                nearest=min(rows,key=lambda row:abs(row[0]-stamp))
+                if abs(nearest[0]-stamp)>.15:raise ValueError('Image-time robot pose not bracketed; retry after fresh feedback')
+                T=nearest[1].copy()
+                if he['parent']=='link6':T=T@inverse(self.S)
+                return T@C
             a,b=before[-1],after[0]
-            if max(stamp-a[0],b[0]-stamp)>.05:raise ValueError('Robot/image timestamps differ by more than 50ms')
+            translation_delta=float(np.linalg.norm(a[1][:3,3]-b[1][:3,3]))
+            rotation_delta=float(Rotation.from_matrix(a[1][:3,:3].T@b[1][:3,:3]).magnitude())
+            tolerance=.15 if translation_delta<.003 and rotation_delta<.02 else .05
+            if max(stamp-a[0],b[0]-stamp)>tolerance:raise ValueError(f'Robot/image timestamps differ by more than {tolerance*1000:.0f}ms')
             u=0. if b[0]==a[0] else (stamp-a[0])/(b[0]-a[0])
             T=np.eye(4);T[:3,3]=(1-u)*a[1][:3,3]+u*b[1][:3,3]
             T[:3,:3]=a[1][:3,:3] if b[0]==a[0] else Slerp([a[0],b[0]],Rotation.from_matrix([a[1][:3,:3],b[1][:3,:3]]))([stamp]).as_matrix()[0]

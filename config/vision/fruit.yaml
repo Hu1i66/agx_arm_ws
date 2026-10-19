@@ -16,6 +16,7 @@ object_detector:
     d455.yolo_iou: 0.45
     d455.yolo_agnostic_nms: true
     d455.min_track_hits: 2
+    d455.belt_filter: true
     d455.x_offset_m: 0.0
     d455.y_offset_m: 0.0
     d455.z_offset_m: 0.0
@@ -32,6 +33,7 @@ object_detector:
     dabai.yolo_iou: 0.45
     dabai.yolo_agnostic_nms: true
     dabai.min_track_hits: 3
+    dabai.belt_filter: true
     dabai.preprocess_clahe: true
     dabai.clahe_clip_limit: 2.0
     dabai.inference_size: 960

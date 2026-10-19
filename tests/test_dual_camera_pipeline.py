@@ -129,6 +129,9 @@ def test_dabai_feedback_interpolation_undoes_tcp_once(monkeypatch):
     monkeypatch.setitem(sys.modules,'rclpy',NS(time=NS(Time=lambda **kw:None)))
     monkeypatch.setitem(sys.modules,'rclpy.time',NS(Time=lambda **kw:None))
     np.testing.assert_allclose(n.camera('dabai',10),F@C,atol=1e-12)
+    # At the observation pose, a near, stationary pose may bridge a short missing bracket.
+    n.poses=deque([(9.95,F@S,time.monotonic()),(9.90,F@S,time.monotonic())])
+    np.testing.assert_allclose(n.camera('dabai',10),F@C,atol=1e-12)
     n._driver_checked_at-=2
     with pytest.raises(ValueError,match='Fresh driver'):n.camera('dabai',10)
     n._driver_checked_at=time.monotonic()

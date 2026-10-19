@@ -7,6 +7,8 @@ from vision.tracker import (ClassVoteStabilizer, Detection, ScalarKalmanCV,
                             deduplicate_detections, expand_detection, iou_xyxy)
 from vision.tracker import nearest_cross_camera_match
 from vision.tracker import refine_bbox_grabcut
+from vision.belt_roi import (build_belt_mask, calibration_payload,
+                             filter_detections_in_mask, polygon_mask)
 
 
 def test_cross_class_overlapping_boxes_are_deduplicated():
@@ -76,3 +78,20 @@ def test_grabcut_expands_bbox_to_full_visible_fruit():
     refined = refine_bbox_grabcut(image, (60, 70, 120, 110))
     assert refined[1] < 70 and refined[3] > 110
     assert refined[0] < 60 or refined[2] > 120
+
+
+def test_green_conveyor_mask_fills_fruit_holes():
+    image = np.zeros((180, 260, 3), np.uint8)
+    image[30:160, 20:240] = (50, 220, 0)
+    cv2.circle(image, (130, 95), 24, (20, 40, 220), -1)
+    mask, polygon, valid = build_belt_mask(image)
+    assert valid and polygon
+    assert mask[130, 50] == 255 and mask[95, 130] == 255
+    calibrated = calibration_payload(image)
+    assert polygon_mask(calibrated['polygon'], 260, 180, (260, 180))[130, 50] == 255
+    mask = np.zeros((180, 260), np.uint8);mask[30:160, 20:240] = 255
+    kept, rejected = filter_detections_in_mask([
+        Detection(40, 60, 80, 100, .8, 0),
+        Detection(210, 150, 255, 175, .7, 0),
+    ], mask)
+    assert len(kept) == 1 and rejected == 1
