@@ -1,6 +1,6 @@
 # Piper 平板上位机
 
-版本：`0.3.2`
+版本：`0.3.4`
 
 目标：iPad Safari 优先，兼容 Android Chrome，实验室同一局域网使用。
 
@@ -76,6 +76,8 @@ cd /home/lxf/.codex/worktrees/f142/agx_arm_ws
 - 放置方案选择、连续开始、所选目标单次抓取、本轮后停止。
 - 待机位、观察位、复位、急停。
 
+抓取模式与顶部机械臂快捷命令共用同一相机状态。切到 Dabai 静态后，观察位固定按 Dabai 相机执行，与电脑工作台的模式行为一致。横屏抓取页按视口高度自适应，iPad 1194×834 检查无整页纵向滚动；对象数量变化时只滚动检测目标卡片内部。
+
 连接页：
 
 - CAN 激活、机械臂激活、T1、D455、Dabai、双路 YOLO、T5、传送带。
@@ -145,6 +147,8 @@ tablet.stream.keyframe
 
 WebRTC 使用 aiortc 发送 H.264，默认 15 fps，两路最高目标合计约 3～5 Mbps。当前默认使用 libx264；在 iPad Safari 双流实测中 NVENC 路径曾触发 `libnvcuvid.so` 原生崩溃，因此不再默认启用。`config/tablet_hmi.json` 可将 `media.h264_encoder` 切换为 `nvenc` 做独立验证。JPEG 主循环默认 6 fps，质量 72，通过同源 WebSocket 发送；WebSocket 也不可用时退回 MJPEG。每路只保留最新帧，不建立历史队列。
 
+媒体节点分别监控两路 ROS 图像订阅。任一路 3 秒没有新帧时，会重建该路订阅，不重启另一路视频。网关每秒下发 `media.health`，平板据此暂停无新画面的相机、保留最后帧，并在输入恢复后重新建立视频。
+
 在平板地址后加 `?transport=jpeg` 可直接验证低带宽 JPEG 模式，例如 `https://10.217.81.33:8443/?transport=jpeg#/grab`。
 
 WebRTC 信令通过网关同源转发，媒体 HTTP 端口只绑定回环地址。短时媒体令牌默认 60 秒，绑定设备与相机。检测框由平板 Canvas 叠加，不烧录进视频。
@@ -164,6 +168,8 @@ tablet_hmi/public/models/
 ```
 
 网关通过 `tablet.telemetry` 以约 15 Hz 读取 TF，平板对位置做 lerp、对四元数做 slerp。模型不可用时自动退回真实 FK 骨架，而不是隐藏机械臂状态。
+
+三维场景只绘制机械臂、地面网格和检测物体，不加入传送带几何。D455 检测物体使用蓝色球体和标签，Dabai 使用青色；选中目标增加脉冲环。物体位置与电脑工作台 RViz 使用同一 `base_position_m` 数据。
 
 Assimp 导出的 GLB 同时带场景根节点和网格节点的 Z-up→Y-up 转换。Three.js 端对这层重复旋转保留一次净 −90° 轴变换，再把 TF 位姿转换到 Three.js 坐标；如果按普通“抵消两次旋转”处理，各连杆会散开。该组合已通过相邻连杆最近点距离验证。
 

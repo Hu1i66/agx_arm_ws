@@ -21,7 +21,7 @@ from ..tablet_shared import (
 from .service_client import ServiceClient
 from .state import GatewayState
 
-VERSION = "0.3.2"
+VERSION = "0.3.4"
 COOKIE = "piper_device"
 ALLOWED_ACTIONS = {
     "status.get", "motion.start", "motion.pause_after_cycle", "motion.send",
@@ -150,6 +150,13 @@ class TabletGateway:
             if previous is not None and state != previous:
                 self.state.event("media." + ("online" if state == "online" else "offline"), {"state": state})
             previous = state
+            if self.ws_clients:
+                await self._broadcast({
+                    "sequence": self.next_sequence(),
+                    "stamp": _now(),
+                    "type": "media.health",
+                    "data": self.media_health,
+                })
             await asyncio.sleep(1.0)
 
     async def _lease_pump(self):

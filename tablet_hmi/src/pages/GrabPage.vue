@@ -9,7 +9,10 @@ import RobotView from "../components/RobotView.vue";
 import { useWorkbench } from "../stores/workbench";
 
 const store = useWorkbench();
-const mode = ref<"d455-dynamic" | "d455-static" | "dabai-static">("d455-dynamic");
+const mode = computed({
+  get: () => store.selectedMode,
+  set: (value: "d455-dynamic" | "d455-static" | "dabai-static") => store.setMode(value),
+});
 const placementId = ref("");
 const busy = ref("");
 const modes = [

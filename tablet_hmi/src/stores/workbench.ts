@@ -15,6 +15,7 @@ export const useWorkbench = defineStore("workbench", () => {
   const clock = ref(Date.now() / 1000);
   const error = ref("");
   const selectedCamera = ref<"d455" | "dabai">("d455");
+  const selectedMode = ref<"d455-dynamic" | "d455-static" | "dabai-static">("d455-dynamic");
   const selectedTrack = ref<number | null>(null);
   const selectedSession = ref("");
   const selectedTargetSnapshot = shallowRef<DetectionObject | null>(null);
@@ -30,11 +31,13 @@ export const useWorkbench = defineStore("workbench", () => {
   let reconnectDelay = 800;
   let heartbeatSent = 0;
   let stopped = false;
+  let modeSelectedByUser = false;
 
   const device = computed(() => snapshot.value.device || null);
   const lease = computed(() => snapshot.value.lease || null);
   const isOperator = computed(() => device.value?.role === "operator");
   const hasLease = computed(() => !!lease.value && lease.value.device_id === device.value?.id);
+  const commandCamera = computed<"d455" | "dabai">(() => selectedMode.value === "dabai-static" ? "dabai" : "d455");
   const detections = computed<Record<string, DetectionPayload>>(() => snapshot.value.detections || {});
   const media = computed<Record<string, any>>(() => snapshot.value.media || {});
   const workbench = computed<Record<string, any>>(() => snapshot.value.workbench || {});
@@ -45,9 +48,18 @@ export const useWorkbench = defineStore("workbench", () => {
     snapshot.value = { ...snapshot.value, lease: value || null };
   }
 
+  function hydrateMode() {
+    if (modeSelectedByUser) return;
+    const backendMode = String(snapshot.value.workbench?.task?.mode || "");
+    if (!["d455-dynamic", "d455-static", "dabai-static"].includes(backendMode)) return;
+    selectedMode.value = backendMode as typeof selectedMode.value;
+    selectedCamera.value = commandCamera.value;
+  }
+
   function handleEvent(row: any) {
     if (row.type === "snapshot") {
       snapshot.value = row.data;
+      hydrateMode();
       if (selectedTrack.value !== null && !currentTarget.value) {
         selectedTrack.value = null;
         selectedSession.value = "";
@@ -64,6 +76,10 @@ export const useWorkbench = defineStore("workbench", () => {
     }
     if (row.type === "lease.changed") {
       updateLease(row.data);
+      return;
+    }
+    if (row.type === "media.health") {
+      snapshot.value = { ...snapshot.value, media: row.data || {} };
       return;
     }
     if (row.type === "grasp.stage") {
@@ -148,7 +164,7 @@ export const useWorkbench = defineStore("workbench", () => {
           page: location.hash || "#/grab",
           reconnect_reason: error.value,
           ws_rtt_ms: socketLatency.value,
-          app_version: "0.3.2",
+          app_version: "0.3.4",
         }));
       }, 5000);
       window.clearInterval(leaseTimer);
@@ -200,6 +216,7 @@ export const useWorkbench = defineStore("workbench", () => {
     const body = await response.json();
     if (!response.ok) throw new Error(body?.error?.message || "刷新状态失败");
     snapshot.value = body.snapshot;
+    hydrateMode();
     return true;
   }
 
@@ -301,6 +318,12 @@ export const useWorkbench = defineStore("workbench", () => {
     selectedTargetSnapshot.value = (data?.objects || []).find((item) => Number(item.track_id) === trackId) || null;
   }
 
+  function setMode(value: "d455-dynamic" | "d455-static" | "dabai-static") {
+    modeSelectedByUser = true;
+    selectedMode.value = value;
+    selectedCamera.value = value === "dabai-static" ? "dabai" : "d455";
+  }
+
   function setError(message: string) {
     error.value = message;
   }
@@ -310,10 +333,10 @@ export const useWorkbench = defineStore("workbench", () => {
   }
 
   return {
-    snapshot, socketState, socketLatency, clock, error, selectedCamera, selectedTrack,
+    snapshot, socketState, socketLatency, clock, error, selectedCamera, selectedMode, commandCamera, selectedTrack,
     selectedSession, selectedTargetSnapshot, pending, componentErrors, graspStage, graspLabel, device, lease, isOperator, hasLease, detections,
     media, workbench, components, task, currentTarget,
     connect, disconnect, refresh, acquireLease, releaseLease, action, pair,
-    selectTarget, setError, clearError, updateLease,
+    selectTarget, setMode, setError, clearError, updateLease,
   };
 });

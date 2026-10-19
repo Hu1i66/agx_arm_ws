@@ -15,13 +15,20 @@ let controls: OrbitControls | null = null;
 let scene: THREE.Scene | null = null;
 let modelRoot: THREE.Group | null = null;
 let fallbackRoot: THREE.Group | null = null;
-let targetMarker: THREE.Group | null = null;
+let detectionRoot: THREE.Group | null = null;
 let trail: THREE.Line | null = null;
 let observer: ResizeObserver | null = null;
 let frameId = 0;
 let hidden = false;
+let detectionSignature = "";
+let lastDetectionSync = 0;
 const links = new Map<string, THREE.Object3D>();
 const desired = new Map<string, { position: THREE.Vector3; quaternion: THREE.Quaternion }>();
+const detectionMarkers = new Map<string, {
+  group: THREE.Group;
+  desired: THREE.Vector3;
+  selected: boolean;
+}>();
 const trailPoints: THREE.Vector3[] = [];
 const linkNames = ["base_link", "link1", "link2", "link3", "link4", "link5", "link6", "gripper_base", "gripper_link1", "gripper_link2", "tcp_link"];
 
@@ -29,6 +36,15 @@ const telemetry = computed(() => store.snapshot.robot || {});
 const joints = computed<number[]>(() => telemetry.value.joints_rad || []);
 const tcp = computed<number[]>(() => telemetry.value.tcp_xyzw || []);
 const target = computed(() => store.currentTarget?.base_position_m || null);
+const visibleDetections = computed(() => {
+  let count = 0;
+  for (const camera of ["d455", "dabai"] as const) {
+    const data = store.detections[camera];
+    if (!data || Number(store.clock) - Number(data.header_stamp || 0) > 1.5) continue;
+    count += (data.objects || []).filter((item) => !!item.base_position_m).length;
+  }
+  return count;
+});
 
 function poseFrom(value: number[]) {
   const baseRotation = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2);
@@ -119,21 +135,114 @@ async function loadModel() {
   }
 }
 
-function buildTarget() {
-  targetMarker = new THREE.Group();
+function labelTexture(text: string, selected: boolean, camera: "d455" | "dabai") {
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 96;
+  const context = canvas.getContext("2d");
+  if (context) {
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = selected ? "rgba(23,105,255,.94)" : camera === "d455" ? "rgba(16,55,105,.86)" : "rgba(6,82,74,.86)";
+    context.beginPath();
+    context.roundRect(4, 8, 504, 78, 14);
+    context.fill();
+    context.fillStyle = "#fff";
+    context.font = "600 34px 'PingFang SC','Microsoft YaHei',sans-serif";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(text, 256, 48, 480);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+function createDetectionMarker(camera: "d455" | "dabai", object: any, selected: boolean) {
+  const group = new THREE.Group();
+  const diameter = Math.max(0.02, Math.min(Number(object.estimated_diameter_m || 0.05), 0.15)) * 0.65;
+  const radius = Math.max(0.012, diameter / 2);
+  const color = camera === "d455" ? 0x147dff : 0x13bfa0;
   const sphere = new THREE.Mesh(
-    new THREE.SphereGeometry(0.025, 20, 14),
-    new THREE.MeshBasicMaterial({ color: 0x1769ff, transparent: true, opacity: 0.82 }),
+    new THREE.SphereGeometry(radius, 22, 16),
+    new THREE.MeshStandardMaterial({
+      color: selected ? 0x1769ff : color,
+      roughness: 0.32,
+      metalness: 0.08,
+      transparent: true,
+      opacity: selected ? 0.9 : 0.72,
+    }),
   );
   const halo = new THREE.Mesh(
-    new THREE.RingGeometry(0.04, 0.047, 32),
-    new THREE.MeshBasicMaterial({ color: 0x1769ff, transparent: true, opacity: 0.32, side: THREE.DoubleSide }),
+    new THREE.RingGeometry(radius * (selected ? 1.65 : 1.3), radius * (selected ? 1.9 : 1.48), 36),
+    new THREE.MeshBasicMaterial({
+      color: selected ? 0x1769ff : color,
+      transparent: true,
+      opacity: selected ? 0.55 : 0.28,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    }),
   );
-  halo.rotation.x = Math.PI / 2;
-  targetMarker.add(sphere, halo);
-  targetMarker.visible = false;
-  targetMarker.name = "selected-target";
-  modelRoot?.add(targetMarker);
+  halo.rotation.x = -Math.PI / 2;
+  halo.position.y = -radius * 0.8;
+  if (selected) halo.name = "selected-halo";
+  const label = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: labelTexture(`T${object.track_id ?? "?"}  ${object.object_name || object.raw_object_name || "object"}`, selected, camera),
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+  }));
+  label.scale.set(0.22, 0.041, 1);
+  label.position.y = radius + 0.032;
+  label.renderOrder = 10;
+  group.add(sphere, halo, label);
+  group.userData.camera = camera;
+  group.userData.trackId = object.track_id;
+  return group;
+}
+
+function syncDetectionMarkers() {
+  if (!detectionRoot) return;
+  const rows: { key: string; camera: "d455" | "dabai"; object: any; selected: boolean }[] = [];
+  for (const camera of ["d455", "dabai"] as const) {
+    const data = store.detections[camera];
+    if (!data || Number(store.clock) - Number(data.header_stamp || 0) > 1.5) continue;
+    for (const object of data.objects || []) {
+      if (!object.base_position_m) continue;
+      const selected = camera === store.selectedCamera && Number(object.track_id) === Number(store.selectedTrack);
+      const key = `${camera}:${object.track_id ?? `${object.object_name}:${object.base_position_m.x}:${object.base_position_m.y}`}`;
+      rows.push({ key, camera, object, selected });
+    }
+  }
+  const signature = rows.map(({ key, object, selected }) =>
+    `${key}:${object.object_name || object.raw_object_name || ""}:${selected ? 1 : 0}`).join("|");
+  if (signature !== detectionSignature) {
+    detectionSignature = signature;
+    for (const marker of detectionMarkers.values()) {
+      marker.group.traverse((child) => {
+        if (child instanceof THREE.Mesh) {
+          child.geometry?.dispose();
+          const materials = Array.isArray(child.material) ? child.material : [child.material];
+          materials.forEach((material) => material?.dispose());
+        } else if (child instanceof THREE.Sprite) {
+          child.material.map?.dispose();
+          child.material.dispose();
+        }
+      });
+    }
+    detectionMarkers.clear();
+    detectionRoot.clear();
+    for (const { key, camera, object, selected } of rows) {
+      const group = createDetectionMarker(camera, object, selected);
+      const desired = new THREE.Vector3(object.base_position_m.x, object.base_position_m.z + 0.02, -object.base_position_m.y);
+      group.position.copy(desired);
+      detectionRoot.add(group);
+      detectionMarkers.set(key, { group, desired, selected });
+    }
+  }
+  for (const { key, object } of rows) {
+    const marker = detectionMarkers.get(key);
+    if (marker) marker.desired.set(object.base_position_m.x, object.base_position_m.z + 0.02, -object.base_position_m.y);
+  }
 }
 
 function updateScene() {
@@ -152,10 +261,16 @@ function updateScene() {
       trail.geometry.setDrawRange(0, trailPoints.length);
     }
   }
-  if (targetMarker) {
-    const position = target.value;
-    targetMarker.visible = !!position;
-    if (position) targetMarker.position.set(position.x, position.z, -position.y);
+  if (performance.now() - lastDetectionSync > 100) {
+    lastDetectionSync = performance.now();
+    syncDetectionMarkers();
+  }
+  for (const marker of detectionMarkers.values()) {
+    marker.group.position.lerp(marker.desired, 0.32);
+    if (marker.selected) {
+      const halo = marker.group.getObjectByName("selected-halo");
+      if (halo) halo.scale.setScalar(1 + Math.sin(performance.now() / 300) * 0.12);
+    }
   }
 }
 
@@ -182,10 +297,6 @@ function animate() {
       attribute.needsUpdate = true;
       line.geometry.setDrawRange(0, Math.min(8, positions.length));
     }
-  }
-  if (targetMarker?.visible) {
-    const halo = targetMarker.children[1];
-    if (halo) halo.scale.setScalar(1 + Math.sin(performance.now() / 360) * 0.08);
   }
   if (trail && trail.material instanceof THREE.LineBasicMaterial) trail.material.opacity = 0.22;
   controls?.update();
@@ -229,12 +340,14 @@ onMounted(() => {
   scene.add(grid);
   modelRoot = new THREE.Group();
   scene.add(modelRoot);
+  detectionRoot = new THREE.Group();
+  detectionRoot.name = "detected-objects";
+  scene.add(detectionRoot);
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(80 * 3), 3));
   geometry.setDrawRange(0, 0);
   trail = new THREE.Line(geometry, new THREE.LineBasicMaterial({ color: 0x1769ff, transparent: true, opacity: 0.22 }));
   modelRoot.add(trail);
-  buildTarget();
   loadModel();
   observer = new ResizeObserver(resize);
   observer.observe(host.value);
@@ -272,13 +385,19 @@ onBeforeUnmount(() => {
         <span class="icon-tile"><Box :size="19" /></span>
         <div><h3>机械臂实时视图</h3><p>base_link · 服务器实际 FK</p></div>
       </div>
-      <div class="model-state" :class="modelState">
-        <Layers3 :size="14" />{{ modelState === "ready" ? "URDF 模型" : modelState === "fallback" ? "FK 骨架" : "模型加载" }}
+      <div class="robot-meta">
+        <span class="detected-count">检测物体 {{ visibleDetections }}</span>
+        <div class="model-state" :class="modelState">
+          <Layers3 :size="14" />{{ modelState === "ready" ? "URDF 模型" : modelState === "fallback" ? "FK 骨架" : "模型加载" }}
+        </div>
       </div>
     </header>
     <div ref="host" class="robot-canvas">
       <div v-if="!telemetry.connected" class="model-offline">机械臂反馈未连接 · 保留最后姿态</div>
-      <div v-if="target" class="target-caption"><Crosshair :size="13" /> 已选目标</div>
+      <div v-if="visibleDetections" class="target-caption">
+        <Crosshair :size="13" />
+        {{ target ? `已选 T${store.selectedTrack}` : `检测 ${visibleDetections} 个物体` }}
+      </div>
     </div>
     <footer class="robot-foot">
       <div class="joint-line">

@@ -90,6 +90,7 @@ class FrameHub:
         self.subscribers = {camera: 0 for camera in ("d455", "dabai")}
         self.peers = {camera: 0 for camera in ("d455", "dabai")}
         self.bitrate_kbps = {camera: 0.0 for camera in ("d455", "dabai")}
+        self.reconnects = {camera: 0 for camera in ("d455", "dabai")}
 
     def update(self, camera, pixels, stamp):
         now = time.monotonic()
@@ -147,6 +148,7 @@ class FrameHub:
                     "codec": "H.264 / JPEG" if WEBRTC_AVAILABLE else "JPEG",
                     "resolution": [640, 480],
                     "received_frames": self.received[camera],
+                    "subscription_reconnects": self.reconnects[camera],
                 }
         return {
             "state": "online",
@@ -162,16 +164,46 @@ if ROS_AVAILABLE:
             super().__init__("piper_workbench_media")
             self.hub = hub
             self.bridge = CvBridge()
-            self.image_subscriptions = []
-            for camera, topic in (
-                ("d455", "/camera/camera/color/image_raw"),
-                ("dabai", "/dabai/color/image_raw"),
-            ):
-                self.image_subscriptions.append(self.create_subscription(
-                    Image, topic,
-                    lambda message, camera_id=camera: self.on_image(camera_id, message),
-                    qos_profile_sensor_data,
-                ))
+            self.started_at = time.monotonic()
+            self.image_topics = {
+                "d455": "/camera/camera/color/image_raw",
+                "dabai": "/dabai/color/image_raw",
+            }
+            self.image_subscriptions = {
+                camera: self._subscribe(camera) for camera in self.image_topics
+            }
+            self.last_resubscribe = {camera: 0.0 for camera in self.image_topics}
+            self.watchdog = self.create_timer(2.0, self._watch_subscriptions)
+
+        def _subscribe(self, camera):
+            return self.create_subscription(
+                Image, self.image_topics[camera],
+                lambda message, camera_id=camera: self.on_image(camera_id, message),
+                qos_profile_sensor_data,
+            )
+
+        def _watch_subscriptions(self):
+            now = time.monotonic()
+            if now - self.started_at < 4:
+                return
+            for camera in self.image_topics:
+                age = self.hub.frame_age(camera)
+                stale = age is None or age > 3.0
+                if not stale:
+                    self.last_resubscribe[camera] = 0.0
+                    continue
+                if now - self.last_resubscribe[camera] < 5.0:
+                    continue
+                old = self.image_subscriptions.get(camera)
+                if old is not None:
+                    self.destroy_subscription(old)
+                self.image_subscriptions[camera] = self._subscribe(camera)
+                self.last_resubscribe[camera] = now
+                self.hub.reconnects[camera] += 1
+                self.get_logger().warning(
+                    f"{camera} image subscription stale for {age}; recreated "
+                    f"(count={self.hub.reconnects[camera]})"
+                )
 
         def on_image(self, camera, message):
             try:

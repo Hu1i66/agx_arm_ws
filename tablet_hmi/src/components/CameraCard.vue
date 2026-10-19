@@ -14,6 +14,7 @@ const fallbackUrl = ref("");
 const jpegFrame = ref("");
 const jpegReloadKey = ref(0);
 const streamError = ref("");
+const pauseReason = ref("");
 let pc: RTCPeerConnection | null = null;
 let sessionId = "";
 let whepBase = "";
@@ -27,15 +28,25 @@ let jpegSocket: WebSocket | null = null;
 let jpegFrameUrl = "";
 let jpegRetryTimer = 0;
 let jpegWatchdog = 0;
+let upgradeTimer = 0;
 let lastJpegAt = 0;
+let upgrading = false;
 
 const label = computed(() => props.camera === "d455" ? "D455" : "Dabai");
 const subtitle = computed(() => props.camera === "d455" ? "固定相机" : "腕载相机");
 const detection = computed(() => store.detections[props.camera] || {});
 const cameraHealth = computed(() => store.media?.cameras?.[props.camera] || {});
 const objects = computed<DetectionObject[]>(() => (detection.value.objects || []) as DetectionObject[]);
-const framePaused = computed(() => mode.value === "paused" && Number(cameraHealth.value.frame_age_s || 0) > 1);
+const framePaused = computed(() => mode.value === "paused");
 const selected = computed(() => store.selectedCamera === props.camera ? store.selectedTrack : null);
+const sourceStale = computed(() => {
+  const mediaState = String(store.media?.state || "");
+  if (mediaState === "offline" || mediaState === "stopped") return true;
+  const state = String(cameraHealth.value.state || "");
+  if (!state) return false;
+  const age = Number(cameraHealth.value.frame_age_s ?? 0);
+  return state !== "streaming" || age > 2;
+});
 
 function drawOverlay() {
   const element = canvas.value;
@@ -75,9 +86,17 @@ function drawOverlay() {
   }
 }
 
-function pause() {
+function pauseTransport(reason: string, message: string) {
+  pauseReason.value = reason;
   mode.value = "paused";
-  streamError.value = props.camera === "d455" ? "D455 视频流已暂停" : "Dabai 视频流已暂停";
+  streamError.value = message;
+  window.clearTimeout(fallbackTimer);
+  window.clearInterval(watchdogTimer);
+  if (pc && sessionId) fetch(`${whepBase}/${sessionId}`, { method: "DELETE", keepalive: true }).catch(() => undefined);
+  pc?.close();
+  pc = null;
+  sessionId = "";
+  stopJpegSocket();
 }
 
 function fallbackToJpeg(message: string) {
@@ -127,6 +146,8 @@ function stopJpegSocket() {
   jpegRetryTimer = 0;
   window.clearInterval(jpegWatchdog);
   jpegWatchdog = 0;
+  window.clearInterval(upgradeTimer);
+  upgradeTimer = 0;
   jpegSocket?.close();
   jpegSocket = null;
 }
@@ -146,7 +167,7 @@ async function startWebRTC(url: string) {
     const element = video.value;
     element.srcObject = event.streams[0] || new MediaStream([event.track]);
     const ready = () => {
-      if (disposed || mode.value === "jpeg") return;
+      if (disposed || pc !== peer) return;
       mode.value = "webrtc";
       streamError.value = "";
       stopJpegSocket();
@@ -172,7 +193,9 @@ async function startWebRTC(url: string) {
     }, 1000);
   };
   peer.onconnectionstatechange = () => {
-    if (["failed", "disconnected"].includes(peer.connectionState)) fallbackToJpeg("WebRTC 已断开，自动切换 JPEG");
+    if (pc === peer && ["failed", "disconnected"].includes(peer.connectionState)) {
+      fallbackToJpeg("WebRTC 已断开，自动切换 JPEG");
+    }
   };
   const offer = await peer.createOffer();
   await peer.setLocalDescription(offer);
@@ -202,13 +225,34 @@ async function startWebRTC(url: string) {
     }
   }
   const body = await response.json();
-  if (disposed || mode.value === "jpeg" || pc !== peer) {
+  if (disposed || pc !== peer) {
     peer.close();
     return;
   }
   await peer.setRemoteDescription({ type: "answer", sdp: body.sdp });
   sessionId = body.session_id;
   whepBase = url.split("?")[0];
+}
+
+async function tryUpgradeWebRTC() {
+  if (disposed || upgrading || pc || mode.value !== "jpeg" || sourceStale.value ||
+    document.visibilityState === "hidden" ||
+    new URLSearchParams(location.search).get("transport") === "jpeg") return;
+  upgrading = true;
+  try {
+    const response = await fetch(`/api/v1/media/token?camera=${props.camera}`, { cache: "no-store" });
+    const token = await response.json();
+    if (!response.ok) throw new Error(token?.error?.message || "获取视频令牌失败");
+    fallbackUrl.value = token.mjpeg_url;
+    await startWebRTC(token.whep_url);
+  } catch {
+    const failedPeer = pc as RTCPeerConnection | null;
+    failedPeer?.close();
+    pc = null;
+    sessionId = "";
+  } finally {
+    upgrading = false;
+  }
 }
 
 async function start() {
@@ -257,18 +301,13 @@ function choose(event: MouseEvent) {
 }
 
 function visibilityChanged() {
-  if (document.visibilityState === "hidden" && (mode.value === "webrtc" || mode.value === "connecting")) {
-    window.clearTimeout(fallbackTimer);
-    window.clearInterval(watchdogTimer);
-    stopJpegSocket();
-    if (pc && sessionId) fetch(`${whepBase}/${sessionId}`, { method: "DELETE", keepalive: true }).catch(() => undefined);
-    pc?.close();
-    pc = null;
-    sessionId = "";
-    mode.value = "paused";
+  if (document.visibilityState === "hidden" && mode.value !== "paused") {
+    pauseTransport("hidden", `${label.value} 画面已暂停，返回后可恢复`);
   } else if (document.visibilityState === "visible" && mode.value === "paused") {
+    if (pauseReason.value !== "hidden" || sourceStale.value) return;
     mode.value = "connecting";
     streamError.value = "";
+    pauseReason.value = "";
     start();
   }
 }
@@ -278,6 +317,8 @@ watch(() => store.selectedTrack, drawOverlay);
 watch(mode, (value) => {
   window.clearInterval(jpegWatchdog);
   jpegWatchdog = 0;
+  window.clearInterval(upgradeTimer);
+  upgradeTimer = 0;
   if (value !== "jpeg") return;
   lastJpegAt = performance.now();
   jpegWatchdog = window.setInterval(() => {
@@ -286,6 +327,23 @@ watch(mode, (value) => {
       if (!jpegFrame.value) jpegReloadKey.value++;
     }
   }, 2000);
+  upgradeTimer = window.setInterval(() => {
+    tryUpgradeWebRTC();
+  }, 5000);
+});
+watch(sourceStale, (stale) => {
+  if (stale && mode.value !== "paused") {
+    pauseTransport("source", `${label.value} 相机无新画面，保留最后一帧`);
+  } else if (!stale && mode.value === "paused" && !disposed &&
+    (pauseReason.value === "source" ||
+      (pauseReason.value === "hidden" && document.visibilityState === "visible"))) {
+    pauseReason.value = "";
+    mode.value = "connecting";
+    streamError.value = "";
+    start();
+  } else if (!stale && mode.value === "jpeg" && !disposed) {
+    tryUpgradeWebRTC();
+  }
 });
 onMounted(() => {
   document.addEventListener("visibilitychange", visibilityChanged);

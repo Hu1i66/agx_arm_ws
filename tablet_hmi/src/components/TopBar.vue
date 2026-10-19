@@ -47,8 +47,8 @@ async function send(cmd: "standby" | "observe" | "reset" | "emergency_stop") {
   try {
     await store.action("motion.send", {
       cmd,
-      camera_id: store.selectedCamera,
-      dynamic: store.task.mode === "d455-dynamic",
+      camera_id: store.commandCamera,
+      dynamic: store.selectedMode === "d455-dynamic",
       workbench: true,
     }, { requiresLease: cmd !== "emergency_stop" });
   } catch (err) {
