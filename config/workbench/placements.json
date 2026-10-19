@@ -1,28 +1,8 @@
 {
-  "schema_version": 1,
-  "reference_poses": {
-    "standby_joints_rad": [
-      0.0,
-      0.0,
-      0.0,
-      0.0,
-      0.0,
-      0.0
-    ],
-    "dabai_observe_joints_rad": [
-      0.0,
-      1.0669023184516138,
-      -1.1636808254746993,
-      0.0,
-      1.2184841639873214,
-      0.0
-    ]
-  },
   "plans": [
     {
       "id": "legacy-default",
       "name": "原放置点",
-      "via_joints_rad": [],
       "release_joints_rad": [
         1.9992746581595044,
         1.5727510955571302,
@@ -30,12 +10,32 @@
         -0.008045967851693859,
         1.0517179539592632,
         0.022270401255447644
-      ]
+      ],
+      "via_joints_rad": []
     }
   ],
+  "reference_poses": {
+    "dabai_observe_joints_rad": [
+      0,
+      1.0669023184516138,
+      -1.1636808254746993,
+      0,
+      1.2184841639873214,
+      0
+    ],
+    "standby_joints_rad": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "schema_version": 1,
   "selection": {
-    "mode": "single",
+    "class_to_plan_id": {},
     "default_plan_id": "legacy-default",
-    "class_to_plan_id": {}
+    "mode": "single"
   }
 }
