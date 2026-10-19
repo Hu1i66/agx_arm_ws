@@ -82,3 +82,13 @@ def test_explicit_activation_click_is_not_reused_after_usb_reset():
     calls=[];obj=types.SimpleNamespace(components=types.SimpleNamespace(start=lambda *a,**kw:calls.append((a,kw))))
     Workbench.dispatch(obj,'component.start',{'component':'can'})
     assert calls[0][1]['force'] is True
+
+
+def test_capture_status_tracks_real_worker_state(tmp_path):
+    from workbench.capture import Capture
+    capture=Capture(tmp_path)
+    assert capture.status()['running'] is False
+    capture.start(['d455'],interval=.1)
+    assert capture.status()['running'] is True
+    capture.stop()
+    assert capture.status()['running'] is False

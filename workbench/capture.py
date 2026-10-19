@@ -61,6 +61,8 @@ class Capture:
         with self.condition:self.generation+=1;self.condition.notify_all()
         if self.thread and self.thread is not threading.current_thread():self.thread.join()
         return {'state':'stopped','count':self.count}
+    def status(self):
+        return {'running':bool(self.thread and self.thread.is_alive()),'count':self.count}
     def export(self):
         with self.lock:
             if self.session is None:raise ValueError('当前没有可导出的采集会话')

@@ -3,15 +3,18 @@
 #include <QTimer>
 BackendClient::BackendClient(QObject *parent):QObject(parent){
   connect(&socket_,&QLocalSocket::connected,this,[this]{emit online(true);});
-  connect(&socket_,&QLocalSocket::disconnected,this,[this]{buffer_.clear();pending_.clear();emit online(false);});
+  connect(&socket_,&QLocalSocket::disconnected,this,[this]{
+    buffer_.clear();auto ids=pending_.keys();pending_.clear();for(const auto &id:ids)emit completed(id,false);emit online(false);
+  });
   connect(&socket_,&QLocalSocket::readyRead,this,[this]{
     buffer_+=socket_.readAll();int end;
     while((end=buffer_.indexOf('\n'))>=0){
       auto row=QJsonDocument::fromJson(buffer_.left(end)).object();buffer_.remove(0,end+1);
       if(row.contains("event")){emit event(row["event"].toString(),row["data"]);continue;}
-      auto id=row["id"].toString();auto reply=pending_.take(id);
-      if(!row["ok"].toBool()){emit error(row["error"].toObject()["message"].toString());continue;}
+      auto id=row["id"].toString();auto reply=pending_.take(id);bool ok=row["ok"].toBool();
+      if(!ok){emit error(row["error"].toObject()["message"].toString());emit completed(id,false);continue;}
       if(reply)reply(row["result"]);
+      emit completed(id,true);
     }
   });
   auto retry=new QTimer(this);connect(retry,&QTimer::timeout,this,[this]{

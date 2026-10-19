@@ -11,6 +11,7 @@ MainWindow::MainWindow(QWidget *parent):QMainWindow(parent){
  setWindowTitle("Piper 抓取工作台");resize(1600,900);setMinimumSize(1280,760);
  QFile css(QString::fromLocal8Bit(qgetenv("AGX_ARM_WS"))+"/src/piper_workbench/resources/workbench.qss");if(css.open(QFile::ReadOnly))qApp->setStyleSheet(css.readAll()+QString("\nQDoubleSpinBox::up-arrow,QSpinBox::up-arrow{image:url(%1/src/piper_workbench/resources/icons/up.svg);width:14px;height:14px;}QDoubleSpinBox::down-arrow,QSpinBox::down-arrow{image:url(%1/src/piper_workbench/resources/icons/down.svg);width:14px;height:14px;}").arg(QString::fromLocal8Bit(qgetenv("AGX_ARM_WS"))));
  backend_=new BackendClient(this);connect(backend_,&BackendClient::error,this,&MainWindow::showError);
+ connect(backend_,&BackendClient::completed,this,&MainWindow::finishRequest);
  auto *root=new QWidget(this);auto *row=new QHBoxLayout(root);row->setContentsMargins(0,0,0,0);row->setSpacing(0);
  auto *side=new QFrame;side->setObjectName("sidebar");side->setFixedWidth(184);auto *sl=new QVBoxLayout(side);sl->setContentsMargins(0,0,0,0);
  auto *brand=text("Piper 工作台","brand");brand->setFixedHeight(72);brand->setAlignment(Qt::AlignCenter);sl->addWidget(brand);
@@ -27,7 +28,7 @@ MainWindow::MainWindow(QWidget *parent):QMainWindow(parent){
  }hl->addStretch();
  for(auto pair:QList<QPair<QString,QString>>{{"待机位","standby"},{"观察位","observe"},{"复位","reset"},{"急停","emergency_stop"}}){
   auto *b=button(pair.first,false,pair.second=="observe"?"eye":pair.second=="emergency_stop"?"stop":"calibrate");if(pair.second=="observe"){b->setText("动态准备位");b->setObjectName("observationButton");b->setToolTip("动态模式使用已有动态准备位；Dabai 使用可示教观察位；D455 静态使用待机参考位");}if(pair.second=="emergency_stop"){b->setObjectName("danger");b->setMinimumWidth(92);}
-  hl->addWidget(b);connect(b,&QPushButton::clicked,this,[this,pair]{if(pair.second=="emergency_stop")motion_->stop();backend_->call("motion.send",{{"cmd",pair.second},{"camera_id",camera()},{"dynamic",mode_->currentIndex()==0},{"workbench",true}});});
+  hl->addWidget(b);connect(b,&QPushButton::clicked,this,[this,pair,b]{if(pair.second=="emergency_stop")motion_->stop();request(b,"motion.send",{{"cmd",pair.second},{"camera_id",camera()},{"dynamic",mode_->currentIndex()==0},{"workbench",true}},[this](QJsonValue){refresh();},pair.second=="emergency_stop"?"正在急停…":"正在执行…",pair.second=="emergency_stop"?"急停已发送":"已发送");});
  }
  column->addWidget(header);pages_=new QStackedWidget;column->addWidget(pages_,1);row->addWidget(content,1);setCentralWidget(root);
  rviz_=new RvizPanel(root);bridge_=new RosViewBridge(rviz_->node()->get_node_options(),this);motion_=new MotionController(bridge_->node,this);
@@ -60,6 +61,60 @@ MainWindow::~MainWindow(){delete motion_;delete bridge_;}
 void MainWindow::closeEvent(QCloseEvent *event){backend_->call("session.close");event->accept();}
 void MainWindow::showPage(int index){nav_->setCurrentRow(index);}
 QString MainWindow::camera()const{return mode_->currentIndex()==2?"dabai":"d455";}
+QString MainWindow::request(QPushButton *button,QString op,QJsonObject args,std::function<void(QJsonValue)> reply,QString pendingText,QString successText,bool keepDisabledOnSuccess){
+ if(!button||button->property("requestPending").toBool())return {};
+ if(!backend_->connected()){showError("后台尚未连接，请先从桌面入口启动工作台");return {};}
+ QString originalText=button->text(),originalStyle=button->styleSheet();
+ button->setProperty("requestPending",true);button->setEnabled(false);
+ if(!pendingText.isEmpty())button->setText(pendingText);
+ auto id=backend_->call(op,args,reply);
+ if(id.isEmpty()){button->setProperty("requestPending",false);button->setText(originalText);button->setEnabled(true);return {};}
+ pendingButtons_[id]=button;pendingButtonTexts_[id]=originalText;pendingSuccessTexts_[id]=successText;
+ pendingStyles_[id]=originalStyle;pendingKeepDisabled_[id]=keepDisabledOnSuccess;
+ return id;
+}
+void MainWindow::finishRequest(QString id,bool ok){
+ if(!pendingButtons_.contains(id))return;
+ QPointer<QPushButton> button=pendingButtons_.take(id);QString original=pendingButtonTexts_.take(id),success=pendingSuccessTexts_.take(id),style=pendingStyles_.take(id);
+ bool keep=pendingKeepDisabled_.take(id);if(!button)return;
+ button->setProperty("requestPending",false);button->setStyleSheet(style);
+ if(!ok||!keep)button->setEnabled(true);
+ button->setText(original);
+ if(ok&&!success.isEmpty()){
+  button->setText(success);button->setStyleSheet("background:#EAF8F1;color:#10865D;border-color:#9FD8C2;");
+  QTimer::singleShot(1200,button,[this,button,original,success]{
+   if(!button||button->property("requestPending").toBool()||button->text()!=success)return;
+   button->setText(original);button->setStyleSheet({});updateTaskButtons();updateCaptureButtons();
+  });
+ }
+}
+void MainWindow::updateTaskButtons(){
+ if(!startTaskButton_||!singleTaskButton_||!stopTaskButton_)return;
+ auto task=status_["task"].toObject();bool active=task["continuous"].toBool()||!task["inflight"].toString().isEmpty();
+ if(!active)stopRequested_=false;
+ bool pending=startTaskButton_->property("requestPending").toBool();
+ if(!pending)startTaskButton_->setEnabled(!active);
+ startTaskButton_->setText(active?(task["continuous"].toBool()?"抓取任务运行中":"等待当前抓取完成"):(mode_->currentIndex()==0?"开始动态抓取":"开始自动分拣"));
+ pending=singleTaskButton_->property("requestPending").toBool();
+ if(!pending)singleTaskButton_->setEnabled(!active);
+ singleTaskButton_->setText(active?"当前任务进行中":"抓取所选目标");
+ pending=stopTaskButton_->property("requestPending").toBool();
+ if(!pending)stopTaskButton_->setEnabled(active&&!stopRequested_);
+}
+void MainWindow::updateCaptureButtons(){
+ if(!captureStartButton_||!captureStopButton_)return;
+ if(!captureStartButton_->property("requestPending").toBool())captureStartButton_->setEnabled(!captureRunning_);
+ if(!captureStopButton_->property("requestPending").toBool())captureStopButton_->setEnabled(captureRunning_);
+ if(captureOnceButton_&&!captureOnceButton_->property("requestPending").toBool())captureOnceButton_->setEnabled(!captureRunning_);
+ captureStartButton_->setText(captureRunning_?"采集中":"开始采集");
+}
+void MainWindow::updateCalibrationButtons(){
+ if(calibrationStartButton_&&!calibrationStartButton_->property("requestPending").toBool())calibrationStartButton_->setEnabled(!calibrationRunning_);
+ for(auto *button:calibrationLaunchButtons_)
+  if(!button->property("requestPending").toBool())button->setEnabled(!calibrationRunning_);
+ for(auto *button:calibrationButtons_)
+  if(!button->property("requestPending").toBool())button->setEnabled(calibrationRunning_);
+}
 void MainWindow::showError(QString message){toast_->setText("操作未完成："+message);toast_->setStyleSheet("color:#B4232D;background:#FFF0F0;padding:9px;");}
 void MainWindow::refresh(){backend_->call("status.get",{},[this](QJsonValue v){applyStatus(v.toObject());});}
 void MainWindow::applyStatus(QJsonObject state){
@@ -73,10 +128,13 @@ void MainWindow::applyStatus(QJsonObject state){
   auto o=c.toObject();QString key=o["component"].toString()+":"+o["camera_id"].toString();if(!componentStates_.contains(key))continue;
   QString value=o["state"].toString(),label=value=="running"?"进程运行中 · 等待实际数据核对":value=="command_completed"?"命令已执行 · 状态以反馈为准":value=="unknown"?"状态未知 · 可手动操作":"未启动";
   if(o["record"].isObject())label+="\nPID "+QString::number(o["record"].toObject()["pid"].toInt());componentStates_[key]->setText(label);
+  if(auto *button=componentStartButtons_.value(key))if(!button->property("requestPending").toBool())button->setEnabled(value!="running");
+  if(auto *button=componentStopButtons_.value(key))if(!button->property("requestPending").toBool())button->setEnabled(value=="running");
  }
  if(!state["config_errors"].toArray().isEmpty())showError(state["config_errors"].toArray().first().toString());
  if(placements_.isEmpty()){placements_=state["placements"].toObject();refreshPlacements();}
  auto task=state["task"].toObject();QString phase=task["phase"].toString();taskState_->setText(phase=="paused"?"已暂停 · 由你明确开始下一轮":phase=="grasping"?"当前物体抓放中":phase=="pause_pending"?"完成当前物体后暂停":"等待目标进入抓取区");
+ captureRunning_=state["capture"].toObject()["running"].toBool();updateTaskButtons();updateCaptureButtons();
  if(state["reconnect"].toObject()["count"].toInt()>0)toast_->setText("机械臂连接异常，建议到「连接」执行碰撞后恢复；该警告不唯一代表碰撞");
  else if(state["feedback"].isObject()&&toast_->text().startsWith("机械臂连接异常")){toast_->setText("机械臂实际反馈已恢复 · 抓取保持暂停");toast_->setStyleSheet("");}
 }
@@ -105,7 +163,7 @@ void MainWindow::receive(QString event,QJsonValue value){
  else if(event=="log.batch")for(auto line:data["lines"].toArray()){QString text=line.toString();connectionLog_->appendPlainText(text);if(data["source"].toString().startsWith("标定:"))calibrationLog_->appendPlainText(text);logRow({{"source",data["source"]},{"text",text},{"time",QDateTime::currentMSecsSinceEpoch()/1000.},{"level","INFO"}});}
  else if(event=="logs.rows")for(auto row:value.toArray())logRow(row.toObject());
  else if(event=="calibration.progress"||event=="calibration.result"){
-  if(data["state"].toString()=="exited"){calibrationState_->setText(QString("工具已退出 · 返回码 %1 · 数据保留在 %2").arg(data["returncode"].toInt()).arg(data["directory"].toString()));return;}
+  if(data["state"].toString()=="exited"){calibrationRunning_=false;updateCalibrationButtons();calibrationState_->setText(QString("工具已退出 · 返回码 %1 · 数据保留在 %2").arg(data["returncode"].toInt()).arg(data["directory"].toString()));return;}
   calibrationState_->setText(QString("采样 %1 组 · %2").arg(data["sample_count"].toInt()).arg(data["path"].toString()));
   auto raw=data["data"].toObject();resultText_->setPlainText(QJsonDocument(raw).toJson(QJsonDocument::Indented));
   auto records=raw["samples"].toArray();if(records.isEmpty())records=raw["frames"].toArray();if(!records.isEmpty()||data["path"].toString().endsWith("frames.json")){

@@ -80,6 +80,7 @@ class Workbench:
         cameras['d455']['usb_speed_mbps']=usb_link_speed('8086','0b5c')
         return dict(config_errors=[e for e in (self.settings.error,self.placements.error) if e],components=rows,task=self.tasks.status(),placements=self.placements.get(),parameters=self.settings.get(),
             cameras=cameras,
+            capture=self.capture.status(),
             feedback=self.ros.feedback_snapshot() if self.ros else None,
             reconnect=dict(count=self.notice.count,last_at=self.notice.last),conveyor=self.belt.get_status() if self.belt else {'connected':False},
             nodes=self.ros.get_node_names() if self.ros else [],socket=str(self.root/'.runtime/workbench.sock'))

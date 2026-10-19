@@ -15,6 +15,7 @@ QListWidget#navigation::item:hover { background:#F0F5FD; }
 QPushButton { background:#FFFFFF; border:1px solid #D9E2EF; border-radius:6px; padding:7px 12px; }
 QPushButton:hover { background:#F0F6FF; border-color:#86ACF8; }
 QPushButton:pressed { background:#DBE9FF; }
+QPushButton:disabled { background:#F1F4F8; color:#9AA8BA; border-color:#E2E8F0; }
 QPushButton#primary { background:#1769FF; color:#FFFFFF; border-color:#1769FF; font-weight:600; }
 QPushButton#primary:hover { background:#0B58E8; }
 QPushButton#danger { background:#DF2029; color:#FFFFFF; border-color:#DF2029; font-weight:600; }

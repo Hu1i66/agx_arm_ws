@@ -21,15 +21,16 @@ QWidget *MainWindow::makeMain(){
  placementMode_=new QComboBox;placementMode_->addItems({"统一放置","按识别类别分配"});gl->addWidget(placementMode_);plan_=new QComboBox;gl->addWidget(plan_);
  auto *edit=button("编辑放置方案与类别映射",false,"debug");edit->setMaximumHeight(28);edit->setMinimumHeight(28);gl->addWidget(edit);connect(edit,&QPushButton::clicked,this,[this]{nav_->setCurrentRow(1);debugTabs_->setCurrentIndex(4);});
  grasp->setToolTip("放置方案在每个物体开始时固定；修改作用于下一物体");
- auto *start=button("开始动态抓取",true,"play"),*single=button("抓取所选目标",true,"grab"),*stop=button("本轮后停止",false,"stop");single->hide();auto *runbar=new QHBoxLayout;runbar->addWidget(start,2);runbar->addWidget(single,2);runbar->addWidget(stop,1);gl->addLayout(runbar);
- connect(mode_,qOverload<int>(&QComboBox::currentIndexChanged),this,[this,start,single](int i){if(auto *b=findChild<QPushButton *>("observationButton"))b->setText(i==0?"动态准备位":"观察位");start->setVisible(i!=2);single->setVisible(i!=0);start->setText(i==0?"开始动态抓取":"开始自动分拣");selectedTrack_=-1;selectedSession_.clear();updateTargets();});
- connect(start,&QPushButton::clicked,this,[this]{runTask(true);});connect(single,&QPushButton::clicked,this,[this]{runTask(false);});connect(stop,&QPushButton::clicked,this,[this]{backend_->call("motion.pause_after_cycle");});
+ auto *start=button("开始动态抓取",true,"play"),*single=button("抓取所选目标",true,"grab"),*stop=button("本轮后停止",false,"stop");startTaskButton_=start;singleTaskButton_=single;stopTaskButton_=stop;single->hide();auto *runbar=new QHBoxLayout;runbar->addWidget(start,2);runbar->addWidget(single,2);runbar->addWidget(stop,1);gl->addLayout(runbar);
+ connect(mode_,qOverload<int>(&QComboBox::currentIndexChanged),this,[this,start,single](int i){if(auto *b=findChild<QPushButton *>("observationButton"))b->setText(i==0?"动态准备位":"观察位");start->setVisible(i!=2);single->setVisible(i!=0);selectedTrack_=-1;selectedSession_.clear();updateTargets();updateTaskButtons();});
+ connect(start,&QPushButton::clicked,this,[this]{runTask(true);});connect(single,&QPushButton::clicked,this,[this]{runTask(false);});
+ connect(stop,&QPushButton::clicked,this,[this]{stopRequested_=true;updateTaskButtons();request(stopTaskButton_,"motion.pause_after_cycle",{},[this](QJsonValue){refresh();},"正在停止…",{},true);});
  connect(plan_,qOverload<int>(&QComboBox::activated),this,[this](int){savePlacements();});connect(placementMode_,qOverload<int>(&QComboBox::activated),this,[this](int){savePlacements();});ol->addWidget(grasp);
  auto *targetCard=card("检测目标 · 当前相机");auto *tl=static_cast<QVBoxLayout *>(targetCard->layout());targets_=new QTableWidget(0,3);targets_->setHorizontalHeaderLabels({"目标","置信度","来源"});targets_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);targets_->verticalHeader()->hide();targets_->setSelectionBehavior(QAbstractItemView::SelectRows);targets_->setSelectionMode(QAbstractItemView::SingleSelection);targets_->setEditTriggers(QAbstractItemView::NoEditTriggers);targets_->setMinimumHeight(110);tl->addWidget(targets_,1);
  // Select on press, before the next 10 Hz detection update can rebuild the row.
  connect(targets_,&QTableWidget::cellPressed,this,[this](int row,int){auto *item=targets_->item(row,0);if(!item)return;selectedTrack_=item->data(Qt::UserRole).toInt();selectedSession_=detections_[camera()]["motion_session"].toString();targets_->selectRow(row);for(QString cam:{"d455","dabai"})images_[cam+":main"]->update();});ol->addWidget(targetCard,1);
  auto *belt=card("传送带与本轮状态");auto *bl=static_cast<QVBoxLayout *>(belt->layout());auto *br=new QHBoxLayout;
- for(auto pair:QList<QPair<QString,QString>>{{"启动","start"},{"停止","stop"},{"正转","forward"},{"反转","reverse"}}){auto *b=button(pair.first);br->addWidget(b);connect(b,&QPushButton::clicked,this,[this,pair]{backend_->call("conveyor.send",{{"action",pair.second}});});}bl->addLayout(br);taskState_=text("已暂停 · 等待你开始抓取","notice");bl->addWidget(taskState_);ol->addWidget(belt);split->addWidget(operations);
+ for(auto pair:QList<QPair<QString,QString>>{{"启动","start"},{"停止","stop"},{"正转","forward"},{"反转","reverse"}}){auto *b=button(pair.first);br->addWidget(b);connect(b,&QPushButton::clicked,this,[this,pair,b]{request(b,"conveyor.send",{{"action",pair.second}},[this](QJsonValue){refresh();},"发送中…","已发送");});}bl->addLayout(br);taskState_=text("已暂停 · 等待你开始抓取","notice");bl->addWidget(taskState_);ol->addWidget(belt);split->addWidget(operations);
  split->setStretchFactor(0,27);split->setStretchFactor(1,44);split->setStretchFactor(2,29);split->setSizes({345,560,370});return page;
 }
 void MainWindow::updateTargets(){
@@ -56,7 +57,8 @@ void MainWindow::updateTargets(){
 }
 void MainWindow::runTask(bool continuous){
  if(!continuous&&selectedTrack_<0){showError("请先点击画面中的目标框或下方目标列表，再执行抓取");return;}
- backend_->call("motion.start",{{"mode",mode_->currentIndex()==0?"d455-dynamic":mode_->currentIndex()==1?"d455-static":"dabai-static"},{"continuous",continuous},{"track_id",selectedTrack_},{"session",selectedSession_}});
+ auto *button=continuous?startTaskButton_:singleTaskButton_;stopRequested_=false;
+ request(button,"motion.start",{{"mode",mode_->currentIndex()==0?"d455-dynamic":mode_->currentIndex()==1?"d455-static":"dabai-static"},{"continuous",continuous},{"track_id",selectedTrack_},{"session",selectedSession_}},[this](QJsonValue){refresh();},continuous?"正在启动抓取…":"正在派发目标…",{},true);
 }
 void MainWindow::refreshPlacements(){
  plan_->blockSignals(true);plan_->clear();teachPlan_->blockSignals(true);teachPlan_->clear();auto selection=placements_["selection"].toObject();for(auto item:placements_["plans"].toArray()){auto p=item.toObject();plan_->addItem(p["name"].toString(),p["id"].toString());teachPlan_->addItem(p["name"].toString(),p["id"].toString());}plan_->setCurrentIndex(plan_->findData(selection["default_plan_id"].toString()));placementMode_->setCurrentIndex(selection["mode"]=="class"?1:0);plan_->blockSignals(false);teachPlan_->blockSignals(false);}

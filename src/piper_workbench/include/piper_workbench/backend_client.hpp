@@ -14,6 +14,7 @@ public:
   bool connected() const {return socket_.state()==QLocalSocket::ConnectedState;}
 signals:
   void event(QString,QJsonValue);
+  void completed(QString,bool);
   void error(QString);
   void online(bool);
 private:
